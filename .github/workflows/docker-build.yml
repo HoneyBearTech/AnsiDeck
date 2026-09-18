@@ -42,6 +42,7 @@ jobs:
         run: |
           docker run -d --name smoke -p 8000:8000 \
             -e AUTH_SECRET_KEY=ci-test -e ADMIN_PASSWORD=ci-test \
+            -e CREDENTIAL_ENCRYPTION_KEY=8JQKBeSl5G-WvrMG3wRXlVUrowrX3qAkZq0Nycsd9qc= \
             ansideck-backend:runtime
           for i in $(seq 1 10); do
             curl -sf http://localhost:8000/api/health && break
