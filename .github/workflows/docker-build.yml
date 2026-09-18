@@ -1,0 +1,62 @@
+name: Docker Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: Build ${{ matrix.service }} (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            target: dev
+          - service: backend
+            target: runtime
+          - service: frontend
+            target: dev
+          - service: frontend
+            target: runtime
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.service }}
+          target: ${{ matrix.target }}
+          push: false
+          load: true
+          tags: ansideck-${{ matrix.service }}:${{ matrix.target }}
+          cache-from: type=gha,scope=${{ matrix.service }}-${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}-${{ matrix.target }}
+
+      - name: Smoke test backend runtime image
+        if: matrix.service == 'backend' && matrix.target == 'runtime'
+        run: |
+          docker run -d --name smoke -p 8000:8000 \
+            -e AUTH_SECRET_KEY=ci-test -e ADMIN_PASSWORD=ci-test \
+            ansideck-backend:runtime
+          for i in $(seq 1 10); do
+            curl -sf http://localhost:8000/api/health && break
+            sleep 2
+          done
+          curl -sf http://localhost:8000/api/health
+          docker logs smoke
+
+      - name: Smoke test frontend runtime image
+        if: matrix.service == 'frontend' && matrix.target == 'runtime'
+        run: |
+          docker run -d --name smoke -p 8080:8080 ansideck-frontend:runtime
+          for i in $(seq 1 10); do
+            curl -sf http://localhost:8080/ && break
+            sleep 2
+          done
+          curl -sf http://localhost:8080/ | grep -q "AnsiDeck"
+          docker logs smoke
