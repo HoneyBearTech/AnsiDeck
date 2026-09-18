@@ -232,9 +232,8 @@ npm-debug.log*
 *.pem
 *.key
 
-# ---- Obsidian vault local state (.obsidian-docs is the vault root) ----
-# Track the markdown docs themselves, not per-device app config, installed
-# plugins/themes, or the realclaudian plugin's local session bookkeeping.
-.obsidian-docs/.obsidian/
-.obsidian-docs/.claudian/
+# ---- Obsidian vault (.obsidian-docs) ----
+# Planning/roadmap notes are kept local-only, never committed or pushed —
+# per project owner's request 2026-09-18.
+.obsidian-docs/
 .DS_Store

@@ -12,6 +12,8 @@ Read the project's Obsidian vault at `.obsidian-docs/` first:
 
 Update these files (roadmap checkboxes, decisions log, architecture doc) as the project evolves — they're the source of truth for project direction, not just planning artifacts.
 
+**`.obsidian-docs/` is local-only — never commit or push it.** It's gitignored and was scrubbed from git history entirely on 2026-09-18 at the project owner's request. Read and edit these files on disk as usual; just don't `git add` them (they won't show up as trackable anyway once `.gitignore` is respected, but don't work around that).
+
 ## Stack (see Architecture.md for full detail)
 - Backend: Python (FastAPI), dependency management via `uv`. `ansible-runner` integration lands in Phase 1 — Phase 0 is scaffolding + auth stub only.
 - Frontend: React + TypeScript (Vite), Tailwind v4 (CSS-first `@theme` tokens in `src/index.css`), hand-built shadcn-style UI primitives (Radix + `class-variance-authority`) — see Decisions-Log.
