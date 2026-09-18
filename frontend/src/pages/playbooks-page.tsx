@@ -49,9 +49,14 @@ export function PlaybooksPage() {
                   Updated {new Date(playbook.updated_at).toLocaleString()}
                 </span>
               </Link>
-              <Button variant="outline" size="sm" onClick={() => handleDelete(playbook.id)}>
-                Delete
-              </Button>
+              <div className="flex gap-2">
+                <Button asChild size="sm">
+                  <Link to="/runs/new">Run</Link>
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => handleDelete(playbook.id)}>
+                  Delete
+                </Button>
+              </div>
             </CardContent>
           </Card>
         ))}

@@ -10,6 +10,9 @@ import { InventoryDetailPage } from "@/pages/inventory-detail-page";
 import { LoginPage } from "@/pages/login-page";
 import { PlaybookDetailPage } from "@/pages/playbook-detail-page";
 import { PlaybooksPage } from "@/pages/playbooks-page";
+import { RunDetailPage } from "@/pages/run-detail-page";
+import { RunTriggerPage } from "@/pages/run-trigger-page";
+import { RunsPage } from "@/pages/runs-page";
 
 function App() {
   return (
@@ -30,6 +33,9 @@ function App() {
           <Route path="/inventories" element={<InventoriesPage />} />
           <Route path="/inventories/:id" element={<InventoryDetailPage />} />
           <Route path="/credentials" element={<CredentialsPage />} />
+          <Route path="/runs" element={<RunsPage />} />
+          <Route path="/runs/new" element={<RunTriggerPage />} />
+          <Route path="/runs/:id" element={<RunDetailPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

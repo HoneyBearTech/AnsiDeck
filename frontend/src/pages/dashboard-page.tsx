@@ -26,12 +26,14 @@ export function DashboardPage() {
   const [playbookCount, setPlaybookCount] = React.useState<number | null>(null);
   const [inventoryCount, setInventoryCount] = React.useState<number | null>(null);
   const [credentialCount, setCredentialCount] = React.useState<number | null>(null);
+  const [runCount, setRunCount] = React.useState<number | null>(null);
 
   React.useEffect(() => {
     api.health().then(setHealth).catch(() => setHealthError("Backend unreachable"));
     api.listPlaybooks().then((p) => setPlaybookCount(p.length));
     api.listInventories().then((i) => setInventoryCount(i.length));
     api.listCredentials().then((c) => setCredentialCount(c.length));
+    api.listRuns().then((r) => setRunCount(r.length));
   }, []);
 
   return (
@@ -48,10 +50,11 @@ export function DashboardPage() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         <CountCard to="/playbooks" label="Playbooks" count={playbookCount} />
         <CountCard to="/inventories" label="Inventories" count={inventoryCount} />
         <CountCard to="/credentials" label="Credentials" count={credentialCount} />
+        <CountCard to="/runs" label="Runs" count={runCount} />
       </div>
 
       <Card>

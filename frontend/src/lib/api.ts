@@ -78,6 +78,21 @@ export interface Credential {
   created_at: string;
 }
 
+export interface Run {
+  id: number;
+  playbook_name: string;
+  inventory_name: string;
+  group_name: string | null;
+  credential_name: string;
+  become: boolean;
+  status: "queued" | "running" | "success" | "failed";
+  triggered_by: string;
+  return_code: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+}
+
 export const api = {
   health: () => request<HealthStatus>("/health"),
   login: (username: string, password: string) =>
@@ -152,4 +167,19 @@ export const api = {
       body: JSON.stringify({ name, description, private_key: privateKey }),
     }),
   deleteCredential: (id: number) => request<void>(`/credentials/${id}`, { method: "DELETE" }),
+
+  listRuns: () => request<Run[]>("/runs"),
+  getRun: (id: number) => request<Run>(`/runs/${id}`),
+  createRun: (payload: {
+    playbook_id: number;
+    inventory_id: number;
+    group_id?: number | null;
+    credential_id: number;
+    become: boolean;
+  }) => request<Run>("/runs", { method: "POST", body: JSON.stringify(payload) }),
 };
+
+export function runWebSocketUrl(runId: number): string {
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${location.host}${API_BASE_URL}/runs/${runId}/ws`;
+}
