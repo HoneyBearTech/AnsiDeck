@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -7,7 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.bootstrap import seed_admin_user
 from app.config import get_settings
 from app.db import get_sessionmaker, init_db
-from app.routers import auth, credentials, health, inventories, playbooks
+from app.routers import auth, credentials, health, inventories, playbooks, runs
+from app.run_engine import set_event_loop
 
 settings = get_settings()
 
@@ -15,6 +17,7 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     init_db()
+    set_event_loop(asyncio.get_running_loop())
     session = get_sessionmaker()()
     try:
         seed_admin_user(session)
@@ -38,3 +41,4 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(playbooks.router, prefix="/api/playbooks", tags=["playbooks"])
 app.include_router(inventories.router, prefix="/api/inventories", tags=["inventories"])
 app.include_router(credentials.router, prefix="/api/credentials", tags=["credentials"])
+app.include_router(runs.router, prefix="/api/runs", tags=["runs"])

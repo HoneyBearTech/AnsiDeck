@@ -11,3 +11,13 @@ def playbooks_dir() -> Path:
 
 def playbook_path(playbook_id: int) -> Path:
     return playbooks_dir() / f"{playbook_id}.yml"
+
+
+def runs_dir() -> Path:
+    path = Path(get_settings().data_dir) / "runs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def run_log_path(run_id: int) -> Path:
+    return runs_dir() / f"{run_id}.jsonl"

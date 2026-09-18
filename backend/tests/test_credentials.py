@@ -84,6 +84,24 @@ def test_credential_response_never_contains_key_material(client: TestClient) -> 
     assert key_pem not in list_response.text
 
 
+def test_create_credential_accepts_native_openssh_format(client: TestClient) -> None:
+    # ssh-keygen's default output format since OpenSSH 7.8 — distinct from
+    # PKCS8 PEM, and previously rejected by this endpoint even though it's a
+    # perfectly valid, common real-world key format.
+    _login(client)
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    key_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+
+    response = client.post(
+        "/api/credentials", json={"name": "openssh-format-key", "private_key": key_pem}
+    )
+    assert response.status_code == 201
+
+
 def test_duplicate_credential_name_rejected(client: TestClient) -> None:
     _login(client)
     key_pem_1 = _generate_key_pem()

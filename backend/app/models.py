@@ -1,10 +1,13 @@
 from datetime import datetime
+from enum import StrEnum
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Column,
     DateTime,
     ForeignKey,
+    Integer,
     LargeBinary,
     String,
     Table,
@@ -14,6 +17,14 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
+
+
+class RunStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+
 
 host_group = Table(
     "host_group",
@@ -100,3 +111,41 @@ class InventoryHost(Base):
     groups: Mapped[list["InventoryGroup"]] = relationship(
         secondary=host_group, back_populates="hosts"
     )
+
+
+class Run(Base):
+    """Audit/history record of a playbook run. FKs are nullable + SET NULL so
+    deleting a playbook/inventory/credential later doesn't break history; the
+    *_name columns snapshot the referenced name at trigger time so history
+    stays meaningful after a rename or delete."""
+
+    __tablename__ = "runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    playbook_id: Mapped[int | None] = mapped_column(ForeignKey("playbooks.id", ondelete="SET NULL"))
+    playbook_name: Mapped[str] = mapped_column(String(255))
+
+    inventory_id: Mapped[int | None] = mapped_column(
+        ForeignKey("inventories.id", ondelete="SET NULL")
+    )
+    inventory_name: Mapped[str] = mapped_column(String(255))
+
+    group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("inventory_groups.id", ondelete="SET NULL")
+    )
+    group_name: Mapped[str | None] = mapped_column(String(255), default=None)
+
+    credential_id: Mapped[int | None] = mapped_column(
+        ForeignKey("credentials.id", ondelete="SET NULL")
+    )
+    credential_name: Mapped[str] = mapped_column(String(150))
+
+    become: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(20), default=RunStatus.QUEUED.value)
+    triggered_by: Mapped[str] = mapped_column(String(150))
+    return_code: Mapped[int | None] = mapped_column(Integer, default=None)
+
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
