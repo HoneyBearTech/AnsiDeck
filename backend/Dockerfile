@@ -2,6 +2,12 @@ FROM python:3.12-slim AS base
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 RUN mkdir -p /data
+# Ansible's default connection plugin shells out to the system `ssh` binary —
+# not present in the slim base image, and not something this app should rely
+# on the host to provide.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-client \
+    && rm -rf /var/lib/apt/lists/*
 
 FROM base AS deps
 COPY pyproject.toml uv.lock ./
@@ -17,6 +23,9 @@ COPY . .
 RUN uv sync --frozen --no-dev
 
 FROM python:3.12-slim AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-client \
+    && rm -rf /var/lib/apt/lists/*
 RUN useradd --create-home --uid 1000 appuser \
     && mkdir -p /data \
     && chown appuser:appuser /data

@@ -12,7 +12,7 @@ AnsiDeck's whole job is holding SSH credentials and running arbitrary automation
 ## Execution Isolation
 - [x] Decide whether playbook execution runs in the same container as the web app or an isolated "runner" container/sidecar — decided: same container for the Phase 1 MVP, revisit true sandboxing later. See [[Decisions-Log]]. (No execution code exists yet — this is the decision only, implementation is Phase 1 Pass B.)
 - [ ] Constrain the execution environment's network access to only the intended target hosts where feasible
-- [ ] Don't run the execution process as root inside the container unless a specific playbook genuinely requires it
+- [x] Don't run the execution process as root inside the container unless a specific playbook genuinely requires it — the backend's `runtime` image runs as non-root `appuser`; verified `ansible-playbook` executing real SSH connections works fine under that user. See [[Decisions-Log]]
 
 ## Access Control
 - [x] No auth = no MVP ship to anything but localhost. Even Phase 1 needs real login before this touches a network others can reach. — DB-backed argon2 auth landed in Phase 1 Pass A
@@ -24,5 +24,5 @@ AnsiDeck's whole job is holding SSH credentials and running arbitrary automation
 - [ ] Rate-limit or queue runs to avoid accidentally hammering target systems from the UI
 
 ## Supply Chain
-- [ ] Pin dependency versions (Python + JS) and keep a routine for updating them
+- [x] Pin dependency versions (Python + JS) and keep a routine for updating them — `uv.lock`/`package-lock.json` pin exact versions; Dependabot covers the update routine. See [[Decisions-Log]]
 - [ ] If supporting `ansible-galaxy` role/collection installs (Phase 2), be aware this pulls and executes third-party code — worth a warning in the UI
