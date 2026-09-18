@@ -21,13 +21,13 @@ Related: [[Architecture]] · [[Security-Considerations]] · [[Decisions-Log]] ·
 - [x] Single-user auth stub (hardcoded/admin login) just to unblock UI work
 
 ## Phase 1 — MVP: Core Playbook Execution
-- [ ] Upload / browse / edit Ansible playbooks (YAML) through the UI
-- [ ] Manage inventories (start with static inventory files; UI to add/edit hosts & groups)
-- [ ] Manage SSH credentials (private keys) — stored encrypted, never logged
-- [ ] Trigger a playbook run against a host/group
-- [ ] Live-streamed run output in the browser (WebSocket)
-- [ ] Run history: past runs, status, duration, exit code, full log
-- [ ] Basic login/auth (real, not stub)
+- [x] Upload / browse / edit Ansible playbooks (YAML) through the UI
+- [x] Manage inventories — went straight to structured hosts/groups (many-to-many), not raw file editing. See [[Decisions-Log]]
+- [x] Manage SSH credentials (private keys) — stored encrypted, never logged — passphrase-protected keys not yet supported, see [[Decisions-Log]]
+- [ ] Trigger a playbook run against a host/group — Pass B
+- [ ] Live-streamed run output in the browser (WebSocket) — Pass B
+- [ ] Run history: past runs, status, duration, exit code, full log — Pass B
+- [x] Basic login/auth (real, not stub) — DB-backed, argon2-hashed, includes self-service password change
 
 ## Phase 2 — Core Ops Features
 - [ ] Ansible Vault support (encrypt/decrypt vars, vault password handling in UI)
@@ -68,5 +68,5 @@ Related: [[Architecture]] · [[Security-Considerations]] · [[Decisions-Log]] ·
 
 ## Open Questions
 - [x] ~~Monorepo vs separate frontend/backend repos?~~ Decided: monorepo. See [[Decisions-Log]].
-- [ ] SQLite (simple, good for homelab) vs Postgres (better for multi-user) for the MVP DB?
-- [ ] How are target-system credentials scoped — one shared credential store, or per-inventory?
+- [x] ~~SQLite vs Postgres for the MVP DB?~~ Decided: SQLite via SQLAlchemy. See [[Decisions-Log]].
+- [x] ~~How are target-system credentials scoped?~~ Decided: shared pool, not per-inventory. See [[Decisions-Log]].

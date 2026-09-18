@@ -1,6 +1,7 @@
 FROM python:3.12-slim AS base
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
+RUN mkdir -p /data
 
 FROM base AS deps
 COPY pyproject.toml uv.lock ./
@@ -16,7 +17,9 @@ COPY . .
 RUN uv sync --frozen --no-dev
 
 FROM python:3.12-slim AS runtime
-RUN useradd --create-home --uid 1000 appuser
+RUN useradd --create-home --uid 1000 appuser \
+    && mkdir -p /data \
+    && chown appuser:appuser /data
 WORKDIR /app
 COPY --from=build /app /app
 ENV PATH="/app/.venv/bin:$PATH"
