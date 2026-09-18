@@ -216,3 +216,25 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---- Node / JS (frontend) ----
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+
+# ---- Ansible-specific ----
+*.retry
+*vault_pass*
+.vault_pass
+*.vault-password
+*.pem
+*.key
+
+# ---- Obsidian vault local state (.obsidian-docs is the vault root) ----
+# Track the markdown docs themselves, not per-device app config, installed
+# plugins/themes, or the realclaudian plugin's local session bookkeeping.
+.obsidian-docs/.obsidian/
+.obsidian-docs/.claudian/
+.DS_Store
