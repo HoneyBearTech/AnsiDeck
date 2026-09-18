@@ -1,0 +1,33 @@
+name: Dependabot auto-merge
+
+on: pull_request
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  dependabot:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      # Docker base-image bumps (backend python, frontend node, frontend
+      # nginx) always need a human look — their tags don't follow strict
+      # semver, so Dependabot's patch/minor/major classification can be
+      # misleading (e.g. python 3.12-slim -> 3.14-slim landed as a non-major
+      # update despite skipping a whole Python version).
+      - name: Enable auto-merge for safe updates
+        if: |
+          steps.metadata.outputs.package-ecosystem != 'docker' &&
+          (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+           steps.metadata.outputs.update-type == 'version-update:semver-minor')
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
