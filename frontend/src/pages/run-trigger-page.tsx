@@ -3,9 +3,11 @@ import { useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/auth-context";
 import {
   api,
@@ -33,6 +35,10 @@ export function RunTriggerPage() {
   const [credentialId, setCredentialId] = React.useState<string>("");
   const [become, setBecome] = React.useState(false);
   const [becomeConfirmed, setBecomeConfirmed] = React.useState(false);
+  const [checkMode, setCheckMode] = React.useState(false);
+  const [diffMode, setDiffMode] = React.useState(false);
+  const [limit, setLimit] = React.useState("");
+  const [extraVarsText, setExtraVarsText] = React.useState("{}");
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
 
@@ -59,6 +65,16 @@ export function RunTriggerPage() {
 
   async function handleSubmit() {
     setError(null);
+
+    let extraVars: Record<string, unknown> | null;
+    try {
+      const parsed = JSON.parse(extraVarsText);
+      extraVars = Object.keys(parsed).length > 0 ? parsed : null;
+    } catch {
+      setError("Extra vars must be valid JSON");
+      return;
+    }
+
     setSubmitting(true);
     try {
       const run = await api.createRun({
@@ -67,6 +83,10 @@ export function RunTriggerPage() {
         group_id: groupId === ALL_HOSTS ? null : Number(groupId),
         credential_id: Number(credentialId),
         become,
+        check_mode: checkMode,
+        diff_mode: diffMode,
+        limit: limit.trim() || null,
+        extra_vars: extraVars,
       });
       navigate(`/runs/${run.id}`);
     } catch (err) {
@@ -145,6 +165,38 @@ export function RunTriggerPage() {
             ))}
           </SelectContent>
         </Select>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="run-limit">Limit (optional)</Label>
+        <Input
+          id="run-limit"
+          placeholder="e.g. webservers[0], host1:host2, !excluded"
+          value={limit}
+          onChange={(e) => setLimit(e.target.value)}
+        />
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <label className="flex items-center gap-2 text-sm">
+          <Checkbox checked={checkMode} onCheckedChange={(checked) => setCheckMode(checked === true)} />
+          Check mode (dry run — report changes without making them)
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <Checkbox checked={diffMode} onCheckedChange={(checked) => setDiffMode(checked === true)} />
+          Diff mode (show before/after differences)
+        </label>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="run-extra-vars">Extra vars (JSON)</Label>
+        <Textarea
+          id="run-extra-vars"
+          value={extraVarsText}
+          onChange={(e) => setExtraVarsText(e.target.value)}
+          className="min-h-24 font-mono"
+          spellCheck={false}
+        />
       </div>
 
       <div className="flex flex-col gap-3 rounded-md border border-border p-4">

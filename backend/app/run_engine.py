@@ -120,12 +120,22 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
                     log_file.flush()
                     stream.publish(event)
 
+                flags = []
+                if run.become:
+                    flags.append("--become")
+                if run.check_mode:
+                    flags.append("--check")
+                if run.diff_mode:
+                    flags.append("--diff")
+
                 runner = ansible_runner.run(
                     private_data_dir=pdd,
                     playbook="playbook.yml",
                     inventory=str(inventory_path),
                     ssh_key=private_key_pem,
-                    cmdline="--become" if run.become else None,
+                    cmdline=" ".join(flags) or None,
+                    limit=run.limit,
+                    extravars=run.extra_vars or {},
                     event_handler=on_event,
                 )
         finally:

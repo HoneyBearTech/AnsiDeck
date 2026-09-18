@@ -1,4 +1,5 @@
 import glob
+import json
 import tempfile
 import time
 
@@ -25,6 +26,27 @@ FAILURE_PLAYBOOK = """\
     - name: fail on purpose
       ansible.builtin.fail:
         msg: "intentional failure"
+"""
+
+EXTRA_VARS_PLAYBOOK = """\
+- hosts: all
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: write extra var
+      ansible.builtin.copy:
+        content: "{{ greeting }}"
+        dest: "{{ marker_path }}"
+"""
+
+PAUSE_PLAYBOOK = """\
+- hosts: all
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: pause a moment
+      ansible.builtin.pause:
+        seconds: 3
 """
 
 
@@ -55,8 +77,10 @@ def _create_playbook(client: TestClient, content: str, name: str = "test.yml") -
     return response.json()["id"]
 
 
-def _create_inventory_with_host(client: TestClient, marker_path: str) -> tuple[int, int]:
-    inv = client.post("/api/inventories", json={"name": "test-inv"})
+def _create_inventory_with_host(
+    client: TestClient, marker_path: str, name: str = "test-inv"
+) -> tuple[int, int]:
+    inv = client.post("/api/inventories", json={"name": name})
     assert inv.status_code == 201
     inventory_id = inv.json()["id"]
 
@@ -66,6 +90,23 @@ def _create_inventory_with_host(client: TestClient, marker_path: str) -> tuple[i
     )
     assert host.status_code == 201
     return inventory_id, host.json()["id"]
+
+
+def _create_inventory_with_two_hosts(
+    client: TestClient, marker_path_a: str, marker_path_b: str
+) -> tuple[int, str, str]:
+    inv = client.post("/api/inventories", json={"name": "test-inv-2host"})
+    assert inv.status_code == 201
+    inventory_id = inv.json()["id"]
+
+    for hostname, marker_path in (("host-a", marker_path_a), ("host-b", marker_path_b)):
+        response = client.post(
+            f"/api/inventories/{inventory_id}/hosts",
+            json={"hostname": hostname, "vars": {"marker_path": marker_path}},
+        )
+        assert response.status_code == 201
+
+    return inventory_id, "host-a", "host-b"
 
 
 def _create_credential(client: TestClient) -> int:
@@ -236,3 +277,181 @@ def test_run_never_logs_key_material(client: TestClient, tmp_path) -> None:
     log_path = tmp_path / "runs" / f"{run_id}.jsonl"
     assert log_path.exists()
     assert key_pem not in log_path.read_text()
+
+
+def test_run_extra_vars_reach_playbook(client: TestClient, tmp_path) -> None:
+    _login(client)
+    marker_path = str(tmp_path / "marker.txt")
+    playbook_id = _create_playbook(client, EXTRA_VARS_PLAYBOOK, name="extra-vars.yml")
+    inventory_id, _host_id = _create_inventory_with_host(client, marker_path)
+    credential_id = _create_credential(client)
+
+    create_response = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_id,
+            "credential_id": credential_id,
+            "extra_vars": {"greeting": "hello from extra-vars"},
+        },
+    )
+    assert create_response.status_code == 201
+    assert create_response.json()["extra_vars"] == {"greeting": "hello from extra-vars"}
+    run_id = create_response.json()["id"]
+
+    run = _wait_for_completion(client, run_id)
+    assert run["status"] == "success"
+    assert (tmp_path / "marker.txt").read_text() == "hello from extra-vars"
+
+
+def test_run_check_mode_prevents_changes(client: TestClient, tmp_path) -> None:
+    _login(client)
+    marker_path = str(tmp_path / "marker.txt")
+    playbook_id = _create_playbook(client, SUCCESS_PLAYBOOK, name="check-mode.yml")
+    inventory_id, _host_id = _create_inventory_with_host(client, marker_path)
+    credential_id = _create_credential(client)
+
+    create_response = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_id,
+            "credential_id": credential_id,
+            "check_mode": True,
+        },
+    )
+    run_id = create_response.json()["id"]
+
+    run = _wait_for_completion(client, run_id)
+    assert run["status"] == "success"
+    assert not (tmp_path / "marker.txt").exists()
+
+
+def test_run_diff_mode_includes_diff_output(client: TestClient, tmp_path) -> None:
+    _login(client)
+    marker_path = str(tmp_path / "marker.txt")
+    playbook_id = _create_playbook(client, SUCCESS_PLAYBOOK, name="diff-mode.yml")
+    inventory_id, _host_id = _create_inventory_with_host(client, marker_path)
+    credential_id = _create_credential(client)
+
+    create_response = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_id,
+            "credential_id": credential_id,
+            "diff_mode": True,
+        },
+    )
+    run_id = create_response.json()["id"]
+    _wait_for_completion(client, run_id)
+
+    log_path = tmp_path / "runs" / f"{run_id}.jsonl"
+    events = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+    diffs = [e["event_data"].get("diff") for e in events if "diff" in e.get("event_data", {})]
+    assert any(diffs), f"expected at least one event with non-empty diff data, got events: {events}"
+
+
+def test_run_limit_narrows_target(client: TestClient, tmp_path) -> None:
+    _login(client)
+    marker_a = str(tmp_path / "marker-a.txt")
+    marker_b = str(tmp_path / "marker-b.txt")
+    playbook_id = _create_playbook(client, SUCCESS_PLAYBOOK, name="limit.yml")
+    inventory_id, host_a, _host_b = _create_inventory_with_two_hosts(client, marker_a, marker_b)
+    credential_id = _create_credential(client)
+
+    create_response = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_id,
+            "credential_id": credential_id,
+            "limit": host_a,
+        },
+    )
+    run_id = create_response.json()["id"]
+    run = _wait_for_completion(client, run_id)
+
+    assert run["status"] == "success"
+    assert (tmp_path / "marker-a.txt").exists()
+    assert not (tmp_path / "marker-b.txt").exists()
+
+
+def test_concurrency_guard_blocks_second_run_same_inventory(client: TestClient, tmp_path) -> None:
+    _login(client)
+    marker_path = str(tmp_path / "marker.txt")
+    playbook_id = _create_playbook(client, PAUSE_PLAYBOOK, name="pause.yml")
+    inventory_id, _host_id = _create_inventory_with_host(client, marker_path)
+    credential_id = _create_credential(client)
+
+    payload = {
+        "playbook_id": playbook_id,
+        "inventory_id": inventory_id,
+        "credential_id": credential_id,
+    }
+    first = client.post("/api/runs", json=payload)
+    assert first.status_code == 201
+    first_id = first.json()["id"]
+    assert first.json()["status"] == "queued"
+
+    second = client.post("/api/runs", json=payload)
+    assert second.status_code == 409
+    assert str(first_id) in second.json()["detail"]
+
+    _wait_for_completion(client, first_id)
+
+
+def test_concurrency_guard_allows_run_after_previous_completes(
+    client: TestClient, tmp_path
+) -> None:
+    _login(client)
+    marker_path = str(tmp_path / "marker.txt")
+    playbook_id = _create_playbook(client, SUCCESS_PLAYBOOK, name="quick.yml")
+    inventory_id, _host_id = _create_inventory_with_host(client, marker_path)
+    credential_id = _create_credential(client)
+
+    payload = {
+        "playbook_id": playbook_id,
+        "inventory_id": inventory_id,
+        "credential_id": credential_id,
+    }
+    first = client.post("/api/runs", json=payload)
+    _wait_for_completion(client, first.json()["id"])
+
+    second = client.post("/api/runs", json=payload)
+    assert second.status_code == 201
+    _wait_for_completion(client, second.json()["id"])
+
+
+def test_concurrency_guard_allows_different_inventories_concurrently(
+    client: TestClient, tmp_path
+) -> None:
+    _login(client)
+    marker_a = str(tmp_path / "marker-a.txt")
+    marker_b = str(tmp_path / "marker-b.txt")
+    playbook_id = _create_playbook(client, PAUSE_PLAYBOOK, name="pause2.yml")
+    inventory_a, _ = _create_inventory_with_host(client, marker_a, name="test-inv-a")
+    inventory_b, _ = _create_inventory_with_host(client, marker_b, name="test-inv-b")
+    credential_id = _create_credential(client)
+
+    first = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_a,
+            "credential_id": credential_id,
+        },
+    )
+    second = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_b,
+            "credential_id": credential_id,
+        },
+    )
+    assert first.status_code == 201
+    assert second.status_code == 201
+
+    _wait_for_completion(client, first.json()["id"])
+    _wait_for_completion(client, second.json()["id"])

@@ -142,6 +142,10 @@ class Run(Base):
     credential_name: Mapped[str] = mapped_column(String(150))
 
     become: Mapped[bool] = mapped_column(Boolean, default=False)
+    check_mode: Mapped[bool] = mapped_column(Boolean, default=False)
+    diff_mode: Mapped[bool] = mapped_column(Boolean, default=False)
+    limit: Mapped[str | None] = mapped_column(String(500), default=None)
+    extra_vars: Mapped[dict | None] = mapped_column(JSON, default=None)
     status: Mapped[str] = mapped_column(String(20), default=RunStatus.QUEUED.value)
     triggered_by: Mapped[str] = mapped_column(String(150))
     return_code: Mapped[int | None] = mapped_column(Integer, default=None)

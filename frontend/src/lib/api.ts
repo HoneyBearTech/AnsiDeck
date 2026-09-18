@@ -85,6 +85,10 @@ export interface Run {
   group_name: string | null;
   credential_name: string;
   become: boolean;
+  check_mode: boolean;
+  diff_mode: boolean;
+  limit: string | null;
+  extra_vars: Record<string, unknown> | null;
   status: "queued" | "running" | "success" | "failed";
   triggered_by: string;
   return_code: number | null;
@@ -176,6 +180,10 @@ export const api = {
     group_id?: number | null;
     credential_id: number;
     become: boolean;
+    check_mode: boolean;
+    diff_mode: boolean;
+    limit: string | null;
+    extra_vars: Record<string, unknown> | null;
   }) => request<Run>("/runs", { method: "POST", body: JSON.stringify(payload) }),
 };
 

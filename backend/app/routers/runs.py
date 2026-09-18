@@ -3,13 +3,15 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.dependencies import SESSION_COOKIE_NAME, get_current_user
-from app.models import Credential, Inventory, InventoryGroup, Playbook, Run
+from app.models import Credential, Inventory, InventoryGroup, Playbook, Run, RunStatus
 from app.run_engine import DONE, get_or_create_stream, start_run
 from app.schemas.runs import RunCreate, RunOut
 from app.security import verify_session_token
 from app.storage import run_log_path
 
 router = APIRouter()
+
+_ACTIVE_STATUSES = (RunStatus.QUEUED.value, RunStatus.RUNNING.value)
 
 
 @router.get("", response_model=list[RunOut], dependencies=[Depends(get_current_user)])
@@ -43,6 +45,24 @@ def create_run(
     if credential is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Credential not found")
 
+    # Coarse guard: block a second run against the same inventory while one
+    # is already active, rather than resolving exact host-set overlap. Zero
+    # false negatives (any real host collision is necessarily within the
+    # same inventory); the one false-positive case (two disjoint groups in
+    # the same inventory) is an acceptable trade for a single-user tool —
+    # a real job queue is Phase 4's job, not this guard's.
+    conflicting = (
+        db.query(Run)
+        .filter(Run.inventory_id == payload.inventory_id, Run.status.in_(_ACTIVE_STATUSES))
+        .first()
+    )
+    if conflicting is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Inventory '{inventory.name}' already has an active run "
+            f"(#{conflicting.id}, status={conflicting.status})",
+        )
+
     run = Run(
         playbook_id=playbook.id,
         playbook_name=playbook.name,
@@ -53,6 +73,10 @@ def create_run(
         credential_id=credential.id,
         credential_name=credential.name,
         become=payload.become,
+        check_mode=payload.check_mode,
+        diff_mode=payload.diff_mode,
+        limit=payload.limit,
+        extra_vars=payload.extra_vars,
         triggered_by=current_user,
     )
     db.add(run)

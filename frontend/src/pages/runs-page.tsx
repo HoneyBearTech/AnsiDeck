@@ -49,6 +49,8 @@ export function RunsPage() {
                   <span className="text-xs text-muted-foreground">
                     {run.triggered_by} · {new Date(run.created_at).toLocaleString()}
                     {run.become && " · become"}
+                    {run.check_mode && " · check"}
+                    {run.diff_mode && " · diff"}
                   </span>
                 </div>
                 <Badge variant={STATUS_VARIANT[run.status]}>{run.status}</Badge>

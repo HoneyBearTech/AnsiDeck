@@ -53,10 +53,26 @@ export function RunDetailPage() {
           <p className="text-sm text-muted-foreground">
             Triggered by {run.triggered_by} · credential {run.credential_name}
             {run.become && " · become"}
+            {run.check_mode && " · check"}
+            {run.diff_mode && " · diff"}
+            {run.limit && ` · limit: ${run.limit}`}
           </p>
         </div>
         <Badge variant={STATUS_VARIANT[run.status]}>{run.status}</Badge>
       </div>
+
+      {run.extra_vars && Object.keys(run.extra_vars).length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Extra vars</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <pre className="overflow-x-auto rounded-md bg-muted p-4 font-mono text-sm">
+              {JSON.stringify(run.extra_vars, null, 2)}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
