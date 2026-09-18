@@ -12,6 +12,7 @@ dependencies = [
     "cryptography>=43",
     "pyyaml>=6.0",
     "ansible>=14.4.0",
+    "ansible-runner>=2.4,<3",
 ]
 
 [dependency-groups]
