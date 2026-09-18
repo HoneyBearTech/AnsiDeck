@@ -19,6 +19,11 @@ _RUN_COLUMN_MIGRATIONS = {
     "diff_mode": "ALTER TABLE runs ADD COLUMN diff_mode BOOLEAN DEFAULT 0",
     "limit": 'ALTER TABLE runs ADD COLUMN "limit" VARCHAR(500)',
     "extra_vars": "ALTER TABLE runs ADD COLUMN extra_vars JSON",
+    "vault_password_id": (
+        "ALTER TABLE runs ADD COLUMN vault_password_id INTEGER "
+        "REFERENCES vault_passwords(id) ON DELETE SET NULL"
+    ),
+    "vault_password_name": "ALTER TABLE runs ADD COLUMN vault_password_name VARCHAR(150)",
 }
 
 
@@ -71,5 +76,9 @@ def _ensure_run_columns(engine: Engine) -> None:
 
 def init_db() -> None:
     engine = get_engine()
-    _ensure_run_columns(engine)
+    # Create any missing tables (e.g. a brand-new vault_passwords table on an
+    # upgrading instance) before patching columns on existing ones, so a new
+    # FK column (like Run.vault_password_id) always has its target table
+    # present by the time it's added.
     Base.metadata.create_all(bind=engine)
+    _ensure_run_columns(engine)

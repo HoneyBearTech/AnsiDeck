@@ -53,6 +53,16 @@ class Credential(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class VaultPassword(Base):
+    __tablename__ = "vault_passwords"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(150), unique=True)
+    description: Mapped[str | None] = mapped_column(String(500), default=None)
+    encrypted_password: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Playbook(Base):
     """Metadata only — YAML content lives on disk at {data_dir}/playbooks/{id}.yml."""
 
@@ -140,6 +150,11 @@ class Run(Base):
         ForeignKey("credentials.id", ondelete="SET NULL")
     )
     credential_name: Mapped[str] = mapped_column(String(150))
+
+    vault_password_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vault_passwords.id", ondelete="SET NULL")
+    )
+    vault_password_name: Mapped[str | None] = mapped_column(String(150), default=None)
 
     become: Mapped[bool] = mapped_column(Boolean, default=False)
     check_mode: Mapped[bool] = mapped_column(Boolean, default=False)
