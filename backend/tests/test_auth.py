@@ -25,3 +25,45 @@ def test_login_then_me_then_logout(client: TestClient) -> None:
 
     me_after_logout = client.get("/api/auth/me")
     assert me_after_logout.status_code == 401
+
+
+def test_change_password_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "admin", "new_password": "newpassword123"},
+    )
+    assert response.status_code == 401
+
+
+def test_change_password_wrong_current_password_fails(client: TestClient) -> None:
+    client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+
+    response = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "wrong", "new_password": "newpassword123"},
+    )
+    assert response.status_code == 401
+
+    # old password still works
+    relogin = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+    assert relogin.status_code == 200
+
+
+def test_change_password_then_relogin(client: TestClient) -> None:
+    client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+
+    change_response = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "admin", "new_password": "newpassword123"},
+    )
+    assert change_response.status_code == 200
+
+    client.post("/api/auth/logout")
+
+    old_login = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+    assert old_login.status_code == 401
+
+    new_login = client.post(
+        "/api/auth/login", json={"username": "admin", "password": "newpassword123"}
+    )
+    assert new_login.status_code == 200

@@ -7,6 +7,10 @@ dependencies = [
     "fastapi[standard]>=0.115",
     "pydantic-settings>=2.5",
     "itsdangerous>=2.2",
+    "sqlalchemy>=2.0",
+    "argon2-cffi>=23.1",
+    "cryptography>=43",
+    "pyyaml>=6.0",
 ]
 
 [dependency-groups]
@@ -22,6 +26,20 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection system relies on calling Depends()/Query()/etc.
+# as parameter defaults — that's the intended pattern, not the mutable-default
+# footgun B008 exists to catch.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Cookie",
+    "fastapi.Header",
+    "fastapi.Security",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
