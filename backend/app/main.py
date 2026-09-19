@@ -20,6 +20,7 @@ from app.routers import (
     health,
     inventories,
     playbooks,
+    projects,
     runs,
     users,
     vault,
@@ -63,6 +64,7 @@ app.include_router(credentials.router, prefix="/api/credentials", tags=["credent
 app.include_router(vault_passwords.router, prefix="/api/vault-passwords", tags=["vault-passwords"])
 app.include_router(vault.router, prefix="/api/vault", tags=["vault"])
 app.include_router(galaxy.router, prefix="/api/galaxy", tags=["galaxy"])
+app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(runs.router, prefix="/api/runs", tags=["runs"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(audit_router.router, prefix="/api/audit", tags=["audit"])

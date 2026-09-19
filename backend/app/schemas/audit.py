@@ -10,6 +10,7 @@ class AuditEventOut(BaseModel):
     id: int
     created_at: datetime
     actor_username: str | None
+    project_id: int | None
     action: str
     target_type: str | None
     target_id: int | None

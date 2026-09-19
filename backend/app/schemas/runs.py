@@ -31,6 +31,7 @@ class RunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    project_id: int
     playbook_name: str
     inventory_name: str
     group_name: str | None

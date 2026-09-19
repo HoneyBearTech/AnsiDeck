@@ -50,6 +50,30 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class Project(Base):
+    __tablename__ = "projects"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(150), unique=True)
+    description: Mapped[str | None] = mapped_column(String(500), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProjectMember(Base):
+    """A user's role inside one project. Deleting the project or the user removes
+    the membership at the DB level (ON DELETE CASCADE)."""
+
+    __tablename__ = "project_members"
+
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    role: Mapped[str] = mapped_column(String(20))
+
+
 class Credential(Base):
     __tablename__ = "credentials"
 
@@ -57,6 +81,7 @@ class Credential(Base):
     name: Mapped[str] = mapped_column(String(150), unique=True)
     description: Mapped[str | None] = mapped_column(String(500), default=None)
     encrypted_private_key: Mapped[bytes] = mapped_column(LargeBinary)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -67,6 +92,7 @@ class VaultPassword(Base):
     name: Mapped[str] = mapped_column(String(150), unique=True)
     description: Mapped[str | None] = mapped_column(String(500), default=None)
     encrypted_password: Mapped[bytes] = mapped_column(LargeBinary)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -77,6 +103,7 @@ class Playbook(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -88,6 +115,7 @@ class Inventory(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
     description: Mapped[str | None] = mapped_column(String(500), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -139,6 +167,8 @@ class Run(Base):
     __tablename__ = "runs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # Authoritative scope for history: the other FKs below are SET NULL.
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
 
     playbook_id: Mapped[int | None] = mapped_column(ForeignKey("playbooks.id", ondelete="SET NULL"))
     playbook_name: Mapped[str] = mapped_column(String(255))
@@ -207,6 +237,7 @@ class AuditEvent(Base):
     )
     actor_user_id: Mapped[int | None] = mapped_column(Integer, default=None)
     actor_username: Mapped[str | None] = mapped_column(String(150), default=None)
+    project_id: Mapped[int | None] = mapped_column(Integer, default=None)
     action: Mapped[str] = mapped_column(String(64), index=True)
     target_type: Mapped[str | None] = mapped_column(String(50), default=None)
     target_id: Mapped[int | None] = mapped_column(Integer, default=None)

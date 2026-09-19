@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict
 class InventoryCreate(BaseModel):
     name: str
     description: str | None = None
+    project_id: int | None = None
 
 
 class InventoryUpdate(BaseModel):
@@ -17,6 +18,7 @@ class InventorySummary(BaseModel):
     id: int
     name: str
     description: str | None
+    project_id: int
 
 
 class GroupCreate(BaseModel):

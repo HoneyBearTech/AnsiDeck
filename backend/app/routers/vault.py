@@ -6,25 +6,29 @@ from app.crypto import decrypt_secret
 from app.db import get_db
 from app.hardening import client_ip
 from app.models import User, VaultPassword
-from app.permissions import Permission, require_permission
+from app.permissions import Permission, Scope, require_permission
 from app.schemas.vault import (
     VaultDecryptRequest,
     VaultDecryptResponse,
     VaultEncryptRequest,
     VaultEncryptResponse,
 )
+from app.scoping import get_scoped
 from app.vault import VaultError, decrypt_vault_text, encrypt_to_vault_envelope, to_yaml_block
 
 router = APIRouter()
 
-_encrypt_guard = require_permission(Permission.VAULT_ENCRYPT)
-_decrypt_guard = require_permission(Permission.VAULT_DECRYPT)
+_encrypt_guard = require_permission(Permission.VAULT_ENCRYPT, scope=Scope.PROJECT)
+_decrypt_guard = require_permission(Permission.VAULT_DECRYPT, scope=Scope.PROJECT)
 
 
-def _load_password(db: Session, vault_password_id: int) -> tuple[VaultPassword, str]:
-    vault_password = db.get(VaultPassword, vault_password_id)
-    if vault_password is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Vault password not found")
+def _load_password(
+    db: Session, user: User, request: Request, vault_password_id: int, permission: Permission
+) -> tuple[VaultPassword, str]:
+    # Scoped by the vault password's own project: encrypt/decrypt follow the secret.
+    vault_password = get_scoped(
+        db, user, request, VaultPassword, vault_password_id, permission, "Vault password not found"
+    )
     return vault_password, decrypt_secret(vault_password.encrypted_password).decode()
 
 
@@ -37,6 +41,7 @@ def _audit_use(db: Session, action: str, actor: User, request: Request, vp: Vaul
         target_id=vp.id,
         target_name=vp.name,
         ip=client_ip(request),
+        project_id=vp.project_id,
     )
 
 
@@ -47,7 +52,9 @@ def encrypt(
     actor: User = Depends(_encrypt_guard),
     db: Session = Depends(get_db),
 ) -> VaultEncryptResponse:
-    vault_password, password = _load_password(db, payload.vault_password_id)
+    vault_password, password = _load_password(
+        db, actor, request, payload.vault_password_id, Permission.VAULT_ENCRYPT
+    )
     try:
         envelope = encrypt_to_vault_envelope(payload.plaintext, password)
     except VaultError as exc:
@@ -65,7 +72,9 @@ def decrypt(
     actor: User = Depends(_decrypt_guard),
     db: Session = Depends(get_db),
 ) -> VaultDecryptResponse:
-    vault_password, password = _load_password(db, payload.vault_password_id)
+    vault_password, password = _load_password(
+        db, actor, request, payload.vault_password_id, Permission.VAULT_DECRYPT
+    )
     try:
         plaintext = decrypt_vault_text(payload.ciphertext, password)
     except VaultError as exc:

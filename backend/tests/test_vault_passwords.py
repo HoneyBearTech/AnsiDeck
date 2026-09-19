@@ -23,13 +23,19 @@ def test_create_list_delete_vault_password(client: TestClient) -> None:
     )
     assert create_response.status_code == 201
     body = create_response.json()
-    assert set(body.keys()) == {"id", "name", "description", "created_at"}
+    assert set(body.keys()) == {"id", "name", "description", "project_id", "created_at"}
     vault_password_id = body["id"]
 
     list_response = client.get("/api/vault-passwords")
     assert list_response.status_code == 200
     assert [v["id"] for v in list_response.json()] == [vault_password_id]
-    assert set(list_response.json()[0].keys()) == {"id", "name", "description", "created_at"}
+    assert set(list_response.json()[0].keys()) == {
+        "id",
+        "name",
+        "description",
+        "project_id",
+        "created_at",
+    }
 
     assert client.delete(f"/api/vault-passwords/{vault_password_id}").status_code == 204
     assert client.get("/api/vault-passwords").json() == []

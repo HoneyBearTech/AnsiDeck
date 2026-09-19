@@ -1,5 +1,13 @@
-"""Role-based access control: a code-level role -> permission map and the guard
-dependency every route must carry (a test enforces this)."""
+"""Role-based access control with per-project roles.
+
+A user's *global* role is only meaningful for `admin` (superuser: every
+permission in every project). Everyone else acts through project memberships
+(`project_members`), each carrying an admin/operator/viewer role for that one
+project. Every route carries a `guard(...)` dependency (a test enforces it); the
+guard is a coarse "holds this permission somewhere" check, and handlers then
+resolve the actual project through `app.scoping` so a resource can never be
+reached from a project the caller doesn't belong to.
+"""
 
 from collections.abc import Callable
 from enum import StrEnum
@@ -11,7 +19,7 @@ from app import audit
 from app.db import get_db
 from app.dependencies import get_current_user
 from app.hardening import client_ip
-from app.models import User
+from app.models import ProjectMember, User
 
 
 class Role(StrEnum):
@@ -30,10 +38,22 @@ class Permission(StrEnum):
     RUNS_READ_EXTRA_VARS = "runs:read_extra_vars"
     VAULT_ENCRYPT = "vault:encrypt"
     VAULT_DECRYPT = "vault:decrypt"  # returns plaintext
+    MEMBERS_MANAGE = "members:manage"  # add/remove/re-role members of one project
     GALAXY_MANAGE = "galaxy:manage"  # installs run third-party code in the container
     USERS_MANAGE = "users:manage"
+    PROJECTS_MANAGE = "projects:manage"  # create / rename / delete projects
     AUDIT_READ = "audit:read"
 
+
+# Permissions that exist only at the global level; a project admin never gets them.
+GLOBAL_ONLY = frozenset(
+    {
+        Permission.USERS_MANAGE,
+        Permission.AUDIT_READ,
+        Permission.GALAXY_MANAGE,
+        Permission.PROJECTS_MANAGE,
+    }
+)
 
 _VIEWER = {Permission.CONTENT_READ}
 _OPERATOR = _VIEWER | {
@@ -52,20 +72,67 @@ ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
-def permissions_for(user: User) -> set[Permission]:
+class Scope(StrEnum):
+    # Handlers resolve the project themselves via app.scoping helpers.
+    PROJECT = "project"
+    # Global-only operation; no per-project resolution involved.
+    GLOBAL = "global"
+
+
+def is_global_admin(user: User) -> bool:
+    return user.role == Role.ADMIN.value
+
+
+def project_role_permissions(role: str) -> set[Permission]:
     try:
-        return ROLE_PERMISSIONS[Role(user.role)]
+        return ROLE_PERMISSIONS[Role(role)] - GLOBAL_ONLY
     except ValueError:
         return set()  # unknown role stored in the DB: fail closed
 
 
-def has_permission(user: User, permission: Permission) -> bool:
-    return permission in permissions_for(user)
+def user_project_roles(db: Session, user: User) -> dict[int, str]:
+    cached = getattr(user, "_project_roles", None)
+    if cached is None:
+        rows = db.query(ProjectMember).filter(ProjectMember.user_id == user.id).all()
+        cached = {row.project_id: row.role for row in rows}
+        user._project_roles = cached  # type: ignore[attr-defined]  # per-request cache
+    return cached
 
 
-def guard(read: Permission | None, write: Permission | None) -> Callable[..., User]:
+def project_permissions(db: Session, user: User, project_id: int) -> set[Permission]:
+    """Everything `user` may do inside `project_id` (empty = not a member)."""
+    if is_global_admin(user):
+        return set(Permission)
+    role = user_project_roles(db, user).get(project_id)
+    return project_role_permissions(role) if role else set()
+
+
+def holds_somewhere(db: Session, user: User, permission: Permission) -> bool:
+    if is_global_admin(user):
+        return True
+    return any(
+        permission in project_role_permissions(role)
+        for role in user_project_roles(db, user).values()
+    )
+
+
+def effective_permissions(db: Session, user: User) -> set[Permission]:
+    """Union across the user's projects (all of them for a global admin)."""
+    if is_global_admin(user):
+        return set(Permission)
+    union: set[Permission] = set()
+    for role in user_project_roles(db, user).values():
+        union |= project_role_permissions(role)
+    return union
+
+
+def guard(
+    read: Permission | None, write: Permission | None, *, scope: Scope
+) -> Callable[..., User]:
     """Route dependency: authenticates, then requires `read` for safe methods and
-    `write` otherwise (None = any authenticated user). Denials are audited."""
+    `write` otherwise (None = any authenticated user) *in at least one project*.
+    Handlers of Scope.PROJECT routes must then resolve the concrete project via
+    app.scoping. Denials are audited."""
 
     def dependency(
         request: Request,
@@ -73,7 +140,7 @@ def guard(read: Permission | None, write: Permission | None) -> Callable[..., Us
         db: Session = Depends(get_db),
     ) -> User:
         required = read if request.method in SAFE_METHODS else write
-        if required is not None and not has_permission(user, required):
+        if required is not None and not holds_somewhere(db, user, required):
             audit.record(
                 db,
                 "permission.denied",
@@ -88,12 +155,13 @@ def guard(read: Permission | None, write: Permission | None) -> Callable[..., Us
         return user
 
     dependency._is_permission_guard = True  # type: ignore[attr-defined]
+    dependency._scope = scope  # type: ignore[attr-defined]
     return dependency
 
 
-def require_permission(permission: Permission) -> Callable[..., User]:
-    return guard(permission, permission)
+def require_permission(permission: Permission, *, scope: Scope) -> Callable[..., User]:
+    return guard(permission, permission, scope=scope)
 
 
 def require_authenticated() -> Callable[..., User]:
-    return guard(None, None)
+    return guard(None, None, scope=Scope.GLOBAL)

@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Inventory, InventoryGroup, InventoryHost
-from app.permissions import Permission, guard
+from app.models import Inventory, InventoryGroup, InventoryHost, User
+from app.permissions import SAFE_METHODS, Permission, Scope, guard
 from app.schemas.inventories import (
     GroupCreate,
     GroupOut,
@@ -17,15 +17,21 @@ from app.schemas.inventories import (
     InventorySummary,
     InventoryUpdate,
 )
+from app.scoping import get_scoped, readable_project_ids, resolve_write_project
 
-router = APIRouter(dependencies=[Depends(guard(Permission.CONTENT_READ, Permission.CONTENT_WRITE))])
+_guard = guard(Permission.CONTENT_READ, Permission.CONTENT_WRITE, scope=Scope.PROJECT)
+router = APIRouter(dependencies=[Depends(_guard)])
 
 
-def _get_inventory_or_404(db: Session, inventory_id: int) -> Inventory:
-    inventory = db.get(Inventory, inventory_id)
-    if inventory is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Inventory not found")
-    return inventory
+def _get_inventory_or_404(
+    db: Session, user: User, request: Request, inventory_id: int
+) -> Inventory:
+    """Every by-id route here (including groups and hosts) resolves the inventory
+    first, so a group/host can only be reached through a project the caller is in."""
+    permission = (
+        Permission.CONTENT_READ if request.method in SAFE_METHODS else Permission.CONTENT_WRITE
+    )
+    return get_scoped(db, user, request, Inventory, inventory_id, permission, "Inventory not found")
 
 
 def _get_group_or_404(db: Session, inventory_id: int, group_id: int) -> InventoryGroup:
@@ -67,19 +73,37 @@ def _to_inventory_detail(inventory: Inventory) -> InventoryDetail:
         id=inventory.id,
         name=inventory.name,
         description=inventory.description,
+        project_id=inventory.project_id,
         groups=list(inventory.groups),
         hosts=[_to_host_out(h) for h in inventory.hosts],
     )
 
 
 @router.get("", response_model=list[InventorySummary])
-def list_inventories(db: Session = Depends(get_db)) -> list[Inventory]:
-    return db.query(Inventory).order_by(Inventory.name).all()
+def list_inventories(
+    request: Request,
+    project_id: int | None = Query(None),
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> list[Inventory]:
+    ids = readable_project_ids(db, user, request, Permission.CONTENT_READ, project_id)
+    query = db.query(Inventory)
+    if ids is not None:
+        query = query.filter(Inventory.project_id.in_(ids))
+    return query.order_by(Inventory.name).all()
 
 
 @router.post("", response_model=InventoryDetail, status_code=status.HTTP_201_CREATED)
-def create_inventory(payload: InventoryCreate, db: Session = Depends(get_db)) -> InventoryDetail:
-    inventory = Inventory(name=payload.name, description=payload.description)
+def create_inventory(
+    payload: InventoryCreate,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> InventoryDetail:
+    project_id = resolve_write_project(
+        db, user, request, payload.project_id, Permission.CONTENT_WRITE
+    )
+    inventory = Inventory(name=payload.name, description=payload.description, project_id=project_id)
     db.add(inventory)
     try:
         db.commit()
@@ -91,15 +115,24 @@ def create_inventory(payload: InventoryCreate, db: Session = Depends(get_db)) ->
 
 
 @router.get("/{inventory_id}", response_model=InventoryDetail)
-def get_inventory(inventory_id: int, db: Session = Depends(get_db)) -> InventoryDetail:
-    return _to_inventory_detail(_get_inventory_or_404(db, inventory_id))
+def get_inventory(
+    inventory_id: int,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> InventoryDetail:
+    return _to_inventory_detail(_get_inventory_or_404(db, user, request, inventory_id))
 
 
 @router.put("/{inventory_id}", response_model=InventoryDetail)
 def update_inventory(
-    inventory_id: int, payload: InventoryUpdate, db: Session = Depends(get_db)
+    inventory_id: int,
+    payload: InventoryUpdate,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
 ) -> InventoryDetail:
-    inventory = _get_inventory_or_404(db, inventory_id)
+    inventory = _get_inventory_or_404(db, user, request, inventory_id)
     if payload.name is not None:
         inventory.name = payload.name
     if payload.description is not None:
@@ -114,8 +147,13 @@ def update_inventory(
 
 
 @router.delete("/{inventory_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_inventory(inventory_id: int, db: Session = Depends(get_db)) -> None:
-    inventory = _get_inventory_or_404(db, inventory_id)
+def delete_inventory(
+    inventory_id: int,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> None:
+    inventory = _get_inventory_or_404(db, user, request, inventory_id)
     db.delete(inventory)
     db.commit()
 
@@ -126,9 +164,13 @@ def delete_inventory(inventory_id: int, db: Session = Depends(get_db)) -> None:
     status_code=status.HTTP_201_CREATED,
 )
 def create_group(
-    inventory_id: int, payload: GroupCreate, db: Session = Depends(get_db)
+    inventory_id: int,
+    payload: GroupCreate,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
 ) -> InventoryGroup:
-    _get_inventory_or_404(db, inventory_id)
+    _get_inventory_or_404(db, user, request, inventory_id)
     group = InventoryGroup(inventory_id=inventory_id, name=payload.name)
     db.add(group)
     try:
@@ -144,8 +186,14 @@ def create_group(
 
 @router.put("/{inventory_id}/groups/{group_id}", response_model=GroupOut)
 def update_group(
-    inventory_id: int, group_id: int, payload: GroupUpdate, db: Session = Depends(get_db)
+    inventory_id: int,
+    group_id: int,
+    payload: GroupUpdate,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
 ) -> InventoryGroup:
+    _get_inventory_or_404(db, user, request, inventory_id)
     group = _get_group_or_404(db, inventory_id, group_id)
     group.name = payload.name
     try:
@@ -160,15 +208,28 @@ def update_group(
 
 
 @router.delete("/{inventory_id}/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_group(inventory_id: int, group_id: int, db: Session = Depends(get_db)) -> None:
+def delete_group(
+    inventory_id: int,
+    group_id: int,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> None:
+    _get_inventory_or_404(db, user, request, inventory_id)
     group = _get_group_or_404(db, inventory_id, group_id)
     db.delete(group)
     db.commit()
 
 
 @router.post("/{inventory_id}/hosts", response_model=HostOut, status_code=status.HTTP_201_CREATED)
-def create_host(inventory_id: int, payload: HostCreate, db: Session = Depends(get_db)) -> HostOut:
-    _get_inventory_or_404(db, inventory_id)
+def create_host(
+    inventory_id: int,
+    payload: HostCreate,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> HostOut:
+    _get_inventory_or_404(db, user, request, inventory_id)
     groups = _resolve_groups(db, inventory_id, payload.group_ids)
     host = InventoryHost(
         inventory_id=inventory_id, hostname=payload.hostname, vars=payload.vars, groups=groups
@@ -187,8 +248,14 @@ def create_host(inventory_id: int, payload: HostCreate, db: Session = Depends(ge
 
 @router.put("/{inventory_id}/hosts/{host_id}", response_model=HostOut)
 def update_host(
-    inventory_id: int, host_id: int, payload: HostUpdate, db: Session = Depends(get_db)
+    inventory_id: int,
+    host_id: int,
+    payload: HostUpdate,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
 ) -> HostOut:
+    _get_inventory_or_404(db, user, request, inventory_id)
     host = _get_host_or_404(db, inventory_id, host_id)
     if payload.hostname is not None:
         host.hostname = payload.hostname
@@ -208,7 +275,14 @@ def update_host(
 
 
 @router.delete("/{inventory_id}/hosts/{host_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_host(inventory_id: int, host_id: int, db: Session = Depends(get_db)) -> None:
+def delete_host(
+    inventory_id: int,
+    host_id: int,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> None:
+    _get_inventory_or_404(db, user, request, inventory_id)
     host = _get_host_or_404(db, inventory_id, host_id)
     db.delete(host)
     db.commit()

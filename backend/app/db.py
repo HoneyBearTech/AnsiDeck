@@ -36,6 +36,17 @@ _USER_COLUMN_MIGRATIONS = {
     "created_by": "ALTER TABLE users ADD COLUMN created_by VARCHAR(150)",
 }
 
+# project_id is added nullable: SQLite refuses ADD COLUMN ... REFERENCES with any
+# default, so rows are backfilled to the Default project by _backfill_projects().
+# Fresh databases get the column NOT NULL from the models.
+_PROJECT_SCOPED_TABLES = ("playbooks", "inventories", "credentials", "vault_passwords", "runs")
+_PROJECT_COLUMN_MIGRATION = (
+    "ALTER TABLE {table} ADD COLUMN project_id INTEGER REFERENCES projects(id)"
+)
+_AUDIT_PROJECT_COLUMN_MIGRATION = "ALTER TABLE audit_events ADD COLUMN project_id INTEGER"
+DEFAULT_PROJECT_NAME = "Default"
+_SCHEMA_VERSION = 1  # PRAGMA user_version: 1 = projects introduced and backfilled
+
 
 class Base(DeclarativeBase):
     pass
@@ -84,6 +95,38 @@ def _ensure_columns(engine: Engine, table: str, migrations: dict[str, str]) -> N
                 conn.exec_driver_sql(ddl)
 
 
+def _backfill_projects(engine: Engine) -> None:
+    """One-time upgrade: create the Default project, assign every pre-existing row
+    to it, and give each existing non-admin user membership with their current
+    role so nobody loses access. Guarded by PRAGMA user_version so it never
+    resurrects Default after an admin deliberately deletes projects."""
+    with engine.begin() as conn:
+        if (conn.exec_driver_sql("PRAGMA user_version").scalar() or 0) >= _SCHEMA_VERSION:
+            return
+        row = conn.exec_driver_sql(
+            "SELECT id FROM projects WHERE name = ?", (DEFAULT_PROJECT_NAME,)
+        ).first()
+        if row is None:
+            conn.exec_driver_sql(
+                "INSERT INTO projects (name, description) VALUES (?, ?)",
+                (DEFAULT_PROJECT_NAME, "Created automatically for existing data"),
+            )
+            row = conn.exec_driver_sql(
+                "SELECT id FROM projects WHERE name = ?", (DEFAULT_PROJECT_NAME,)
+            ).first()
+        default_id = row[0]
+        for table in _PROJECT_SCOPED_TABLES:
+            conn.exec_driver_sql(
+                f"UPDATE {table} SET project_id = ? WHERE project_id IS NULL", (default_id,)
+            )
+        conn.exec_driver_sql(
+            "INSERT OR IGNORE INTO project_members (project_id, user_id, role) "
+            "SELECT ?, id, role FROM users WHERE role != 'admin'",
+            (default_id,),
+        )
+        conn.exec_driver_sql(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+
+
 def init_db() -> None:
     engine = get_engine()
     # Create any missing tables (e.g. a brand-new vault_passwords table on an
@@ -93,3 +136,9 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_columns(engine, "runs", _RUN_COLUMN_MIGRATIONS)
     _ensure_columns(engine, "users", _USER_COLUMN_MIGRATIONS)
+    for table in _PROJECT_SCOPED_TABLES:
+        _ensure_columns(
+            engine, table, {"project_id": _PROJECT_COLUMN_MIGRATION.format(table=table)}
+        )
+    _ensure_columns(engine, "audit_events", {"project_id": _AUDIT_PROJECT_COLUMN_MIGRATION})
+    _backfill_projects(engine)

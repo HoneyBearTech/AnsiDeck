@@ -11,6 +11,9 @@ class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=64, pattern=_USERNAME_PATTERN)
     password: str = Field(min_length=12, max_length=128)
     role: Role = Role.VIEWER
+    # Non-admin users act only through project memberships. If omitted and exactly
+    # one project exists, the user is added to it with `role`.
+    project_id: int | None = None
 
     @field_validator("password")
     @classmethod

@@ -14,7 +14,7 @@ from app.crypto import hash_password  # noqa: E402
 from app.db import get_engine, get_sessionmaker, init_db  # noqa: E402
 from app.hardening import ip_login_throttle, user_login_throttle  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import User  # noqa: E402
+from app.models import Project, ProjectMember, User  # noqa: E402
 
 
 @pytest.fixture
@@ -42,11 +42,18 @@ def client(tmp_path, monkeypatch) -> Generator[TestClient, None, None]:
 TEST_PASSWORD = "a-long-test-password-1"
 
 
-def make_user_client(username: str, role: str, password: str = TEST_PASSWORD) -> TestClient:
+def make_user_client(
+    username: str, role: str, password: str = TEST_PASSWORD, default_membership: bool = True
+) -> TestClient:
     """A separate TestClient (own cookie jar) logged in as a freshly created user."""
     db = get_sessionmaker()()
-    db.add(User(username=username, password_hash=hash_password(password), role=role))
+    user = User(username=username, password_hash=hash_password(password), role=role)
+    db.add(user)
     db.commit()
+    if role != "admin" and default_membership:
+        default = db.query(Project).filter(Project.name == "Default").one()
+        db.add(ProjectMember(project_id=default.id, user_id=user.id, role=role))
+        db.commit()
     db.close()
     user_client = TestClient(app)
     response = user_client.post(

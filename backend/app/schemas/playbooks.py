@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict
 class PlaybookCreate(BaseModel):
     name: str
     content: str
+    project_id: int | None = None
 
 
 class PlaybookUpdate(BaseModel):
@@ -18,6 +19,7 @@ class PlaybookSummary(BaseModel):
 
     id: int
     name: str
+    project_id: int
     created_at: datetime
     updated_at: datetime
 

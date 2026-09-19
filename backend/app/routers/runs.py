@@ -2,6 +2,7 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Query,
     Request,
     WebSocket,
     WebSocketDisconnect,
@@ -24,9 +25,16 @@ from app.models import (
     User,
     VaultPassword,
 )
-from app.permissions import Permission, guard, has_permission
+from app.permissions import (
+    Permission,
+    Scope,
+    guard,
+    holds_somewhere,
+    project_permissions,
+)
 from app.run_engine import DONE, get_or_create_stream, start_run
 from app.schemas.runs import RunCreate, RunOut
+from app.scoping import get_scoped, readable_project_ids
 from app.storage import run_log_path
 
 router = APIRouter()
@@ -34,20 +42,37 @@ router = APIRouter()
 _ACTIVE_STATUSES = (RunStatus.QUEUED.value, RunStatus.RUNNING.value)
 
 
-_guard = guard(Permission.CONTENT_READ, Permission.RUNS_TRIGGER)
+_guard = guard(Permission.CONTENT_READ, Permission.RUNS_TRIGGER, scope=Scope.PROJECT)
 HIDDEN = "[HIDDEN]"
 
 
-def _run_out(run: Run, user: User) -> RunOut:
+def _run_out(db: Session, run: Run, user: User) -> RunOut:
     out = RunOut.model_validate(run)
-    if out.extra_vars and not has_permission(user, Permission.RUNS_READ_EXTRA_VARS):
+    can_see = Permission.RUNS_READ_EXTRA_VARS in project_permissions(db, user, run.project_id)
+    if out.extra_vars and not can_see:
         out.extra_vars = {key: HIDDEN for key in out.extra_vars}
     return out
 
 
 @router.get("", response_model=list[RunOut])
-def list_runs(user: User = Depends(_guard), db: Session = Depends(get_db)) -> list[RunOut]:
-    return [_run_out(run, user) for run in db.query(Run).order_by(Run.id.desc()).all()]
+def list_runs(
+    request: Request,
+    project_id: int | None = Query(None),
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> list[RunOut]:
+    ids = readable_project_ids(db, user, request, Permission.CONTENT_READ, project_id)
+    query = db.query(Run)
+    if ids is not None:
+        query = query.filter(Run.project_id.in_(ids))
+    return [_run_out(db, run, user) for run in query.order_by(Run.id.desc()).all()]
+
+
+def _require_same_project(obj, project_id: int, label: str) -> None:
+    if obj.project_id != project_id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"{label} must belong to the same project as the playbook"
+        )
 
 
 @router.post("", response_model=RunOut, status_code=status.HTTP_201_CREATED)
@@ -57,7 +82,7 @@ def create_run(
     current_user: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> RunOut:
-    if payload.become and not has_permission(current_user, Permission.RUNS_BECOME):
+    def denied_become(project_id: int | None) -> HTTPException:
         audit.record(
             db,
             "permission.denied",
@@ -65,17 +90,43 @@ def create_run(
             actor=current_user,
             target_type="run",
             ip=client_ip(request),
+            project_id=project_id,
             detail={"required": Permission.RUNS_BECOME.value},
         )
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "You may not run playbooks as root (become)")
+        return HTTPException(
+            status.HTTP_403_FORBIDDEN, "You may not run playbooks as root (become)"
+        )
 
-    playbook = db.get(Playbook, payload.playbook_id)
-    if playbook is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Playbook not found")
+    # Cheap early rejection: a user who can't use become in *any* project.
+    if payload.become and not holds_somewhere(db, current_user, Permission.RUNS_BECOME):
+        raise denied_become(None)
 
-    inventory = db.get(Inventory, payload.inventory_id)
-    if inventory is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Inventory not found")
+    # The playbook fixes the run's project; everything else must live in it.
+    playbook = get_scoped(
+        db,
+        current_user,
+        request,
+        Playbook,
+        payload.playbook_id,
+        Permission.RUNS_TRIGGER,
+        "Playbook not found",
+    )
+    project_id = playbook.project_id
+    if payload.become and Permission.RUNS_BECOME not in project_permissions(
+        db, current_user, project_id
+    ):
+        raise denied_become(project_id)
+
+    inventory = get_scoped(
+        db,
+        current_user,
+        request,
+        Inventory,
+        payload.inventory_id,
+        Permission.CONTENT_READ,
+        "Inventory not found",
+    )
+    _require_same_project(inventory, project_id, "Inventory")
 
     group = None
     if payload.group_id is not None:
@@ -85,15 +136,29 @@ def create_run(
                 status.HTTP_400_BAD_REQUEST, "group_id does not belong to this inventory"
             )
 
-    credential = db.get(Credential, payload.credential_id)
-    if credential is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Credential not found")
+    credential = get_scoped(
+        db,
+        current_user,
+        request,
+        Credential,
+        payload.credential_id,
+        Permission.SECRETS_LIST,
+        "Credential not found",
+    )
+    _require_same_project(credential, project_id, "Credential")
 
     vault_password = None
     if payload.vault_password_id is not None:
-        vault_password = db.get(VaultPassword, payload.vault_password_id)
-        if vault_password is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Vault password not found")
+        vault_password = get_scoped(
+            db,
+            current_user,
+            request,
+            VaultPassword,
+            payload.vault_password_id,
+            Permission.SECRETS_LIST,
+            "Vault password not found",
+        )
+        _require_same_project(vault_password, project_id, "Vault password")
 
     # Coarse guard: block a second run against the same inventory while one
     # is already active, rather than resolving exact host-set overlap. Zero
@@ -124,6 +189,7 @@ def create_run(
         )
 
     run = Run(
+        project_id=project_id,
         playbook_id=playbook.id,
         playbook_name=playbook.name,
         inventory_id=inventory.id,
@@ -152,6 +218,7 @@ def create_run(
         target_type="run",
         target_id=run.id,
         ip=client_ip(request),
+        project_id=project_id,
         detail={
             "playbook": playbook.name,
             "inventory": inventory.name,
@@ -161,15 +228,18 @@ def create_run(
         },
     )
     start_run(run.id)
-    return _run_out(run, current_user)
+    return _run_out(db, run, current_user)
 
 
 @router.get("/{run_id}", response_model=RunOut)
-def get_run(run_id: int, user: User = Depends(_guard), db: Session = Depends(get_db)) -> RunOut:
-    run = db.get(Run, run_id)
-    if run is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
-    return _run_out(run, user)
+def get_run(
+    run_id: int,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> RunOut:
+    run = get_scoped(db, user, request, Run, run_id, Permission.CONTENT_READ, "Run not found")
+    return _run_out(db, run, user)
 
 
 @router.websocket("/{run_id}/ws")
@@ -177,12 +247,13 @@ async def run_ws(websocket: WebSocket, run_id: int, db: Session = Depends(get_db
     # Manually guarded (no Depends on a WebSocket): authenticate the cookie
     # against the DB and require the same read permission as the HTTP routes.
     user = authenticate_token(db, websocket.cookies.get(SESSION_COOKIE_NAME))
-    if user is None or not has_permission(user, Permission.CONTENT_READ):
+    if user is None:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
+    # Missing run and "not your project" close identically (no existence oracle).
     run = db.get(Run, run_id)
-    if run is None:
+    if run is None or Permission.CONTENT_READ not in project_permissions(db, user, run.project_id):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 

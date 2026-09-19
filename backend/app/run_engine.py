@@ -12,7 +12,15 @@ from app.crypto import decrypt_secret
 from app.db import get_sessionmaker
 from app.galaxy import galaxy_env
 from app.inventory_render import render_inventory_yaml
-from app.models import Credential, Inventory, InventoryGroup, Run, RunStatus, VaultPassword
+from app.models import (
+    Credential,
+    Inventory,
+    InventoryGroup,
+    Playbook,
+    Run,
+    RunStatus,
+    VaultPassword,
+)
 from app.scrub import build_scrubber, collect_secrets
 from app.storage import playbook_path, run_log_path
 
@@ -82,6 +90,13 @@ def get_or_create_stream(run_id: int) -> RunStream:
         return stream
 
 
+def _assert_same_project(run: Run, obj, label: str) -> None:
+    """Defense in depth: the API already rejects cross-project references, but the
+    engine is what decrypts secrets, so it re-checks before using them."""
+    if obj is None or obj.project_id != run.project_id:
+        raise RuntimeError(f"run {run.id}: {label} is not in the run's project")
+
+
 def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
     db = get_sessionmaker()()
     stream = get_or_create_stream(run_id)
@@ -96,15 +111,19 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
         run.started_at = datetime.now(UTC)
         db.commit()
 
+        _assert_same_project(run, db.get(Playbook, run.playbook_id), "playbook")
         credential = db.get(Credential, run.credential_id)
+        _assert_same_project(run, credential, "credential")
         private_key_pem = decrypt_secret(credential.encrypted_private_key).decode()
 
         vault_password_plain = None
         if run.vault_password_id is not None:
             vault_password = db.get(VaultPassword, run.vault_password_id)
+            _assert_same_project(run, vault_password, "vault password")
             vault_password_plain = decrypt_secret(vault_password.encrypted_password).decode()
 
         inventory_obj = db.get(Inventory, run.inventory_id)
+        _assert_same_project(run, inventory_obj, "inventory")
         group_obj = db.get(InventoryGroup, run.group_id) if run.group_id else None
         rendered_inventory = render_inventory_yaml(inventory_obj, group_obj)
         playbook_text = playbook_path(run.playbook_id).read_text()

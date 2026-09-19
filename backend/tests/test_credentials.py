@@ -41,13 +41,19 @@ def test_create_list_delete_credential(client: TestClient) -> None:
     )
     assert create_response.status_code == 201
     body = create_response.json()
-    assert set(body.keys()) == {"id", "name", "description", "created_at"}
+    assert set(body.keys()) == {"id", "name", "description", "project_id", "created_at"}
     credential_id = body["id"]
 
     list_response = client.get("/api/credentials")
     assert list_response.status_code == 200
     assert [c["id"] for c in list_response.json()] == [credential_id]
-    assert set(list_response.json()[0].keys()) == {"id", "name", "description", "created_at"}
+    assert set(list_response.json()[0].keys()) == {
+        "id",
+        "name",
+        "description",
+        "project_id",
+        "created_at",
+    }
 
     delete_response = client.delete(f"/api/credentials/{credential_id}")
     assert delete_response.status_code == 204

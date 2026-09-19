@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -7,16 +7,26 @@ from app.crypto import encrypt_secret
 from app.db import get_db
 from app.hardening import client_ip
 from app.models import User, VaultPassword
-from app.permissions import Permission, guard
+from app.permissions import Permission, Scope, guard
 from app.schemas.vault_passwords import VaultPasswordCreate, VaultPasswordOut
+from app.scoping import get_scoped, readable_project_ids, resolve_write_project
 
-_guard = guard(Permission.SECRETS_LIST, Permission.SECRETS_MANAGE)
+_guard = guard(Permission.SECRETS_LIST, Permission.SECRETS_MANAGE, scope=Scope.PROJECT)
 router = APIRouter(dependencies=[Depends(_guard)])
 
 
 @router.get("", response_model=list[VaultPasswordOut])
-def list_vault_passwords(db: Session = Depends(get_db)) -> list[VaultPassword]:
-    return db.query(VaultPassword).order_by(VaultPassword.name).all()
+def list_vault_passwords(
+    request: Request,
+    project_id: int | None = Query(None),
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> list[VaultPassword]:
+    ids = readable_project_ids(db, user, request, Permission.SECRETS_LIST, project_id)
+    query = db.query(VaultPassword)
+    if ids is not None:
+        query = query.filter(VaultPassword.project_id.in_(ids))
+    return query.order_by(VaultPassword.name).all()
 
 
 @router.post("", response_model=VaultPasswordOut, status_code=status.HTTP_201_CREATED)
@@ -26,8 +36,12 @@ def create_vault_password(
     actor: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> VaultPassword:
+    project_id = resolve_write_project(
+        db, actor, request, payload.project_id, Permission.SECRETS_MANAGE
+    )
     vault_password = VaultPassword(
         name=payload.name,
+        project_id=project_id,
         description=payload.description,
         encrypted_password=encrypt_secret(payload.password.encode()),
     )
@@ -48,6 +62,7 @@ def create_vault_password(
         target_id=vault_password.id,
         target_name=vault_password.name,
         ip=client_ip(request),
+        project_id=vault_password.project_id,
     )
     return vault_password
 
@@ -59,10 +74,16 @@ def delete_vault_password(
     actor: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> None:
-    vault_password = db.get(VaultPassword, vault_password_id)
-    if vault_password is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Vault password not found")
-    name = vault_password.name
+    vault_password = get_scoped(
+        db,
+        actor,
+        request,
+        VaultPassword,
+        vault_password_id,
+        Permission.SECRETS_MANAGE,
+        "Vault password not found",
+    )
+    name, project_id = vault_password.name, vault_password.project_id
     db.delete(vault_password)
     db.commit()
     audit.record(
@@ -73,4 +94,5 @@ def delete_vault_password(
         target_id=vault_password_id,
         target_name=name,
         ip=client_ip(request),
+        project_id=project_id,
     )

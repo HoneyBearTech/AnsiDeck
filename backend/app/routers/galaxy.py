@@ -12,7 +12,7 @@ from app.galaxy import (
 )
 from app.hardening import client_ip
 from app.models import GalaxyInstall, Run, RunStatus, User
-from app.permissions import Permission, guard
+from app.permissions import Permission, Scope, guard
 from app.schemas.galaxy import (
     InstallCreate,
     InstallDetail,
@@ -22,7 +22,7 @@ from app.schemas.galaxy import (
 )
 from app.storage import galaxy_install_log_path, galaxy_requirements_path
 
-_guard = guard(Permission.CONTENT_READ, Permission.GALAXY_MANAGE)
+_guard = guard(Permission.CONTENT_READ, Permission.GALAXY_MANAGE, scope=Scope.GLOBAL)
 router = APIRouter(dependencies=[Depends(_guard)])
 
 _ACTIVE_STATUSES = (RunStatus.QUEUED.value, RunStatus.RUNNING.value)

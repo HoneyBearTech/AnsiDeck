@@ -7,6 +7,7 @@ class CredentialCreate(BaseModel):
     name: str
     description: str | None = None
     private_key: str
+    project_id: int | None = None
 
 
 class CredentialOut(BaseModel):
@@ -15,4 +16,5 @@ class CredentialOut(BaseModel):
     id: int
     name: str
     description: str | None
+    project_id: int
     created_at: datetime

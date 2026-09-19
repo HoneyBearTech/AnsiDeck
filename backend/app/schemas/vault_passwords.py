@@ -7,6 +7,7 @@ class VaultPasswordCreate(BaseModel):
     name: str
     description: str | None = None
     password: str
+    project_id: int | None = None
 
     @field_validator("password")
     @classmethod
@@ -22,4 +23,5 @@ class VaultPasswordOut(BaseModel):
     id: int
     name: str
     description: str | None
+    project_id: int
     created_at: datetime

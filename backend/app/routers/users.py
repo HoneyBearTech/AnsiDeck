@@ -6,11 +6,11 @@ from app import audit
 from app.crypto import hash_password
 from app.db import get_db
 from app.hardening import client_ip
-from app.models import User
-from app.permissions import Permission, Role, require_permission
+from app.models import Project, ProjectMember, User
+from app.permissions import Permission, Role, Scope, require_permission
 from app.schemas.users import UserAdminOut, UserCreate, UserUpdate
 
-_guard = require_permission(Permission.USERS_MANAGE)
+_guard = require_permission(Permission.USERS_MANAGE, scope=Scope.GLOBAL)
 router = APIRouter(dependencies=[Depends(_guard)])
 
 
@@ -43,6 +43,16 @@ def create_user(
 ) -> User:
     if payload.password.lower() == payload.username.lower():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Password must not equal the username")
+    membership_project_id: int | None = None
+    if payload.role != Role.ADMIN:
+        if payload.project_id is not None:
+            if db.get(Project, payload.project_id) is None:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Project not found")
+            membership_project_id = payload.project_id
+        else:
+            project_ids = [pid for (pid,) in db.query(Project.id).limit(2).all()]
+            membership_project_id = project_ids[0] if len(project_ids) == 1 else None
+
     user = User(
         username=payload.username,
         password_hash=hash_password(payload.password),
@@ -56,6 +66,24 @@ def create_user(
         db.rollback()
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Username already exists") from exc
     db.refresh(user)
+    if membership_project_id is not None:
+        db.add(
+            ProjectMember(
+                project_id=membership_project_id, user_id=user.id, role=payload.role.value
+            )
+        )
+        db.commit()
+        audit.record(
+            db,
+            "project.member_add",
+            actor=actor,
+            target_type="user",
+            target_id=user.id,
+            target_name=user.username,
+            ip=client_ip(request),
+            project_id=membership_project_id,
+            detail={"role": payload.role.value},
+        )
     audit.record(
         db,
         "user.create",

@@ -41,6 +41,7 @@ def record(
     target_id: int | None = None,
     target_name: str | None = None,
     ip: str | None = None,
+    project_id: int | None = None,
     detail: dict[str, Any] | None = None,
 ) -> None:
     # An audit failure must never break the request it describes.
@@ -55,6 +56,7 @@ def record(
                 target_name=_clip(target_name, 255),
                 outcome=outcome,
                 ip=_clip(ip, 64),
+                project_id=project_id,
                 detail=_clean_detail(detail),
             )
         )

@@ -1,5 +1,5 @@
 from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_ssh_private_key
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -8,10 +8,11 @@ from app.crypto import encrypt_secret
 from app.db import get_db
 from app.hardening import client_ip
 from app.models import Credential, User
-from app.permissions import Permission, guard
+from app.permissions import Permission, Scope, guard
 from app.schemas.credentials import CredentialCreate, CredentialOut
+from app.scoping import get_scoped, readable_project_ids, resolve_write_project
 
-_guard = guard(Permission.SECRETS_LIST, Permission.SECRETS_MANAGE)
+_guard = guard(Permission.SECRETS_LIST, Permission.SECRETS_MANAGE, scope=Scope.PROJECT)
 router = APIRouter(dependencies=[Depends(_guard)])
 
 
@@ -36,8 +37,17 @@ def _validate_private_key(key_bytes: bytes) -> None:
 
 
 @router.get("", response_model=list[CredentialOut])
-def list_credentials(db: Session = Depends(get_db)) -> list[Credential]:
-    return db.query(Credential).order_by(Credential.name).all()
+def list_credentials(
+    request: Request,
+    project_id: int | None = Query(None),
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> list[Credential]:
+    ids = readable_project_ids(db, user, request, Permission.SECRETS_LIST, project_id)
+    query = db.query(Credential)
+    if ids is not None:
+        query = query.filter(Credential.project_id.in_(ids))
+    return query.order_by(Credential.name).all()
 
 
 @router.post("", response_model=CredentialOut, status_code=status.HTTP_201_CREATED)
@@ -47,6 +57,9 @@ def create_credential(
     actor: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> Credential:
+    project_id = resolve_write_project(
+        db, actor, request, payload.project_id, Permission.SECRETS_MANAGE
+    )
     key_bytes = payload.private_key.encode()
     _validate_private_key(key_bytes)
 
@@ -54,6 +67,7 @@ def create_credential(
         name=payload.name,
         description=payload.description,
         encrypted_private_key=encrypt_secret(key_bytes),
+        project_id=project_id,
     )
     db.add(credential)
     try:
@@ -70,6 +84,7 @@ def create_credential(
         target_id=credential.id,
         target_name=credential.name,
         ip=client_ip(request),
+        project_id=credential.project_id,
     )
     return credential
 
@@ -81,10 +96,16 @@ def delete_credential(
     actor: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> None:
-    credential = db.get(Credential, credential_id)
-    if credential is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Credential not found")
-    name = credential.name
+    credential = get_scoped(
+        db,
+        actor,
+        request,
+        Credential,
+        credential_id,
+        Permission.SECRETS_MANAGE,
+        "Credential not found",
+    )
+    name, project_id = credential.name, credential.project_id
     db.delete(credential)
     db.commit()
     audit.record(
@@ -95,4 +116,5 @@ def delete_credential(
         target_id=credential_id,
         target_name=name,
         ip=client_ip(request),
+        project_id=project_id,
     )

@@ -7,9 +7,15 @@ from app.crypto import hash_password, verify_password
 from app.db import get_db
 from app.dependencies import SESSION_COOKIE_NAME, authenticate_token
 from app.hardening import client_ip, ip_login_throttle, user_login_throttle
-from app.models import User
-from app.permissions import permissions_for, require_authenticated
-from app.schemas.auth import ChangePasswordRequest, LoginRequest, UserOut
+from app.models import Project, User
+from app.permissions import (
+    effective_permissions,
+    is_global_admin,
+    project_role_permissions,
+    require_authenticated,
+    user_project_roles,
+)
+from app.schemas.auth import ChangePasswordRequest, LoginRequest, ProjectAccess, UserOut
 from app.security import SESSION_MAX_AGE_SECONDS, create_session_token
 
 router = APIRouter()
@@ -28,11 +34,26 @@ def _get_dummy_hash() -> str:
     return _dummy_hash
 
 
-def _to_out(user: User) -> UserOut:
+def _to_out(db: Session, user: User) -> UserOut:
+    if is_global_admin(user):
+        access = {project.id: (project, "admin") for project in db.query(Project).all()}
+    else:
+        roles = user_project_roles(db, user)
+        projects = db.query(Project).filter(Project.id.in_(roles.keys())).all() if roles else []
+        access = {project.id: (project, roles[project.id]) for project in projects}
     return UserOut(
         username=user.username,
         role=user.role,
-        permissions=sorted(p.value for p in permissions_for(user)),
+        permissions=sorted(p.value for p in effective_permissions(db, user)),
+        projects=[
+            ProjectAccess(
+                id=project.id,
+                name=project.name,
+                role=role,
+                permissions=sorted(p.value for p in project_role_permissions(role)),
+            )
+            for project, role in sorted(access.values(), key=lambda pr: pr[0].name.lower())
+        ],
     )
 
 
@@ -86,7 +107,7 @@ def login(
     user_login_throttle.reset(user_key)
     _set_session_cookie(response, user)
     audit.record(db, "auth.login", actor=user, ip=ip)
-    return _to_out(user)
+    return _to_out(db, user)
 
 
 @router.post("/logout")
@@ -104,8 +125,8 @@ def logout(
 
 
 @router.get("/me", response_model=UserOut)
-def me(current_user: User = Depends(_authenticated)) -> UserOut:
-    return _to_out(current_user)
+def me(current_user: User = Depends(_authenticated), db: Session = Depends(get_db)) -> UserOut:
+    return _to_out(db, current_user)
 
 
 @router.post("/change-password")

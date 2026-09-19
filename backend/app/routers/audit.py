@@ -5,10 +5,12 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import AuditEvent
-from app.permissions import Permission, require_permission
+from app.permissions import Permission, Scope, require_permission
 from app.schemas.audit import AuditEventOut, AuditPage
 
-router = APIRouter(dependencies=[Depends(require_permission(Permission.AUDIT_READ))])
+router = APIRouter(
+    dependencies=[Depends(require_permission(Permission.AUDIT_READ, scope=Scope.GLOBAL))]
+)
 
 
 @router.get("", response_model=AuditPage)
