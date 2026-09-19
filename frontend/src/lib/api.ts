@@ -76,6 +76,27 @@ export interface ProjectMember {
   role: "admin" | "operator" | "viewer";
 }
 
+export type ApiKeyPreset = "trigger" | "read-only";
+
+export interface ApiKey {
+  id: number;
+  name: string;
+  preset: ApiKeyPreset;
+  prefix: string;
+  created_by: string;
+  created_at: string;
+  expires_at: string;
+  last_used_at: string | null;
+  last_used_ip: string | null;
+  revoked_at: string | null;
+  status: "active" | "expired" | "revoked";
+}
+
+// The plaintext token only ever exists in this creation response.
+export interface ApiKeyCreated extends ApiKey {
+  token: string;
+}
+
 export interface AdminUser {
   id: number;
   username: string;
@@ -248,6 +269,15 @@ export const api = {
     }),
   removeProjectMember: (id: number, userId: number) =>
     request<void>(`/projects/${id}/members/${userId}`, { method: "DELETE" }),
+
+  listApiKeys: (projectId: number) => request<ApiKey[]>(`/projects/${projectId}/api-keys`),
+  createApiKey: (projectId: number, name: string, preset: ApiKeyPreset, expiresInDays: number) =>
+    request<ApiKeyCreated>(`/projects/${projectId}/api-keys`, {
+      method: "POST",
+      body: JSON.stringify({ name, preset, expires_in_days: expiresInDays }),
+    }),
+  revokeApiKey: (projectId: number, keyId: number) =>
+    request<void>(`/projects/${projectId}/api-keys/${keyId}`, { method: "DELETE" }),
 
   listUsers: () => request<AdminUser[]>("/users"),
   createUser: (username: string, password: string, role: AdminUser["role"], projectId?: number | null) =>

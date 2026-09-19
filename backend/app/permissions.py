@@ -16,6 +16,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.api_keys import KEY_ROLE_PREFIX
 from app.db import get_db
 from app.dependencies import get_current_user
 from app.hardening import client_ip
@@ -39,6 +40,7 @@ class Permission(StrEnum):
     VAULT_ENCRYPT = "vault:encrypt"
     VAULT_DECRYPT = "vault:decrypt"  # returns plaintext
     MEMBERS_MANAGE = "members:manage"  # add/remove/re-role members of one project
+    API_KEYS_MANAGE = "api_keys:manage"  # create/revoke CI/CD keys of one project
     GALAXY_MANAGE = "galaxy:manage"  # installs run third-party code in the container
     USERS_MANAGE = "users:manage"
     PROJECTS_MANAGE = "projects:manage"  # create / rename / delete projects
@@ -69,6 +71,18 @@ ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
     Role.ADMIN: set(Permission),
 }
 
+# What an API key may do in its one project, keyed by "key:<preset>" (the value its
+# principal carries in place of a member role; the Role enum is untouched, so member
+# APIs can never assign one). Deliberately no become, no extra_vars visibility, no writes.
+KEY_ROLE_PERMISSIONS: dict[str, set[Permission]] = {
+    f"{KEY_ROLE_PREFIX}trigger": {
+        Permission.CONTENT_READ,
+        Permission.SECRETS_LIST,  # a run references a credential by id
+        Permission.RUNS_TRIGGER,
+    },
+    f"{KEY_ROLE_PREFIX}read-only": {Permission.CONTENT_READ},
+}
+
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
@@ -84,6 +98,8 @@ def is_global_admin(user: User) -> bool:
 
 
 def project_role_permissions(role: str) -> set[Permission]:
+    if role in KEY_ROLE_PERMISSIONS:
+        return KEY_ROLE_PERMISSIONS[role]
     try:
         return ROLE_PERMISSIONS[Role(role)] - GLOBAL_ONLY
     except ValueError:
@@ -127,18 +143,31 @@ def effective_permissions(db: Session, user: User) -> set[Permission]:
 
 
 def guard(
-    read: Permission | None, write: Permission | None, *, scope: Scope
+    read: Permission | None, write: Permission | None, *, scope: Scope, api_key: bool = False
 ) -> Callable[..., User]:
     """Route dependency: authenticates, then requires `read` for safe methods and
     `write` otherwise (None = any authenticated user) *in at least one project*.
     Handlers of Scope.PROJECT routes must then resolve the concrete project via
-    app.scoping. Denials are audited."""
+    app.scoping. Denials are audited. API keys are refused unless the route opts in
+    with api_key=True (deny by default; a test pins the opted-in set)."""
 
     def dependency(
         request: Request,
         user: User = Depends(get_current_user),
         db: Session = Depends(get_db),
     ) -> User:
+        if getattr(user, "_api_key_id", None) is not None and not api_key:
+            audit.record(
+                db,
+                "permission.denied",
+                outcome="denied",
+                actor=user,
+                target_type="endpoint",
+                target_name=f"{request.method} {request.url.path}",
+                ip=client_ip(request),
+                detail={"reason": "api keys cannot use this endpoint"},
+            )
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "API keys cannot use this endpoint")
         required = read if request.method in SAFE_METHODS else write
         if required is not None and not holds_somewhere(db, user, required):
             audit.record(
@@ -156,6 +185,7 @@ def guard(
 
     dependency._is_permission_guard = True  # type: ignore[attr-defined]
     dependency._scope = scope  # type: ignore[attr-defined]
+    dependency._allows_api_key = api_key  # type: ignore[attr-defined]
     return dependency
 
 

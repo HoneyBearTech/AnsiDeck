@@ -145,3 +145,7 @@ class FailureThrottle:
 # elsewhere, plus a per-IP ceiling against password spraying across usernames.
 user_login_throttle = FailureThrottle(max_failures=5, window_seconds=300)
 ip_login_throttle = FailureThrottle(max_failures=20, window_seconds=300)
+
+# Bad API keys, per client IP. The tokens are unguessable, so this is about not letting
+# a scanner hammer the DB and the audit log rather than about brute force.
+api_key_ip_throttle = FailureThrottle(max_failures=20, window_seconds=300)

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app import audit
 from app.db import get_db
-from app.dependencies import SESSION_COOKIE_NAME, authenticate_token
+from app.dependencies import SESSION_COOKIE_NAME, RateLimited, authenticate_request
 from app.hardening import client_ip
 from app.models import (
     Credential,
@@ -42,7 +42,8 @@ router = APIRouter()
 _ACTIVE_STATUSES = (RunStatus.QUEUED.value, RunStatus.RUNNING.value)
 
 
-_guard = guard(Permission.CONTENT_READ, Permission.RUNS_TRIGGER, scope=Scope.PROJECT)
+# The only routes an API key may reach (a test pins this set).
+_guard = guard(Permission.CONTENT_READ, Permission.RUNS_TRIGGER, scope=Scope.PROJECT, api_key=True)
 HIDDEN = "[HIDDEN]"
 
 
@@ -244,9 +245,18 @@ def get_run(
 
 @router.websocket("/{run_id}/ws")
 async def run_ws(websocket: WebSocket, run_id: int, db: Session = Depends(get_db)) -> None:
-    # Manually guarded (no Depends on a WebSocket): authenticate the cookie
-    # against the DB and require the same read permission as the HTTP routes.
-    user = authenticate_token(db, websocket.cookies.get(SESSION_COOKIE_NAME))
+    # Manually guarded (no Depends on a WebSocket): authenticate the cookie (or an
+    # Authorization header, for CI clients) against the DB and require the same read
+    # permission as the HTTP routes.
+    try:
+        user = authenticate_request(
+            db,
+            cookie_token=websocket.cookies.get(SESSION_COOKIE_NAME),
+            authorization=websocket.headers.get("authorization"),
+            ip=client_ip(websocket),
+        )
+    except RateLimited:
+        user = None
     if user is None:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return

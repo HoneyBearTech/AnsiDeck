@@ -12,7 +12,11 @@ from app.bootstrap import seed_admin_user  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.crypto import hash_password  # noqa: E402
 from app.db import get_engine, get_sessionmaker, init_db  # noqa: E402
-from app.hardening import ip_login_throttle, user_login_throttle  # noqa: E402
+from app.hardening import (  # noqa: E402
+    api_key_ip_throttle,
+    ip_login_throttle,
+    user_login_throttle,
+)
 from app.main import app  # noqa: E402
 from app.models import Project, ProjectMember, User  # noqa: E402
 
@@ -26,6 +30,7 @@ def client(tmp_path, monkeypatch) -> Generator[TestClient, None, None]:
 
     user_login_throttle.clear()
     ip_login_throttle.clear()
+    api_key_ip_throttle.clear()
     init_db()
 
     seed_db = get_sessionmaker()()

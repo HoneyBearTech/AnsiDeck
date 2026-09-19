@@ -44,6 +44,10 @@ def record(
     project_id: int | None = None,
     detail: dict[str, Any] | None = None,
 ) -> None:
+    # Requests made with an API key have no user row; record which key acted.
+    api_key_id = getattr(actor, "_api_key_id", None)
+    if api_key_id is not None:
+        detail = {**(detail or {}), "api_key_id": api_key_id}
     # An audit failure must never break the request it describes.
     try:
         db.add(

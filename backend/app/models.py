@@ -74,6 +74,31 @@ class ProjectMember(Base):
     role: Mapped[str] = mapped_column(String(20))
 
 
+class ApiKey(Base):
+    """A project-owned credential for CI/CD. Only a SHA-256 of the token is stored;
+    the plaintext is shown once, at creation. Revoking is a soft delete so the
+    history (and audit trail) stays intact."""
+
+    __tablename__ = "api_keys"
+    __table_args__ = (UniqueConstraint("project_id", "name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(64))
+    preset: Mapped[str] = mapped_column(String(20))
+    prefix: Mapped[str] = mapped_column(String(16), unique=True, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(150))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    last_used_ip: Mapped[str | None] = mapped_column(String(64), default=None)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    revoked_by: Mapped[str | None] = mapped_column(String(150), default=None)
+
+
 class Credential(Base):
     __tablename__ = "credentials"
 

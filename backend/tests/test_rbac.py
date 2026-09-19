@@ -1,13 +1,13 @@
 import json
 
 import pytest
-from fastapi.routing import APIRoute, APIWebSocketRoute
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app.main import app
 from app.permissions import ROLE_PERMISSIONS, Permission, Role
 from tests.conftest import make_user_client
+from tests.routes import iter_api_routes
 
 ALL = {"viewer", "operator", "admin"}
 OPERATOR_UP = {"operator", "admin"}
@@ -46,6 +46,9 @@ MATRIX = [
     ("DELETE", "/api/users/999", ADMIN),
     ("GET", "/api/audit", ADMIN),
     ("GET", "/api/auth/me", ALL),
+    ("GET", "/api/projects/1/api-keys", ADMIN),
+    ("POST", "/api/projects/1/api-keys", ADMIN),
+    ("DELETE", "/api/projects/1/api-keys/999", ADMIN),
 ]
 
 
@@ -69,11 +72,8 @@ PUBLIC = {("/api/health", "GET"), ("/api/auth/login", "POST"), ("/api/auth/logou
 
 def test_every_route_carries_a_permission_guard_or_is_explicitly_public() -> None:
     unguarded = []
-    for route in app.routes:
-        if isinstance(route, APIWebSocketRoute):
-            continue  # guarded manually; covered by the websocket tests below
-        if not isinstance(route, APIRoute):
-            continue  # docs/openapi
+    # (WebSocket routes aren't APIRoutes; they're guarded manually and covered below.)
+    for route in iter_api_routes(app):
         guarded = any(
             getattr(d.call, "_is_permission_guard", False) for d in _walk(route.dependant)
         )

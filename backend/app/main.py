@@ -11,9 +11,7 @@ from app.config import get_settings
 from app.db import get_sessionmaker, init_db
 from app.hardening import OriginCheckMiddleware, disable_process_inspection
 from app.routers import (
-    audit as audit_router,
-)
-from app.routers import (
+    api_keys,
     auth,
     credentials,
     galaxy,
@@ -25,6 +23,9 @@ from app.routers import (
     users,
     vault,
     vault_passwords,
+)
+from app.routers import (
+    audit as audit_router,
 )
 from app.run_engine import set_event_loop
 
@@ -67,5 +68,6 @@ app.include_router(vault.router, prefix="/api/vault", tags=["vault"])
 app.include_router(galaxy.router, prefix="/api/galaxy", tags=["galaxy"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(runs.router, prefix="/api/runs", tags=["runs"])
+app.include_router(api_keys.router, prefix="/api/projects/{project_id}/api-keys", tags=["api-keys"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(audit_router.router, prefix="/api/audit", tags=["audit"])

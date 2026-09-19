@@ -1,7 +1,6 @@
 import sqlite3
 
 import pytest
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -11,6 +10,7 @@ from app.db import get_engine, get_sessionmaker, init_db
 from app.main import app
 from app.permissions import Permission, Scope
 from tests.conftest import make_user_client
+from tests.routes import iter_api_routes
 from tests.test_rbac import _walk
 from tests.test_runs import _generate_key_pem, _wait_for_completion
 
@@ -226,10 +226,14 @@ def test_every_project_scoped_route_with_an_id_is_covered_by_the_idor_matrix() -
         ("PUT", "/api/projects/{project_id}/members/{user_id}"),
         ("POST", "/api/projects/{project_id}/members"),
         ("DELETE", "/api/projects/{project_id}/members/{user_id}"),
+        # API keys: exercised in tests/test_api_keys.py (incl. cross-project revoke)
+        ("GET", "/api/projects/{project_id}/api-keys"),
+        ("POST", "/api/projects/{project_id}/api-keys"),
+        ("DELETE", "/api/projects/{project_id}/api-keys/{key_id}"),
     }
     found = set()
-    for route in app.routes:
-        if not isinstance(route, APIRoute) or "{" not in route.path:
+    for route in iter_api_routes(app):
+        if "{" not in route.path:
             continue
         scopes = {
             getattr(d.call, "_scope", None)
@@ -242,9 +246,7 @@ def test_every_project_scoped_route_with_an_id_is_covered_by_the_idor_matrix() -
 
 
 def test_every_guard_declares_a_scope() -> None:
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
-            continue
+    for route in iter_api_routes(app):
         guards = [
             d.call for d in _walk(route.dependant) if getattr(d.call, "_is_permission_guard", False)
         ]
