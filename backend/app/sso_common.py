@@ -15,8 +15,9 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.config import Settings, get_settings
+from app.config import Settings
 from app.models import User
+from app.security import timed_serializer
 
 STATE_MAX_AGE_SECONDS = 600
 HTTP_TIMEOUT_SECONDS = 10.0
@@ -47,7 +48,7 @@ def pkce_challenge(verifier: str) -> str:
 
 def _state_serializer(flow: str) -> URLSafeTimedSerializer:
     # One salt per flow, so a state cookie from one provider can't be replayed at another.
-    return URLSafeTimedSerializer(get_settings().auth_secret_key, salt=f"ansideck-{flow}-state")
+    return timed_serializer(f"ansideck-{flow}-state")
 
 
 def sign_state(flow: str, payload: dict) -> str:
