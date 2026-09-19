@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       security-events: write # upload the SARIF results to code scanning
+      id-token: write # publish results to the OpenSSF API (README badge)
       contents: read
       actions: read
 
@@ -22,13 +23,14 @@ jobs:
         with:
           persist-credentials: false
 
-      # Results stay in this repository's code-scanning alerts. Set publish_results: true
-      # (and grant id-token: write) to publish them to the public OpenSSF API, e.g. for a badge.
+      # publish_results sends this public repository's results to the OpenSSF API, which is
+      # what the README badge reads. Set it to false (and drop id-token: write) to keep them
+      # in this repository's code-scanning alerts only.
       - uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
         with:
           results_file: results.sarif
           results_format: sarif
-          publish_results: false
+          publish_results: true
 
       - uses: github/codeql-action/upload-sarif@3ea06614dafe36dec890db3446326e0d40ce53d4 # v3
         with:
