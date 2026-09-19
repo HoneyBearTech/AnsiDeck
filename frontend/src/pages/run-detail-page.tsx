@@ -71,6 +71,10 @@ export function RunDetailPage() {
             <pre className="overflow-x-auto rounded-md bg-muted p-4 font-mono text-sm">
               {JSON.stringify(run.extra_vars, null, 2)}
             </pre>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Values whose names look secret (password, token, key, …) are masked here and in
+              the run output.
+            </p>
           </CardContent>
         </Card>
       )}

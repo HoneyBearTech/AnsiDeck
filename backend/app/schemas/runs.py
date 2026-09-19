@@ -3,6 +3,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from app.scrub import mask_secret_keys
+
 
 class RunCreate(BaseModel):
     playbook_id: int
@@ -45,3 +47,8 @@ class RunOut(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime
+
+    @field_validator("extra_vars")
+    @classmethod
+    def _mask_secret_looking_values(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        return mask_secret_keys(v) if v is not None else None

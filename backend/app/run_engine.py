@@ -13,6 +13,7 @@ from app.db import get_sessionmaker
 from app.galaxy import galaxy_env
 from app.inventory_render import render_inventory_yaml
 from app.models import Credential, Inventory, InventoryGroup, Run, RunStatus, VaultPassword
+from app.scrub import build_scrubber, collect_secrets
 from app.storage import playbook_path, run_log_path
 
 DONE = object()
@@ -108,6 +109,16 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
         rendered_inventory = render_inventory_yaml(inventory_obj, group_obj)
         playbook_text = playbook_path(run.playbook_id).read_text()
 
+        scrub_event = build_scrubber(
+            collect_secrets(
+                ssh_key_pem=private_key_pem,
+                vault_password=vault_password_plain,
+                playbook_text=playbook_text,
+                extra_vars=run.extra_vars,
+                host_vars=[host.vars or {} for host in inventory_obj.hosts],
+            )
+        )
+
         pdd = private_data_dir or tempfile.mkdtemp(prefix=f"ansideck-run-{run_id}-")
         try:
             project_dir = Path(pdd) / "project"
@@ -120,8 +131,10 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
             inventory_path.write_text(rendered_inventory)
 
             with run_log_path(run_id).open("w", encoding="utf-8") as log_file:
-
+                # Must return None: ansible-runner writes its own unscrubbed
+                # job_events when the handler returns truthy.
                 def on_event(event: dict) -> None:
+                    event = scrub_event(event)
                     log_file.write(json.dumps(event) + "\n")
                     log_file.flush()
                     stream.publish(event)

@@ -8,6 +8,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from fastapi.testclient import TestClient
 
+REDACTED_MARKER = "[REDACTED]"
+
 SUCCESS_PLAYBOOK = """\
 - hosts: all
   connection: local
@@ -670,3 +672,170 @@ def test_deleting_vault_password_keeps_run_history_name(client: TestClient, tmp_
 
     run = client.get(f"/api/runs/{run_id}").json()
     assert run["vault_password_name"] == "ephemeral-vault"
+
+
+SCRUB_PLAYBOOK_TEMPLATE = """\
+- hosts: all
+  connection: local
+  gather_facts: false
+  vars:
+{vault_block}
+  tasks:
+    - name: print vault-decrypted var
+      ansible.builtin.debug:
+        msg: "vault: {{{{ vaulted_secret }}}}"
+    - name: print secret extra var
+      ansible.builtin.debug:
+        msg: "extra: {{{{ db_password }}}}"
+    - name: print secret host var
+      ansible.builtin.debug:
+        msg: "hostvar: {{{{ ansible_password }}}}"
+    - name: print short secret
+      ansible.builtin.debug:
+        msg: "short: {{{{ tiny_secret }}}}"
+    - name: print a key block
+      ansible.builtin.debug:
+        msg: |
+          -----BEGIN RSA PRIVATE KEY-----
+          MIIEpAIBAAKCAQEAplantedkeymaterial0123456789
+          -----END RSA PRIVATE KEY-----
+    - name: print credentials from a task
+      ansible.builtin.debug:
+        msg: "curl -H 'Authorization: Bearer planted.bearer-token_123' https://deploy:planted-url-pw@example.com/x"
+    - name: print something harmless
+      ansible.builtin.debug:
+        msg: "visible: hello world"
+    - name: no_log task
+      ansible.builtin.debug:
+        msg: "nolog: {{{{ db_password }}}}"
+      no_log: true
+"""
+
+SCRUB_PLANTED = {
+    "vault": "planted-vault-plaintext-111",
+    "extra": "planted-extra-var-222",
+    "hostvar": "planted-host-var-333",
+    "key": "MIIEpAIBAAKCAQEAplantedkeymaterial0123456789",
+    "bearer": "planted.bearer-token_123",
+    "urlpw": "planted-url-pw",
+}
+
+
+def _scrub_run(client: TestClient, tmp_path) -> tuple[int, str]:
+    vault_password_id = _create_vault_password(client)
+    encrypted = client.post(
+        "/api/vault/encrypt",
+        json={
+            "vault_password_id": vault_password_id,
+            "plaintext": SCRUB_PLANTED["vault"],
+            "var_name": "vaulted_secret",
+        },
+    ).json()
+    playbook_id = _create_playbook(
+        client,
+        SCRUB_PLAYBOOK_TEMPLATE.format(
+            vault_block=textwrap.indent(encrypted["yaml_block"], "    ")
+        ),
+        name="scrub.yml",
+    )
+    inv = client.post("/api/inventories", json={"name": "scrub-inv"}).json()
+    client.post(
+        f"/api/inventories/{inv['id']}/hosts",
+        json={"hostname": "scrub-host", "vars": {"ansible_password": SCRUB_PLANTED["hostvar"]}},
+    )
+    credential_id = _create_credential(client)
+
+    response = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inv["id"],
+            "credential_id": credential_id,
+            "vault_password_id": vault_password_id,
+            "extra_vars": {"db_password": SCRUB_PLANTED["extra"], "tiny_secret": "abc"},
+        },
+    )
+    assert response.status_code == 201
+    run_id = response.json()["id"]
+    run = _wait_for_completion(client, run_id)
+    assert run["status"] == "success", run
+    return run_id, response.text
+
+
+def test_run_output_is_scrubbed_in_log_stream_and_replay(client: TestClient, tmp_path) -> None:
+    from app.run_engine import get_or_create_stream
+
+    _login(client)
+    run_id, create_body = _scrub_run(client, tmp_path)
+
+    log_text = (tmp_path / "runs" / f"{run_id}.jsonl").read_text()
+    backlog_text = json.dumps(get_or_create_stream(run_id).events)
+    with client.websocket_connect(f"/api/runs/{run_id}/ws") as ws:
+        replay_text = ""
+        try:
+            while True:
+                replay_text += ws.receive_text()
+        except Exception:  # noqa: BLE001 - server closes the socket when replay ends
+            pass
+    api_text = client.get(f"/api/runs/{run_id}").text + client.get("/api/runs").text
+
+    for name, text in {
+        "jsonl": log_text,
+        "backlog": backlog_text,
+        "replay": replay_text,
+        "api": api_text,
+        "create-response": create_body,
+    }.items():
+        for label, secret in SCRUB_PLANTED.items():
+            assert secret not in text, f"{label} secret leaked into {name}"
+
+    assert replay_text, "expected the replay to contain events"
+    assert REDACTED_MARKER in log_text
+    assert "visible: hello world" in log_text
+
+    events = [json.loads(line) for line in log_text.splitlines() if line.strip()]
+    assert all("event" in e for e in events)
+    assert {"playbook_on_start", "runner_on_ok", "playbook_on_stats"} <= {
+        e["event"] for e in events
+    }
+
+
+def test_run_output_no_log_task_stays_censored(client: TestClient, tmp_path) -> None:
+    _login(client)
+    run_id, _ = _scrub_run(client, tmp_path)
+    log_text = (tmp_path / "runs" / f"{run_id}.jsonl").read_text()
+    assert "no_log: true" in log_text
+
+
+def test_short_secret_does_not_shred_run_output(client: TestClient, tmp_path) -> None:
+    _login(client)
+    run_id, _ = _scrub_run(client, tmp_path)
+    log_text = (tmp_path / "runs" / f"{run_id}.jsonl").read_text()
+    # "abc" is below the redaction threshold: it stays visible rather than
+    # shredding every occurrence in the log (documented limitation).
+    assert "short: abc" in log_text
+
+
+def test_run_response_masks_secret_looking_extra_vars(client: TestClient, tmp_path) -> None:
+    _login(client)
+    playbook_id = _create_playbook(client, EXTRA_VARS_PLAYBOOK, name="mask.yml")
+    inventory_id, _host_id = _create_inventory_with_host(client, str(tmp_path / "marker.txt"))
+    credential_id = _create_credential(client)
+
+    response = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_id,
+            "credential_id": credential_id,
+            "extra_vars": {"greeting": "hello mask", "db_password": "masked-me-please"},
+        },
+    )
+    assert response.status_code == 201
+    run_id = response.json()["id"]
+    assert response.json()["extra_vars"] == {"greeting": "hello mask", "db_password": "[REDACTED]"}
+    _wait_for_completion(client, run_id)
+
+    for text in (client.get(f"/api/runs/{run_id}").text, client.get("/api/runs").text):
+        assert "masked-me-please" not in text
+        assert "hello mask" in text
