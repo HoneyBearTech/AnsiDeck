@@ -78,12 +78,25 @@ export interface Credential {
   created_at: string;
 }
 
+export interface VaultPassword {
+  id: number;
+  name: string;
+  description: string | null;
+  created_at: string;
+}
+
+export interface VaultEncryptResult {
+  vault_text: string;
+  yaml_block: string;
+}
+
 export interface Run {
   id: number;
   playbook_name: string;
   inventory_name: string;
   group_name: string | null;
   credential_name: string;
+  vault_password_name: string | null;
   become: boolean;
   check_mode: boolean;
   diff_mode: boolean;
@@ -172,6 +185,29 @@ export const api = {
     }),
   deleteCredential: (id: number) => request<void>(`/credentials/${id}`, { method: "DELETE" }),
 
+  listVaultPasswords: () => request<VaultPassword[]>("/vault-passwords"),
+  createVaultPassword: (name: string, password: string, description?: string) =>
+    request<VaultPassword>("/vault-passwords", {
+      method: "POST",
+      body: JSON.stringify({ name, description, password }),
+    }),
+  deleteVaultPassword: (id: number) =>
+    request<void>(`/vault-passwords/${id}`, { method: "DELETE" }),
+  encryptVaultString: (vaultPasswordId: number, plaintext: string, varName?: string) =>
+    request<VaultEncryptResult>("/vault/encrypt", {
+      method: "POST",
+      body: JSON.stringify({
+        vault_password_id: vaultPasswordId,
+        plaintext,
+        var_name: varName || null,
+      }),
+    }),
+  decryptVaultString: (vaultPasswordId: number, ciphertext: string) =>
+    request<{ plaintext: string }>("/vault/decrypt", {
+      method: "POST",
+      body: JSON.stringify({ vault_password_id: vaultPasswordId, ciphertext }),
+    }),
+
   listRuns: () => request<Run[]>("/runs"),
   getRun: (id: number) => request<Run>(`/runs/${id}`),
   createRun: (payload: {
@@ -179,6 +215,7 @@ export const api = {
     inventory_id: number;
     group_id?: number | null;
     credential_id: number;
+    vault_password_id?: number | null;
     become: boolean;
     check_mode: boolean;
     diff_mode: boolean;

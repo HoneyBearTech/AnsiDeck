@@ -13,6 +13,7 @@ import { PlaybooksPage } from "@/pages/playbooks-page";
 import { RunDetailPage } from "@/pages/run-detail-page";
 import { RunTriggerPage } from "@/pages/run-trigger-page";
 import { RunsPage } from "@/pages/runs-page";
+import { VaultPage } from "@/pages/vault-page";
 
 function App() {
   return (
@@ -33,6 +34,7 @@ function App() {
           <Route path="/inventories" element={<InventoriesPage />} />
           <Route path="/inventories/:id" element={<InventoryDetailPage />} />
           <Route path="/credentials" element={<CredentialsPage />} />
+          <Route path="/vault" element={<VaultPage />} />
           <Route path="/runs" element={<RunsPage />} />
           <Route path="/runs/new" element={<RunTriggerPage />} />
           <Route path="/runs/:id" element={<RunDetailPage />} />

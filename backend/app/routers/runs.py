@@ -3,7 +3,15 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.dependencies import SESSION_COOKIE_NAME, get_current_user
-from app.models import Credential, Inventory, InventoryGroup, Playbook, Run, RunStatus
+from app.models import (
+    Credential,
+    Inventory,
+    InventoryGroup,
+    Playbook,
+    Run,
+    RunStatus,
+    VaultPassword,
+)
 from app.run_engine import DONE, get_or_create_stream, start_run
 from app.schemas.runs import RunCreate, RunOut
 from app.security import verify_session_token
@@ -45,6 +53,12 @@ def create_run(
     if credential is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Credential not found")
 
+    vault_password = None
+    if payload.vault_password_id is not None:
+        vault_password = db.get(VaultPassword, payload.vault_password_id)
+        if vault_password is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Vault password not found")
+
     # Coarse guard: block a second run against the same inventory while one
     # is already active, rather than resolving exact host-set overlap. Zero
     # false negatives (any real host collision is necessarily within the
@@ -72,6 +86,8 @@ def create_run(
         group_name=group.name if group else None,
         credential_id=credential.id,
         credential_name=credential.name,
+        vault_password_id=vault_password.id if vault_password else None,
+        vault_password_name=vault_password.name if vault_password else None,
         become=payload.become,
         check_mode=payload.check_mode,
         diff_mode=payload.diff_mode,

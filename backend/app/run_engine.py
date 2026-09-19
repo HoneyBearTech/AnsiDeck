@@ -11,7 +11,7 @@ import ansible_runner
 from app.crypto import decrypt_secret
 from app.db import get_sessionmaker
 from app.inventory_render import render_inventory_yaml
-from app.models import Credential, Inventory, InventoryGroup, Run, RunStatus
+from app.models import Credential, Inventory, InventoryGroup, Run, RunStatus, VaultPassword
 from app.storage import playbook_path, run_log_path
 
 DONE = object()
@@ -97,6 +97,11 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
         credential = db.get(Credential, run.credential_id)
         private_key_pem = decrypt_secret(credential.encrypted_private_key).decode()
 
+        vault_password_plain = None
+        if run.vault_password_id is not None:
+            vault_password = db.get(VaultPassword, run.vault_password_id)
+            vault_password_plain = decrypt_secret(vault_password.encrypted_password).decode()
+
         inventory_obj = db.get(Inventory, run.inventory_id)
         group_obj = db.get(InventoryGroup, run.group_id) if run.group_id else None
         rendered_inventory = render_inventory_yaml(inventory_obj, group_obj)
@@ -127,6 +132,8 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
                     flags.append("--check")
                 if run.diff_mode:
                     flags.append("--diff")
+                if vault_password_plain is not None:
+                    flags.append("--ask-vault-pass")
 
                 runner = ansible_runner.run(
                     private_data_dir=pdd,
@@ -136,6 +143,11 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
                     cmdline=" ".join(flags) or None,
                     limit=run.limit,
                     extravars=run.extra_vars or {},
+                    passwords=(
+                        {r"Vault password:\s*?$": vault_password_plain}
+                        if vault_password_plain is not None
+                        else None
+                    ),
                     event_handler=on_event,
                 )
         finally:

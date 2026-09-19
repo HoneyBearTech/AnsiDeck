@@ -16,9 +16,11 @@ import {
   type InventoryDetail,
   type InventorySummary,
   type PlaybookSummary,
+  type VaultPassword,
 } from "@/lib/api";
 
 const ALL_HOSTS = "__all__";
+const NO_VAULT = "__none__";
 
 export function RunTriggerPage() {
   const navigate = useNavigate();
@@ -27,12 +29,14 @@ export function RunTriggerPage() {
   const [playbooks, setPlaybooks] = React.useState<PlaybookSummary[]>([]);
   const [inventories, setInventories] = React.useState<InventorySummary[]>([]);
   const [credentials, setCredentials] = React.useState<Credential[]>([]);
+  const [vaultPasswords, setVaultPasswords] = React.useState<VaultPassword[]>([]);
   const [selectedInventory, setSelectedInventory] = React.useState<InventoryDetail | null>(null);
 
   const [playbookId, setPlaybookId] = React.useState<string>("");
   const [inventoryId, setInventoryId] = React.useState<string>("");
   const [groupId, setGroupId] = React.useState<string>(ALL_HOSTS);
   const [credentialId, setCredentialId] = React.useState<string>("");
+  const [vaultPasswordId, setVaultPasswordId] = React.useState<string>(NO_VAULT);
   const [become, setBecome] = React.useState(false);
   const [becomeConfirmed, setBecomeConfirmed] = React.useState(false);
   const [checkMode, setCheckMode] = React.useState(false);
@@ -46,6 +50,7 @@ export function RunTriggerPage() {
     api.listPlaybooks().then(setPlaybooks);
     api.listInventories().then(setInventories);
     api.listCredentials().then(setCredentials);
+    api.listVaultPasswords().then(setVaultPasswords);
   }, []);
 
   React.useEffect(() => {
@@ -82,6 +87,7 @@ export function RunTriggerPage() {
         inventory_id: Number(inventoryId),
         group_id: groupId === ALL_HOSTS ? null : Number(groupId),
         credential_id: Number(credentialId),
+        vault_password_id: vaultPasswordId === NO_VAULT ? null : Number(vaultPasswordId),
         become,
         check_mode: checkMode,
         diff_mode: diffMode,
@@ -165,6 +171,26 @@ export function RunTriggerPage() {
             ))}
           </SelectContent>
         </Select>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <Label>Vault password (optional)</Label>
+        <Select value={vaultPasswordId} onValueChange={setVaultPasswordId}>
+          <SelectTrigger>
+            <SelectValue placeholder="None" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NO_VAULT}>None</SelectItem>
+            {vaultPasswords.map((vaultPassword) => (
+              <SelectItem key={vaultPassword.id} value={String(vaultPassword.id)}>
+                {vaultPassword.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          Needed only if the playbook or extra vars contain Ansible Vault-encrypted values.
+        </p>
       </div>
 
       <div className="flex flex-col gap-2">

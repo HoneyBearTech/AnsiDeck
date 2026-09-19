@@ -11,9 +11,16 @@ from app.storage import playbook_path
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
+class _PlaybookLoader(yaml.SafeLoader):
+    """SafeLoader that tolerates Ansible's `!vault` tag (inline-encrypted values)."""
+
+
+_PlaybookLoader.add_constructor("!vault", lambda loader, node: loader.construct_scalar(node))
+
+
 def _validate_yaml(content: str) -> None:
     try:
-        yaml.safe_load(content)
+        yaml.load(content, Loader=_PlaybookLoader)  # noqa: S506 - SafeLoader subclass
     except yaml.YAMLError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Invalid YAML: {exc}") from exc
 

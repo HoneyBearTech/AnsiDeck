@@ -52,6 +52,7 @@ export function RunDetailPage() {
           </h1>
           <p className="text-sm text-muted-foreground">
             Triggered by {run.triggered_by} · credential {run.credential_name}
+            {run.vault_password_name && ` · vault: ${run.vault_password_name}`}
             {run.become && " · become"}
             {run.check_mode && " · check"}
             {run.diff_mode && " · diff"}

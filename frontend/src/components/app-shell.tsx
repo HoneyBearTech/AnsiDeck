@@ -33,6 +33,7 @@ export function AppShell() {
             <NavItem to="/playbooks" label="Playbooks" />
             <NavItem to="/inventories" label="Inventories" />
             <NavItem to="/credentials" label="Credentials" />
+            <NavItem to="/vault" label="Vault" />
             <NavItem to="/runs" label="Runs" />
           </nav>
         </div>

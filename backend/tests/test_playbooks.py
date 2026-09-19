@@ -106,3 +106,26 @@ def test_playbook_storage_is_id_keyed_not_name_derived(client: TestClient, tmp_p
     playbooks_dir = tmp_path / "playbooks"
     files = list(playbooks_dir.glob("*"))
     assert files == [playbooks_dir / f"{playbook_id}.yml"]
+
+
+def test_playbook_with_inline_vault_value_is_accepted(client: TestClient) -> None:
+    _login(client)
+    content = (
+        "- hosts: all\n"
+        "  vars:\n"
+        "    db_pass: !vault |\n"
+        "          $ANSIBLE_VAULT;1.1;AES256\n"
+        "          6162636465666768696a6b6c6d6e6f70\n"
+        "  tasks:\n"
+        "    - debug:\n"
+        "        msg: hello\n"
+    )
+    response = client.post("/api/playbooks", json={"name": "vaulted.yml", "content": content})
+    assert response.status_code == 201
+
+
+def test_playbook_with_unsafe_yaml_tag_is_still_rejected(client: TestClient) -> None:
+    _login(client)
+    content = "- hosts: all\n  vars:\n    x: !!python/object/apply:os.system ['echo hi']\n"
+    response = client.post("/api/playbooks", json={"name": "unsafe.yml", "content": content})
+    assert response.status_code == 400

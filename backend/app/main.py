@@ -8,7 +8,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.bootstrap import seed_admin_user
 from app.config import get_settings
 from app.db import get_sessionmaker, init_db
-from app.routers import auth, credentials, health, inventories, playbooks, runs
+from app.routers import (
+    auth,
+    credentials,
+    health,
+    inventories,
+    playbooks,
+    runs,
+    vault,
+    vault_passwords,
+)
 from app.run_engine import set_event_loop
 
 settings = get_settings()
@@ -41,4 +50,6 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(playbooks.router, prefix="/api/playbooks", tags=["playbooks"])
 app.include_router(inventories.router, prefix="/api/inventories", tags=["inventories"])
 app.include_router(credentials.router, prefix="/api/credentials", tags=["credentials"])
+app.include_router(vault_passwords.router, prefix="/api/vault-passwords", tags=["vault-passwords"])
+app.include_router(vault.router, prefix="/api/vault", tags=["vault"])
 app.include_router(runs.router, prefix="/api/runs", tags=["runs"])

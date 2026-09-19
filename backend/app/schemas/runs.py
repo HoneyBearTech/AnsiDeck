@@ -9,6 +9,7 @@ class RunCreate(BaseModel):
     inventory_id: int
     group_id: int | None = None
     credential_id: int
+    vault_password_id: int | None = None
     become: bool = False
     check_mode: bool = False
     diff_mode: bool = False
@@ -32,6 +33,7 @@ class RunOut(BaseModel):
     inventory_name: str
     group_name: str | None
     credential_name: str
+    vault_password_name: str | None
     become: bool
     check_mode: bool
     diff_mode: bool

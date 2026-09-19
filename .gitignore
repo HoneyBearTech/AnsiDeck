@@ -225,6 +225,8 @@ npm-debug.log*
 # ---- Ansible-specific ----
 *.retry
 *vault_pass*
+# ...except this app's own Python source (routers/schemas/tests named vault_passwords)
+!backend/**/*vault_pass*.py
 .vault_pass
 *.vault-password
 *.pem

@@ -1,6 +1,7 @@
 import glob
 import json
 import tempfile
+import textwrap
 import time
 
 from cryptography.hazmat.primitives import serialization
@@ -37,6 +38,19 @@ EXTRA_VARS_PLAYBOOK = """\
       ansible.builtin.copy:
         content: "{{ greeting }}"
         dest: "{{ marker_path }}"
+"""
+
+VAULT_VAR_PLAYBOOK_TEMPLATE = """\
+- hosts: all
+  connection: local
+  gather_facts: false
+  vars:
+{vault_block}
+  tasks:
+    - name: write decrypted vault var
+      ansible.builtin.copy:
+        content: "{{{{ secret_value }}}}"
+        dest: "{{{{ marker_path }}}}"
 """
 
 PAUSE_PLAYBOOK = """\
@@ -115,6 +129,31 @@ def _create_credential(client: TestClient) -> int:
     )
     assert response.status_code == 201
     return response.json()["id"]
+
+
+def _create_vault_password(
+    client: TestClient, name: str = "test-vault", password: str = "vault-pass"
+) -> int:
+    response = client.post("/api/vault-passwords", json={"name": name, "password": password})
+    assert response.status_code == 201
+    return response.json()["id"]
+
+
+def _encrypt_with_vault(client: TestClient, vault_password_id: int, plaintext: str) -> dict:
+    response = client.post(
+        "/api/vault/encrypt",
+        json={
+            "vault_password_id": vault_password_id,
+            "plaintext": plaintext,
+            "var_name": "secret_value",
+        },
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def _vault_var_playbook(yaml_block: str) -> str:
+    return VAULT_VAR_PLAYBOOK_TEMPLATE.format(vault_block=textwrap.indent(yaml_block, "    "))
 
 
 def _wait_for_completion(client: TestClient, run_id: int, timeout: float = 15.0) -> dict:
@@ -455,3 +494,179 @@ def test_concurrency_guard_allows_different_inventories_concurrently(
 
     _wait_for_completion(client, first.json()["id"])
     _wait_for_completion(client, second.json()["id"])
+
+
+def test_create_run_rejects_missing_vault_password(client: TestClient, tmp_path) -> None:
+    _login(client)
+    playbook_id = _create_playbook(client, SUCCESS_PLAYBOOK)
+    inventory_id, _host_id = _create_inventory_with_host(client, str(tmp_path / "marker.txt"))
+    credential_id = _create_credential(client)
+
+    response = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_id,
+            "credential_id": credential_id,
+            "vault_password_id": 999,
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_run_decrypts_vault_var_in_playbook(client: TestClient, tmp_path) -> None:
+    _login(client)
+    vault_password_id = _create_vault_password(client)
+    encrypted = _encrypt_with_vault(client, vault_password_id, "decrypted-from-playbook")
+    playbook_id = _create_playbook(
+        client, _vault_var_playbook(encrypted["yaml_block"]), name="vault-playbook.yml"
+    )
+    inventory_id, _host_id = _create_inventory_with_host(client, str(tmp_path / "marker.txt"))
+    credential_id = _create_credential(client)
+
+    create_response = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_id,
+            "credential_id": credential_id,
+            "vault_password_id": vault_password_id,
+        },
+    )
+    assert create_response.status_code == 201
+    assert create_response.json()["vault_password_name"] == "test-vault"
+
+    run = _wait_for_completion(client, create_response.json()["id"])
+    assert run["status"] == "success", run
+    assert (tmp_path / "marker.txt").read_text() == "decrypted-from-playbook"
+
+
+def test_run_decrypts_raw_envelope_in_extra_vars(client: TestClient, tmp_path) -> None:
+    _login(client)
+    vault_password_id = _create_vault_password(client)
+    encrypted = _encrypt_with_vault(client, vault_password_id, "decrypted-from-extra-vars")
+    playbook_id = _create_playbook(client, EXTRA_VARS_PLAYBOOK, name="vault-extra-vars.yml")
+    inventory_id, _host_id = _create_inventory_with_host(client, str(tmp_path / "marker.txt"))
+    credential_id = _create_credential(client)
+
+    create_response = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_id,
+            "credential_id": credential_id,
+            "vault_password_id": vault_password_id,
+            "extra_vars": {"greeting": encrypted["vault_text"]},
+        },
+    )
+    assert create_response.status_code == 201
+
+    run = _wait_for_completion(client, create_response.json()["id"])
+    assert run["status"] == "success", run
+    assert (tmp_path / "marker.txt").read_text() == "decrypted-from-extra-vars"
+
+
+def test_run_needing_vault_without_password_fails_cleanly(client: TestClient, tmp_path) -> None:
+    _login(client)
+    vault_password_id = _create_vault_password(client)
+    encrypted = _encrypt_with_vault(client, vault_password_id, "never-decrypted")
+    playbook_id = _create_playbook(
+        client, _vault_var_playbook(encrypted["yaml_block"]), name="vault-no-password.yml"
+    )
+    inventory_id, _host_id = _create_inventory_with_host(client, str(tmp_path / "marker.txt"))
+    credential_id = _create_credential(client)
+
+    create_response = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_id,
+            "credential_id": credential_id,
+        },
+    )
+    run = _wait_for_completion(client, create_response.json()["id"])
+
+    assert run["status"] == "failed"
+    assert run["return_code"] != 0
+    assert not (tmp_path / "marker.txt").exists()
+
+
+def test_run_with_wrong_vault_password_fails_cleanly(client: TestClient, tmp_path) -> None:
+    _login(client)
+    right_id = _create_vault_password(client, name="right", password="right-password")
+    wrong_id = _create_vault_password(client, name="wrong", password="wrong-password")
+    encrypted = _encrypt_with_vault(client, right_id, "never-decrypted")
+    playbook_id = _create_playbook(
+        client, _vault_var_playbook(encrypted["yaml_block"]), name="vault-wrong-password.yml"
+    )
+    inventory_id, _host_id = _create_inventory_with_host(client, str(tmp_path / "marker.txt"))
+    credential_id = _create_credential(client)
+
+    create_response = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_id,
+            "credential_id": credential_id,
+            "vault_password_id": wrong_id,
+        },
+    )
+    run = _wait_for_completion(client, create_response.json()["id"])
+
+    assert run["status"] == "failed"
+    assert not (tmp_path / "marker.txt").exists()
+
+
+def test_run_never_logs_vault_password(client: TestClient, tmp_path) -> None:
+    _login(client)
+    password = "super-secret-vault-password-9d1f"
+    vault_password_id = _create_vault_password(client, password=password)
+    encrypted = _encrypt_with_vault(client, vault_password_id, "log-check-plaintext")
+    playbook_id = _create_playbook(
+        client, _vault_var_playbook(encrypted["yaml_block"]), name="vault-log-check.yml"
+    )
+    inventory_id, _host_id = _create_inventory_with_host(client, str(tmp_path / "marker.txt"))
+    credential_id = _create_credential(client)
+
+    create_response = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_id,
+            "credential_id": credential_id,
+            "vault_password_id": vault_password_id,
+        },
+    )
+    run_id = create_response.json()["id"]
+    run = _wait_for_completion(client, run_id)
+    assert run["status"] == "success", run
+
+    log_path = tmp_path / "runs" / f"{run_id}.jsonl"
+    assert log_path.exists()
+    assert password not in log_path.read_text()
+    assert password not in client.get(f"/api/runs/{run_id}").text
+
+
+def test_deleting_vault_password_keeps_run_history_name(client: TestClient, tmp_path) -> None:
+    _login(client)
+    vault_password_id = _create_vault_password(client, name="ephemeral-vault")
+    playbook_id = _create_playbook(client, SUCCESS_PLAYBOOK)
+    inventory_id, _host_id = _create_inventory_with_host(client, str(tmp_path / "marker.txt"))
+    credential_id = _create_credential(client)
+
+    create_response = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_id,
+            "credential_id": credential_id,
+            "vault_password_id": vault_password_id,
+        },
+    )
+    run_id = create_response.json()["id"]
+    _wait_for_completion(client, run_id)
+
+    assert client.delete(f"/api/vault-passwords/{vault_password_id}").status_code == 204
+
+    run = client.get(f"/api/runs/{run_id}").json()
+    assert run["vault_password_name"] == "ephemeral-vault"
