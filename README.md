@@ -3,6 +3,7 @@
 [![CI](https://github.com/HoneyBearTech/AnsiDeck/actions/workflows/ci.yml/badge.svg)](https://github.com/HoneyBearTech/AnsiDeck/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/HoneyBearTech/AnsiDeck/actions/workflows/codeql.yml/badge.svg)](https://github.com/HoneyBearTech/AnsiDeck/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/HoneyBearTech/AnsiDeck/badge)](https://scorecard.dev/viewer/?uri=github.com/HoneyBearTech/AnsiDeck)
+[![OpenSSF Baseline](https://www.bestpractices.dev/projects/14718/baseline)](https://www.bestpractices.dev/projects/14718)
 
 Self-hosted web UI for running Ansible playbooks against target systems, packaged in Docker.
 
