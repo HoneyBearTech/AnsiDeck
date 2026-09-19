@@ -7,6 +7,67 @@
 
 Self-hosted web UI for running Ansible playbooks against target systems, packaged in Docker.
 
+## Getting started
+
+AnsiDeck is two containers, a FastAPI backend and a React frontend, started with Docker Compose. You need
+Docker with Compose.
+
+1. Get the code and create your settings file:
+
+   ```sh
+   git clone https://github.com/HoneyBearTech/AnsiDeck.git
+   cd AnsiDeck
+   cp .env.example .env
+   ```
+
+2. Edit `.env`. For anything beyond a local try-out, set your own values for:
+   - `AUTH_SECRET_KEY`: a long random string that signs session cookies.
+   - `ADMIN_PASSWORD`: the first admin's password. It is only read on the very first start, and there is
+     no self-service password screen yet, so choose a strong one now.
+   - `CREDENTIAL_ENCRYPTION_KEY`: the key that encrypts stored SSH credentials. Generate one with
+     `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+
+3. Start it: `docker compose up --build`.
+4. Open <http://localhost:5173> and sign in as `ADMIN_USERNAME` (default `admin`) with `ADMIN_PASSWORD`.
+   The backend's interactive API docs are at <http://localhost:8000/docs>.
+
+The bundled `docker-compose.yml` is the development stack (hot reload; data lives in the `backend-data`
+volume, mounted at `/data`). The `runtime` targets of `backend/Dockerfile` and `frontend/Dockerfile` build the
+production images: both run as a non-root user, the backend listens on port 8000, and the frontend serves the
+UI on port 8080 and proxies `/api` to a host named `backend`.
+
+## Using AnsiDeck
+
+Content is grouped into projects, and a `Default` project exists on first start. A typical run:
+
+1. **Credentials**: add the SSH private key AnsiDeck should use to connect. It is stored encrypted.
+2. **Inventories**: define hosts and groups.
+3. **Playbooks**: paste a playbook or import a YAML file.
+4. **Runs → New Run**: pick the playbook, inventory, target and credential. Optionally add a vault password, a
+   host limit, check or diff mode, and extra variables as JSON. The output streams live, and finished runs stay
+   in the run history.
+
+Other pages: **Vault** encrypts and decrypts values with Ansible Vault, **Galaxy** installs roles and
+collections, **Projects** separate content and access, and admins manage **Users** (roles: admin, operator,
+viewer, assigned per project) and read the **Audit** log.
+
+## Running it securely
+
+- Set `ENVIRONMENT=production`. The app then refuses to start while `AUTH_SECRET_KEY` or `ADMIN_PASSWORD` still
+  hold their insecure defaults.
+- Serve it over HTTPS through a reverse proxy, set `COOKIE_SECURE=true`, and make sure the proxy forwards
+  WebSocket upgrades (live run output needs them). If the browser's origin differs from the `Host` the backend
+  sees, add it to `CORS_ORIGINS`.
+- AnsiDeck is not designed to be exposed directly to the public internet. See [SECURITY.md](SECURITY.md).
+- Back up the data volume, and keep `CREDENTIAL_ENCRYPTION_KEY` backed up separately: losing it makes stored
+  credentials unrecoverable, and leaking it exposes every stored key.
+- Give people the least role they need. Anyone who can run a playbook can run commands on the targets, and
+  runs are **not sandboxed** from the application's data directory. Details are in [SECURITY.md](SECURITY.md).
+- Global admins cannot use single sign-on unless you set `SSO_ALLOW_ADMIN=true`, so password login stays your
+  break-glass.
+- The audit log records sign-ins, run activity and permission denials, and is kept for
+  `AUDIT_RETENTION_DAYS` (365 by default).
+
 ## Triggering runs from CI
 
 A project admin can create an API key under **Projects → API keys**. Keys belong to one project, are shown
