@@ -72,10 +72,12 @@ PUBLIC = {
     ("/api/health", "GET"),
     ("/api/auth/login", "POST"),
     ("/api/auth/logout", "POST"),
-    # SSO runs before there is a session; the routes 404 unless OIDC is configured.
+    # SSO runs before there is a session; each provider's routes 404 unless it is configured.
     ("/api/auth/providers", "GET"),
     ("/api/auth/oidc/login", "GET"),
     ("/api/auth/oidc/callback", "GET"),
+    ("/api/auth/github/login", "GET"),
+    ("/api/auth/github/callback", "GET"),
 }
 
 

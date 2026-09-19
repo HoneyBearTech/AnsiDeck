@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEFAULT_AUTH_SECRET_KEY = "change-me-dev-only-insecure-secret"
@@ -8,7 +8,7 @@ _DEFAULT_ADMIN_PASSWORD = "admin"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
     environment: str = "development"
     auth_secret_key: str = _DEFAULT_AUTH_SECRET_KEY
@@ -23,18 +23,36 @@ class Settings(BaseSettings):
 
     data_dir: str = "/data"
 
-    # Optional OpenID Connect sign-in. Enabled only when issuer, client id and secret are
-    # all set (a partial config refuses to start). PUBLIC_URL is the browser-visible base
-    # URL of this app; the redirect URI is built from it, never from the request's Host.
+    # PUBLIC_URL is the browser-visible base URL of this app; the SSO redirect URIs are
+    # built from it, never from the request's Host.
     public_url: str = ""
+
+    # Optional OpenID Connect sign-in. Enabled only when issuer, client id and secret are
+    # all set (a partial config refuses to start).
     oidc_issuer: str = ""
     oidc_client_id: str = ""
     oidc_client_secret: str = ""
     oidc_scopes: str = "openid email profile"
     oidc_button_label: str = "SSO"
-    # SSO never signs in a global admin unless this is set (admins stay local/break-glass).
-    oidc_allow_admin: bool = False
-    oidc_allowed_email_domains: list[str] = []
+
+    # Optional native GitHub sign-in (an OAuth App; GitHub is not an OIDC provider). Enabled
+    # only when the client id and secret are both set. The URLs are overridable for GitHub
+    # Enterprise Server (and for tests).
+    github_client_id: str = ""
+    github_client_secret: str = ""
+    github_url: str = "https://github.com"
+    github_api_url: str = "https://api.github.com"
+    github_button_label: str = "GitHub"
+
+    # Shared by every SSO provider. SSO never signs in a global admin unless this is set
+    # (admins stay local/break-glass). The OIDC_* names came first and keep working.
+    sso_allow_admin: bool = Field(
+        default=False, validation_alias=AliasChoices("SSO_ALLOW_ADMIN", "OIDC_ALLOW_ADMIN")
+    )
+    sso_allowed_email_domains: list[str] = Field(
+        default=[],
+        validation_alias=AliasChoices("SSO_ALLOWED_EMAIL_DOMAINS", "OIDC_ALLOWED_EMAIL_DOMAINS"),
+    )
 
     # Audit events older than this are pruned at startup; 0 keeps them forever.
     audit_retention_days: int = 365
@@ -53,14 +71,18 @@ class Settings(BaseSettings):
         'print(Fernet.generate_key().decode())"'
     )
 
-    @field_validator("public_url")
+    @field_validator("public_url", "github_url", "github_api_url")
     @classmethod
-    def _strip_public_url(cls, v: str) -> str:
+    def _strip_trailing_slash(cls, v: str) -> str:
         return v.strip().rstrip("/")
 
     @property
     def oidc_enabled(self) -> bool:
         return bool(self.oidc_issuer and self.oidc_client_id and self.oidc_client_secret)
+
+    @property
+    def github_enabled(self) -> bool:
+        return bool(self.github_client_id and self.github_client_secret)
 
     @model_validator(mode="after")
     def _validate_oidc(self) -> "Settings":
@@ -79,6 +101,28 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "ENVIRONMENT=production requires https for PUBLIC_URL and OIDC_ISSUER."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_github(self) -> "Settings":
+        configured = [self.github_client_id, self.github_client_secret]
+        if any(configured) and not all(configured):
+            raise ValueError(
+                "GitHub sign-in is partially configured: set GITHUB_CLIENT_ID and "
+                "GITHUB_CLIENT_SECRET together (or neither)."
+            )
+        if not self.github_enabled:
+            return self
+        if not self.public_url.startswith(("http://", "https://")):
+            raise ValueError("GitHub sign-in needs PUBLIC_URL (e.g. https://ansideck.example.com).")
+        if self.environment.lower() == "production" and not all(
+            url.startswith("https://")
+            for url in (self.public_url, self.github_url, self.github_api_url)
+        ):
+            raise ValueError(
+                "ENVIRONMENT=production requires https for PUBLIC_URL, GITHUB_URL and "
+                "GITHUB_API_URL."
             )
         return self
 

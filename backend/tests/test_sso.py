@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from joserfc import jwt
 from joserfc.jwk import OctKey, RSAKey
 
-from app import oidc
+from app import oidc, sso_common
 from app.config import Settings, get_settings
 from app.db import get_sessionmaker
 from app.main import app
@@ -84,7 +84,10 @@ def _audit(admin: TestClient, action: str) -> list[dict]:
 
 
 def test_sso_is_off_by_default(client: TestClient) -> None:
-    assert client.get("/api/auth/providers").json() == {"oidc": {"enabled": False, "label": "SSO"}}
+    assert client.get("/api/auth/providers").json() == {
+        "oidc": {"enabled": False, "label": "SSO"},
+        "github": {"enabled": False, "label": "GitHub"},
+    }
     assert client.get("/api/auth/oidc/login", follow_redirects=False).status_code == 404
     assert client.get("/api/auth/oidc/callback", follow_redirects=False).status_code == 404
 
@@ -92,7 +95,8 @@ def test_sso_is_off_by_default(client: TestClient) -> None:
 def test_providers_reports_the_button_label(sso) -> None:
     browser = TestClient(app)
     assert browser.get("/api/auth/providers").json() == {
-        "oidc": {"enabled": True, "label": "Acme SSO"}
+        "oidc": {"enabled": True, "label": "Acme SSO"},
+        "github": {"enabled": False, "label": "GitHub"},
     }
 
 
@@ -287,7 +291,7 @@ def test_the_state_cookie_expires_and_cannot_be_replayed(sso, monkeypatch) -> No
         "failed",
     )
 
-    monkeypatch.setattr(oidc, "STATE_MAX_AGE_SECONDS", -1)
+    monkeypatch.setattr(sso_common, "STATE_MAX_AGE_SECONDS", -1)
     assert _refused(_sign_in(fake)[1], "failed")
 
 

@@ -1,7 +1,8 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
 
+from app.config import get_settings
 from app.permissions import Role
 
 _USERNAME_PATTERN = r"^[A-Za-z0-9_.@-]+$"
@@ -44,3 +45,12 @@ class UserAdminOut(BaseModel):
     created_at: datetime
     email: str | None
     sso_linked: bool
+    # Only used to name the provider below; the issuer itself isn't sent to the browser.
+    sso_issuer: str | None = Field(default=None, exclude=True)
+
+    @computed_field
+    @property
+    def sso_provider(self) -> str | None:
+        if self.sso_issuer is None:
+            return None
+        return "GitHub" if self.sso_issuer == get_settings().github_url else "SSO"

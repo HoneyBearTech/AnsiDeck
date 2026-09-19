@@ -1,6 +1,7 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 export const SSO_LOGIN_URL = `${API_BASE_URL}/auth/oidc/login`;
+export const GITHUB_LOGIN_URL = `${API_BASE_URL}/auth/github/login`;
 
 export class ApiError extends Error {
   status: number;
@@ -108,10 +109,12 @@ export interface AdminUser {
   created_at: string;
   email: string | null;
   sso_linked: boolean;
+  sso_provider: string | null;
 }
 
 export interface AuthProviders {
   oidc: { enabled: boolean; label: string };
+  github: { enabled: boolean; label: string };
 }
 
 export interface AuditEvent {

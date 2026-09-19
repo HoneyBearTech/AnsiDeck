@@ -313,7 +313,7 @@ export function UsersPage() {
                     <span className="font-medium">{u.username}</span>
                     {isSelf && <Badge variant="outline">you</Badge>}
                     {!u.is_active && <Badge variant="failed">deactivated</Badge>}
-                    {u.sso_linked && <Badge variant="ok">SSO</Badge>}
+                    {u.sso_linked && <Badge variant="ok">{u.sso_provider ?? "SSO"}</Badge>}
                   </div>
                   <span className="text-xs text-muted-foreground">
                     {u.email ? `${u.email} · ` : ""}

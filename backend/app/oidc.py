@@ -6,28 +6,30 @@ Every failure is an `SsoError`; the router shows the user a generic code and put
 real reason only in the audit log.
 """
 
-import base64
-import hashlib
-import hmac
 import secrets
 import time
 from urllib.parse import urlencode
 
 import httpx
-from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from joserfc import jwt
 from joserfc.errors import JoseError
 from joserfc.jwk import KeySet
-from sqlalchemy import func
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.config import Settings, get_settings
+from app.config import Settings
 from app.models import User
+from app.sso_common import (
+    SsoError,
+    http_client,
+    pkce_challenge,
+    resolve_user,
+    sign_state,
+    verify_state,
+)
 
+FLOW = "oidc"
 STATE_COOKIE_NAME = "ansideck_oidc"
 STATE_COOKIE_PATH = "/api/auth/oidc"
-STATE_MAX_AGE_SECONDS = 600
 CALLBACK_PATH = "/api/auth/oidc/callback"
 
 # Asymmetric only. Never "none", never HS*: an HS256 token "signed" with the provider's
@@ -36,29 +38,10 @@ ALLOWED_ALGORITHMS = [
     "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512", "EdDSA",
 ]  # fmt: skip
 _CLOCK_LEEWAY_SECONDS = 60
-_HTTP_TIMEOUT_SECONDS = 10.0
 _METADATA_TTL_SECONDS = 3600
 
 _metadata_cache: dict[str, tuple[float, dict]] = {}
 _jwks_cache: dict[str, tuple[float, KeySet]] = {}
-
-
-class SsoError(Exception):
-    """`code` is what the browser is told ("failed" | "not_linked"); `reason` is for the
-    audit log only."""
-
-    def __init__(
-        self, code: str, reason: str, *, user: User | None = None, email: str | None = None
-    ) -> None:
-        super().__init__(reason)
-        self.code = code
-        self.reason = reason
-        self.user = user
-        self.email = email
-
-
-def http_client() -> httpx.Client:
-    return httpx.Client(timeout=_HTTP_TIMEOUT_SECONDS, follow_redirects=False)
 
 
 def clear_caches() -> None:
@@ -68,10 +51,6 @@ def clear_caches() -> None:
 
 def redirect_uri(settings: Settings) -> str:
     return f"{settings.public_url}{CALLBACK_PATH}"
-
-
-def _state_serializer() -> URLSafeTimedSerializer:
-    return URLSafeTimedSerializer(get_settings().auth_secret_key, salt="ansideck-oidc-state")
 
 
 def _get_json(url: str) -> dict:
@@ -121,7 +100,6 @@ def begin_login(settings: Settings) -> tuple[str, str]:
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(64)
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
     query = urlencode(
         {
             "response_type": "code",
@@ -130,12 +108,12 @@ def begin_login(settings: Settings) -> tuple[str, str]:
             "scope": settings.oidc_scopes,
             "state": state,
             "nonce": nonce,
-            "code_challenge": challenge.rstrip(b"=").decode(),
+            "code_challenge": pkce_challenge(verifier),
             "code_challenge_method": "S256",
         }
     )
     separator = "&" if "?" in metadata["authorization_endpoint"] else "?"
-    cookie = _state_serializer().dumps({"s": state, "n": nonce, "v": verifier})
+    cookie = sign_state(FLOW, {"s": state, "n": nonce, "v": verifier})
     return f"{metadata['authorization_endpoint']}{separator}{query}", cookie
 
 
@@ -205,52 +183,14 @@ def _verify_id_token(settings: Settings, metadata: dict, id_token: str, nonce: s
     return claims
 
 
-def resolve_user(
-    db: Session, settings: Settings, issuer: str, subject: str, email: str
-) -> tuple[User, bool]:
-    """(user, newly_linked). Pre-provisioned only: match the bound (issuer, subject), else an
-    active, not-yet-linked user by verified email. Never creates or re-links anyone."""
-    domains = {d.lower().lstrip("@") for d in settings.oidc_allowed_email_domains}
-    if domains and email.rpartition("@")[2].lower() not in domains:
-        raise SsoError("not_linked", "email domain is not allowed", email=email)
-
-    user = db.query(User).filter(User.sso_issuer == issuer, User.sso_subject == subject).first()
-    newly_linked = False
-    if user is None:
-        user = (
-            db.query(User)
-            .filter(func.lower(User.email) == email.lower(), User.sso_subject.is_(None))
-            .first()
-        )
-        if user is None:
-            raise SsoError("not_linked", "no pre-provisioned account matches", email=email)
-        newly_linked = True
-    if not user.is_active:
-        raise SsoError("not_linked", "account is deactivated", user=user, email=email)
-    if user.role == "admin" and not settings.oidc_allow_admin:
-        raise SsoError(
-            "not_linked", "global admins cannot sign in with SSO", user=user, email=email
-        )
-    if newly_linked:
-        user.sso_issuer, user.sso_subject = issuer, subject
-        try:
-            db.commit()
-        except IntegrityError as exc:
-            db.rollback()
-            raise SsoError("failed", "identity is already linked to another user") from exc
-    return user, newly_linked
-
-
 def complete_login(
     db: Session, settings: Settings, *, cookie: str, code: str, state: str
 ) -> tuple[User, bool]:
+    data = verify_state(FLOW, cookie, state)
     try:
-        data = _state_serializer().loads(cookie, max_age=STATE_MAX_AGE_SECONDS)
-        expected_state, nonce, verifier = data["s"], data["n"], data["v"]
-    except (BadSignature, SignatureExpired, KeyError, TypeError) as exc:
+        nonce, verifier = data["n"], data["v"]
+    except KeyError as exc:
         raise SsoError("failed", "state cookie missing, invalid or expired") from exc
-    if not hmac.compare_digest(state.encode(), str(expected_state).encode()):
-        raise SsoError("failed", "state mismatch")
 
     metadata = get_metadata(settings)
     claims = _verify_id_token(
@@ -261,4 +201,4 @@ def complete_login(
         raise SsoError("failed", "ID token has no email claim")
     if claims.get("email_verified") is not True:
         raise SsoError("not_linked", "provider did not verify the email", email=email)
-    return resolve_user(db, settings, settings.oidc_issuer, str(claims["sub"]), email.strip())
+    return resolve_user(db, settings, settings.oidc_issuer, str(claims["sub"]), [email.strip()])

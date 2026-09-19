@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/context/auth-context";
-import { api, ApiError, SSO_LOGIN_URL, type AuthProviders } from "@/lib/api";
+import { api, ApiError, GITHUB_LOGIN_URL, SSO_LOGIN_URL, type AuthProviders } from "@/lib/api";
 
 // The server only ever sends a generic code; the real reason is in the audit log.
 const SSO_MESSAGES: Record<string, string> = {
@@ -89,16 +89,27 @@ export function LoginPage() {
               {submitting ? "Signing in…" : "Sign in"}
             </Button>
           </form>
-          {providers?.oidc.enabled && (
+          {(providers?.oidc.enabled || providers?.github.enabled) && (
             <div className="mt-4 flex flex-col gap-3">
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
                 <span className="h-px flex-1 bg-border" />
                 or
                 <span className="h-px flex-1 bg-border" />
               </div>
-              <Button type="button" variant="outline" onClick={() => window.location.assign(SSO_LOGIN_URL)}>
-                Sign in with {providers.oidc.label}
-              </Button>
+              {providers.oidc.enabled && (
+                <Button type="button" variant="outline" onClick={() => window.location.assign(SSO_LOGIN_URL)}>
+                  Sign in with {providers.oidc.label}
+                </Button>
+              )}
+              {providers.github.enabled && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => window.location.assign(GITHUB_LOGIN_URL)}
+                >
+                  Sign in with {providers.github.label}
+                </Button>
+              )}
             </div>
           )}
         </CardContent>
