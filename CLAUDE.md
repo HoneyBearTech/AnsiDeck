@@ -5,6 +5,7 @@ Self-hosted, Dockerized web UI for running Ansible playbooks against target syst
 ## Before Making Structural Changes
 Read the project's Obsidian vault at `.obsidian-docs/` first:
 - `roadmap.md` — feature roadmap by phase (what's in scope now vs. later)
+- `Pass-Map.md` — pass-by-pass delivery log (what shipped in which commit, and which passes are planned); add a row when a pass ships
 - `Architecture.md` — current architecture decisions and suggested stack
 - `Security-Considerations.md` — credential handling, execution isolation, access control checklist (this app holds SSH keys and runs automation against real infra — treat security notes as load-bearing, not optional)
 - `Decisions-Log.md` — ADR-style log of why past decisions were made
