@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEFAULT_AUTH_SECRET_KEY = "change-me-dev-only-insecure-secret"
@@ -23,6 +23,19 @@ class Settings(BaseSettings):
 
     data_dir: str = "/data"
 
+    # Optional OpenID Connect sign-in. Enabled only when issuer, client id and secret are
+    # all set (a partial config refuses to start). PUBLIC_URL is the browser-visible base
+    # URL of this app; the redirect URI is built from it, never from the request's Host.
+    public_url: str = ""
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_scopes: str = "openid email profile"
+    oidc_button_label: str = "SSO"
+    # SSO never signs in a global admin unless this is set (admins stay local/break-glass).
+    oidc_allow_admin: bool = False
+    oidc_allowed_email_domains: list[str] = []
+
     # Audit events older than this are pruned at startup; 0 keeps them forever.
     audit_retention_days: int = 365
 
@@ -39,6 +52,35 @@ class Settings(BaseSettings):
         'Generate with: python -c "from cryptography.fernet import Fernet; '
         'print(Fernet.generate_key().decode())"'
     )
+
+    @field_validator("public_url")
+    @classmethod
+    def _strip_public_url(cls, v: str) -> str:
+        return v.strip().rstrip("/")
+
+    @property
+    def oidc_enabled(self) -> bool:
+        return bool(self.oidc_issuer and self.oidc_client_id and self.oidc_client_secret)
+
+    @model_validator(mode="after")
+    def _validate_oidc(self) -> "Settings":
+        configured = [self.oidc_issuer, self.oidc_client_id, self.oidc_client_secret]
+        if any(configured) and not all(configured):
+            raise ValueError(
+                "OIDC is partially configured: set OIDC_ISSUER, OIDC_CLIENT_ID and "
+                "OIDC_CLIENT_SECRET together (or none of them)."
+            )
+        if not self.oidc_enabled:
+            return self
+        if not self.public_url.startswith(("http://", "https://")):
+            raise ValueError("OIDC needs PUBLIC_URL (e.g. https://ansideck.example.com).")
+        if self.environment.lower() == "production" and not (
+            self.public_url.startswith("https://") and self.oidc_issuer.startswith("https://")
+        ):
+            raise ValueError(
+                "ENVIRONMENT=production requires https for PUBLIC_URL and OIDC_ISSUER."
+            )
+        return self
 
     @model_validator(mode="after")
     def _refuse_insecure_defaults_in_production(self) -> "Settings":

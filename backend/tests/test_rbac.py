@@ -44,6 +44,7 @@ MATRIX = [
     ("POST", "/api/users", ADMIN),
     ("PATCH", "/api/users/999", ADMIN),
     ("DELETE", "/api/users/999", ADMIN),
+    ("DELETE", "/api/users/999/sso-link", ADMIN),
     ("GET", "/api/audit", ADMIN),
     ("GET", "/api/auth/me", ALL),
     ("GET", "/api/projects/1/api-keys", ADMIN),
@@ -67,7 +68,15 @@ def _walk(dependant):
         yield from _walk(sub)
 
 
-PUBLIC = {("/api/health", "GET"), ("/api/auth/login", "POST"), ("/api/auth/logout", "POST")}
+PUBLIC = {
+    ("/api/health", "GET"),
+    ("/api/auth/login", "POST"),
+    ("/api/auth/logout", "POST"),
+    # SSO runs before there is a session; the routes 404 unless OIDC is configured.
+    ("/api/auth/providers", "GET"),
+    ("/api/auth/oidc/login", "GET"),
+    ("/api/auth/oidc/callback", "GET"),
+}
 
 
 def test_every_route_carries_a_permission_guard_or_is_explicitly_public() -> None:

@@ -7,6 +7,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -48,6 +49,20 @@ class User(Base):
     session_version: Mapped[int] = mapped_column(Integer, default=0)
     created_by: Mapped[str | None] = mapped_column(String(150), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # For SSO: an admin sets the email to pre-provision a user; the first SSO sign-in
+    # binds (issuer, subject), which is what every later sign-in matches on.
+    email: Mapped[str | None] = mapped_column(String(320), default=None)
+    sso_issuer: Mapped[str | None] = mapped_column(String(500), default=None)
+    sso_subject: Mapped[str | None] = mapped_column(String(255), default=None)
+
+    @property
+    def sso_linked(self) -> bool:
+        return self.sso_subject is not None
+
+
+# Unique (NULLs are distinct in SQLite). init_db() creates the same indexes on upgraded DBs.
+Index("ux_users_email_lower", func.lower(User.email), unique=True)
+Index("ux_users_sso_identity", User.sso_issuer, User.sso_subject, unique=True)
 
 
 class Project(Base):

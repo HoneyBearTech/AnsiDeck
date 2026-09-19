@@ -1,5 +1,7 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
+export const SSO_LOGIN_URL = `${API_BASE_URL}/auth/oidc/login`;
+
 export class ApiError extends Error {
   status: number;
 
@@ -104,6 +106,12 @@ export interface AdminUser {
   is_active: boolean;
   created_by: string | null;
   created_at: string;
+  email: string | null;
+  sso_linked: boolean;
+}
+
+export interface AuthProviders {
+  oidc: { enabled: boolean; label: string };
 }
 
 export interface AuditEvent {
@@ -280,10 +288,22 @@ export const api = {
     request<void>(`/projects/${projectId}/api-keys/${keyId}`, { method: "DELETE" }),
 
   listUsers: () => request<AdminUser[]>("/users"),
-  createUser: (username: string, password: string, role: AdminUser["role"], projectId?: number | null) =>
+  createUser: (
+    username: string,
+    password: string,
+    role: AdminUser["role"],
+    projectId?: number | null,
+    email?: string | null,
+  ) =>
     request<AdminUser>("/users", {
       method: "POST",
-      body: JSON.stringify({ username, password, role, project_id: projectId ?? undefined }),
+      body: JSON.stringify({
+        username,
+        password,
+        role,
+        project_id: projectId ?? undefined,
+        email: email || undefined,
+      }),
     }),
   updateUser: (
     id: number,
@@ -291,6 +311,7 @@ export const api = {
       role?: AdminUser["role"];
       is_active?: boolean;
       password?: string;
+      email?: string | null;
     },
   ) =>
     request<AdminUser>(`/users/${id}`, {
@@ -298,6 +319,9 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   deleteUser: (id: number) => request<void>(`/users/${id}`, { method: "DELETE" }),
+  unlinkSso: (id: number) => request<void>(`/users/${id}/sso-link`, { method: "DELETE" }),
+
+  getAuthProviders: () => request<AuthProviders>("/auth/providers"),
 
   listAudit: (params: {
     limit: number;

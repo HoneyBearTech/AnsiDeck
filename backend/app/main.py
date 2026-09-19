@@ -20,6 +20,7 @@ from app.routers import (
     playbooks,
     projects,
     runs,
+    sso,
     users,
     vault,
     vault_passwords,
@@ -60,6 +61,7 @@ app.add_middleware(OriginCheckMiddleware, allowed_origins=settings.cors_origins)
 
 app.include_router(health.router, prefix="/api")
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(sso.router, prefix="/api/auth", tags=["auth"])
 app.include_router(playbooks.router, prefix="/api/playbooks", tags=["playbooks"])
 app.include_router(inventories.router, prefix="/api/inventories", tags=["inventories"])
 app.include_router(credentials.router, prefix="/api/credentials", tags=["credentials"])

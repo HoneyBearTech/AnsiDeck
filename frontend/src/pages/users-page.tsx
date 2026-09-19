@@ -33,6 +33,7 @@ function CreateUserDialog({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = React.useState(false);
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [email, setEmail] = React.useState("");
   const [role, setRole] = React.useState<AdminUser["role"]>("viewer");
   const [projectId, setProjectId] = React.useState<string>(
     activeProjectId === null ? NO_PROJECT : String(activeProjectId),
@@ -49,9 +50,11 @@ function CreateUserDialog({ onCreated }: { onCreated: () => void }) {
         password,
         role,
         role === "admin" || projectId === NO_PROJECT ? null : Number(projectId),
+        email.trim() || null,
       );
       setUsername("");
       setPassword("");
+      setEmail("");
       setRole("viewer");
       setOpen(false);
       onCreated();
@@ -91,6 +94,19 @@ function CreateUserDialog({ onCreated }: { onCreated: () => void }) {
               onChange={(e) => setPassword(e.target.value)}
             />
             <p className="text-xs text-muted-foreground">At least 12 characters.</p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="new-user-email">Email (optional)</Label>
+            <Input
+              id="new-user-email"
+              type="email"
+              autoComplete="off"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Lets this person sign in with SSO: their first SSO sign-in is matched to this address.
+            </p>
           </div>
           <div className="flex flex-col gap-2">
             <Label>Role</Label>
@@ -135,6 +151,62 @@ function CreateUserDialog({ onCreated }: { onCreated: () => void }) {
           <Button onClick={handleCreate} disabled={saving || !username || password.length < 12}>
             {saving ? "Saving…" : "Create"}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EmailDialog({ user, onDone }: { user: AdminUser; onDone: () => void }) {
+  const [open, setOpen] = React.useState(false);
+  const [email, setEmail] = React.useState(user.email ?? "");
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function handleSave() {
+    setError(null);
+    try {
+      await api.updateUser(user.id, { email: email.trim() || null });
+      setOpen(false);
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong");
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) setEmail(user.email ?? "");
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          Email
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Email for {user.username}</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor={`email-${user.id}`}>Email address</Label>
+          <Input
+            id={`email-${user.id}`}
+            type="email"
+            autoComplete="off"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Used to link this account to their SSO identity on first sign-in. Leave empty to remove it. Global
+            admins cannot sign in with SSO unless the server allows it.
+          </p>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button onClick={handleSave}>Save</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -241,8 +313,10 @@ export function UsersPage() {
                     <span className="font-medium">{u.username}</span>
                     {isSelf && <Badge variant="outline">you</Badge>}
                     {!u.is_active && <Badge variant="failed">deactivated</Badge>}
+                    {u.sso_linked && <Badge variant="ok">SSO</Badge>}
                   </div>
                   <span className="text-xs text-muted-foreground">
+                    {u.email ? `${u.email} · ` : ""}
                     Created {new Date(u.created_at).toLocaleDateString()}
                     {u.created_by && ` by ${u.created_by}`}
                   </span>
@@ -270,6 +344,24 @@ export function UsersPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <EmailDialog user={u} onDone={refresh} />
+                  {u.sso_linked && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `Unlink ${u.username}'s SSO identity? Their next SSO sign-in links again by email.`,
+                          )
+                        ) {
+                          run(() => api.unlinkSso(u.id));
+                        }
+                      }}
+                    >
+                      Unlink SSO
+                    </Button>
+                  )}
                   {!isSelf && <ResetPasswordDialog user={u} onDone={refresh} />}
                   {!isSelf && (
                     <Button

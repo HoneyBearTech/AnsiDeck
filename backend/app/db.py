@@ -34,7 +34,17 @@ _USER_COLUMN_MIGRATIONS = {
     "is_active": "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1",
     "session_version": "ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0",
     "created_by": "ALTER TABLE users ADD COLUMN created_by VARCHAR(150)",
+    "email": "ALTER TABLE users ADD COLUMN email VARCHAR(320)",
+    "sso_issuer": "ALTER TABLE users ADD COLUMN sso_issuer VARCHAR(500)",
+    "sso_subject": "ALTER TABLE users ADD COLUMN sso_subject VARCHAR(255)",
 }
+
+# create_all() only creates indexes together with a brand-new table, so upgraded
+# databases get the SSO ones here (same names as in models.py).
+_USER_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_email_lower ON users (lower(email))",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_sso_identity ON users (sso_issuer, sso_subject)",
+)
 
 # project_id is added nullable: SQLite refuses ADD COLUMN ... REFERENCES with any
 # default, so rows are backfilled to the Default project by _backfill_projects().
@@ -136,6 +146,9 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_columns(engine, "runs", _RUN_COLUMN_MIGRATIONS)
     _ensure_columns(engine, "users", _USER_COLUMN_MIGRATIONS)
+    with engine.begin() as conn:
+        for ddl in _USER_INDEXES:
+            conn.exec_driver_sql(ddl)
     for table in _PROJECT_SCOPED_TABLES:
         _ensure_columns(
             engine, table, {"project_id": _PROJECT_COLUMN_MIGRATION.format(table=table)}

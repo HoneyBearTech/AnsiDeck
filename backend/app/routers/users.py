@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -29,6 +30,18 @@ def _is_last_active_admin(db: Session, user: User) -> bool:
     return user.role == Role.ADMIN.value and user.is_active and _active_admin_count(db) <= 1
 
 
+def _reject_taken_email(
+    db: Session, email: str | None, *, except_user_id: int | None = None
+) -> None:
+    if email is None:
+        return
+    query = db.query(User.id).filter(func.lower(User.email) == email.lower())
+    if except_user_id is not None:
+        query = query.filter(User.id != except_user_id)
+    if query.first() is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Email is already used by another user")
+
+
 @router.get("", response_model=list[UserAdminOut])
 def list_users(db: Session = Depends(get_db)) -> list[User]:
     return db.query(User).order_by(User.username).all()
@@ -43,6 +56,7 @@ def create_user(
 ) -> User:
     if payload.password.lower() == payload.username.lower():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Password must not equal the username")
+    _reject_taken_email(db, payload.email)
     membership_project_id: int | None = None
     if payload.role != Role.ADMIN:
         if payload.project_id is not None:
@@ -58,6 +72,7 @@ def create_user(
         password_hash=hash_password(payload.password),
         role=payload.role.value,
         created_by=actor.username,
+        email=payload.email,
     )
     db.add(user)
     try:
@@ -92,7 +107,7 @@ def create_user(
         target_id=user.id,
         target_name=user.username,
         ip=client_ip(request),
-        detail={"role": user.role},
+        detail={"role": user.role, "email_set": user.email is not None},
     )
     return user
 
@@ -138,6 +153,10 @@ def update_user(
         target.password_hash = hash_password(payload.password)
         changed.append("password")
         bump_session = True
+    if "email" in payload.model_fields_set and payload.email != target.email:
+        _reject_taken_email(db, payload.email, except_user_id=target.id)
+        target.email = payload.email
+        changed.append("email")
     if bump_session:
         target.session_version += 1
     db.commit()
@@ -154,6 +173,31 @@ def update_user(
         detail={"changed": changed, "role": target.role, "is_active": target.is_active},
     )
     return target
+
+
+@router.delete("/{user_id}/sso-link", status_code=status.HTTP_204_NO_CONTENT)
+def unlink_sso(
+    user_id: int,
+    request: Request,
+    actor: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> None:
+    """Forget the bound SSO identity, so the user's next SSO sign-in links again by email
+    (e.g. after they changed accounts at the identity provider)."""
+    target = _load(db, user_id)
+    if target.sso_subject is None:
+        return
+    target.sso_issuer = target.sso_subject = None
+    db.commit()
+    audit.record(
+        db,
+        "user.sso_unlink",
+        actor=actor,
+        target_type="user",
+        target_id=target.id,
+        target_name=target.username,
+        ip=client_ip(request),
+    )
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.permissions import Role
 
@@ -14,6 +14,8 @@ class UserCreate(BaseModel):
     # Non-admin users act only through project memberships. If omitted and exactly
     # one project exists, the user is added to it with `role`.
     project_id: int | None = None
+    # Setting it pre-provisions the user for SSO (matched against the verified email).
+    email: EmailStr | None = None
 
     @field_validator("password")
     @classmethod
@@ -27,6 +29,8 @@ class UserUpdate(BaseModel):
     role: Role | None = None
     is_active: bool | None = None
     password: str | None = Field(default=None, min_length=12, max_length=128)
+    # Only applied when sent; an explicit null clears it.
+    email: EmailStr | None = None
 
 
 class UserAdminOut(BaseModel):
@@ -38,3 +42,5 @@ class UserAdminOut(BaseModel):
     is_active: bool
     created_by: str | None
     created_at: datetime
+    email: str | None
+    sso_linked: bool
