@@ -62,6 +62,22 @@ export function RunTriggerPage() {
     api.getInventory(Number(inventoryId)).then(setSelectedInventory);
   }, [inventoryId]);
 
+  // A run lives in exactly one project: the playbook's. Only offer that project's items.
+  const playbookProjectId = playbooks.find((p) => String(p.id) === playbookId)?.project_id;
+  const inProject = <T extends { project_id: number }>(items: T[]) =>
+    playbookProjectId === undefined ? items : items.filter((i) => i.project_id === playbookProjectId);
+
+  function handlePlaybookChange(value: string) {
+    const next = playbooks.find((p) => String(p.id) === value)?.project_id;
+    if (next !== playbookProjectId) {
+      setInventoryId("");
+      setGroupId(ALL_HOSTS);
+      setCredentialId("");
+      setVaultPasswordId(NO_VAULT);
+    }
+    setPlaybookId(value);
+  }
+
   const canSubmit =
     playbookId !== "" && inventoryId !== "" && credentialId !== "" && (!become || becomeConfirmed);
 
@@ -105,7 +121,7 @@ export function RunTriggerPage() {
 
       <div className="flex flex-col gap-2">
         <Label>Playbook</Label>
-        <Select value={playbookId} onValueChange={setPlaybookId}>
+        <Select value={playbookId} onValueChange={handlePlaybookChange}>
           <SelectTrigger>
             <SelectValue placeholder="Select a playbook" />
           </SelectTrigger>
@@ -126,7 +142,7 @@ export function RunTriggerPage() {
             <SelectValue placeholder="Select an inventory" />
           </SelectTrigger>
           <SelectContent>
-            {inventories.map((inventory) => (
+            {inProject(inventories).map((inventory) => (
               <SelectItem key={inventory.id} value={String(inventory.id)}>
                 {inventory.name}
               </SelectItem>
@@ -161,7 +177,7 @@ export function RunTriggerPage() {
             <SelectValue placeholder="Select a credential" />
           </SelectTrigger>
           <SelectContent>
-            {credentials.map((credential) => (
+            {inProject(credentials).map((credential) => (
               <SelectItem key={credential.id} value={String(credential.id)}>
                 {credential.name}
               </SelectItem>
@@ -178,7 +194,7 @@ export function RunTriggerPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={NO_VAULT}>None</SelectItem>
-            {vaultPasswords.map((vaultPassword) => (
+            {inProject(vaultPasswords).map((vaultPassword) => (
               <SelectItem key={vaultPassword.id} value={String(vaultPassword.id)}>
                 {vaultPassword.name}
               </SelectItem>

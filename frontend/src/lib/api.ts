@@ -9,6 +9,19 @@ export class ApiError extends Error {
   }
 }
 
+// The project the UI is currently working in (null = all projects, global admins
+// only). Set by the auth context; list calls filter by it and create calls put
+// new resources into it.
+let activeProjectId: number | null = null;
+
+export function setApiActiveProject(id: number | null): void {
+  activeProjectId = id;
+}
+
+function scoped(path: string): string {
+  return activeProjectId === null ? path : `${path}?project_id=${activeProjectId}`;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     credentials: "include",
@@ -33,10 +46,34 @@ export interface HealthStatus {
   service: string;
 }
 
+export interface ProjectAccess {
+  id: number;
+  name: string;
+  role: "admin" | "operator" | "viewer";
+  permissions: string[];
+}
+
 export interface User {
   username: string;
   role: "admin" | "operator" | "viewer";
+  // Union across the user's projects (everything for a global admin).
   permissions: string[];
+  projects: ProjectAccess[];
+}
+
+export interface ProjectSummary {
+  id: number;
+  name: string;
+  description: string | null;
+  created_at: string;
+  my_role: string | null;
+}
+
+export interface ProjectMember {
+  user_id: number;
+  username: string;
+  is_active: boolean;
+  role: "admin" | "operator" | "viewer";
 }
 
 export interface AdminUser {
@@ -52,6 +89,7 @@ export interface AuditEvent {
   id: number;
   created_at: string;
   actor_username: string | null;
+  project_id: number | null;
   action: string;
   target_type: string | null;
   target_id: number | null;
@@ -69,6 +107,7 @@ export interface AuditPage {
 export interface PlaybookSummary {
   id: number;
   name: string;
+  project_id: number;
   created_at: string;
   updated_at: string;
 }
@@ -81,6 +120,7 @@ export interface InventorySummary {
   id: number;
   name: string;
   description: string | null;
+  project_id: number;
 }
 
 export interface InventoryGroup {
@@ -104,6 +144,7 @@ export interface Credential {
   id: number;
   name: string;
   description: string | null;
+  project_id: number;
   created_at: string;
 }
 
@@ -111,6 +152,7 @@ export interface VaultPassword {
   id: number;
   name: string;
   description: string | null;
+  project_id: number;
   created_at: string;
 }
 
@@ -147,6 +189,7 @@ export interface GalaxyInstalled {
 
 export interface Run {
   id: number;
+  project_id: number;
   playbook_name: string;
   inventory_name: string;
   group_name: string | null;
@@ -183,11 +226,34 @@ export const api = {
       }),
     }),
 
+  listProjects: () => request<ProjectSummary[]>("/projects"),
+  createProject: (name: string, description?: string) =>
+    request<ProjectSummary>("/projects", {
+      method: "POST",
+      body: JSON.stringify({ name, description }),
+    }),
+  updateProject: (id: number, payload: { name?: string; description?: string }) =>
+    request<ProjectSummary>(`/projects/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteProject: (id: number) => request<void>(`/projects/${id}`, { method: "DELETE" }),
+  listProjectMembers: (id: number) => request<ProjectMember[]>(`/projects/${id}/members`),
+  addProjectMember: (id: number, username: string, role: ProjectMember["role"]) =>
+    request<ProjectMember>(`/projects/${id}/members`, {
+      method: "POST",
+      body: JSON.stringify({ username, role }),
+    }),
+  setProjectMemberRole: (id: number, userId: number, role: ProjectMember["role"]) =>
+    request<ProjectMember>(`/projects/${id}/members/${userId}`, {
+      method: "PUT",
+      body: JSON.stringify({ role }),
+    }),
+  removeProjectMember: (id: number, userId: number) =>
+    request<void>(`/projects/${id}/members/${userId}`, { method: "DELETE" }),
+
   listUsers: () => request<AdminUser[]>("/users"),
-  createUser: (username: string, password: string, role: AdminUser["role"]) =>
+  createUser: (username: string, password: string, role: AdminUser["role"], projectId?: number | null) =>
     request<AdminUser>("/users", {
       method: "POST",
-      body: JSON.stringify({ username, password, role }),
+      body: JSON.stringify({ username, password, role, project_id: projectId ?? undefined }),
     }),
   updateUser: (
     id: number,
@@ -220,12 +286,12 @@ export const api = {
     return request<AuditPage>(`/audit?${query.toString()}`);
   },
 
-  listPlaybooks: () => request<PlaybookSummary[]>("/playbooks"),
+  listPlaybooks: () => request<PlaybookSummary[]>(scoped("/playbooks")),
   getPlaybook: (id: number) => request<PlaybookDetail>(`/playbooks/${id}`),
   createPlaybook: (name: string, content: string) =>
     request<PlaybookDetail>("/playbooks", {
       method: "POST",
-      body: JSON.stringify({ name, content }),
+      body: JSON.stringify({ name, content, project_id: activeProjectId ?? undefined }),
     }),
   updatePlaybook: (id: number, payload: { name?: string; content?: string }) =>
     request<PlaybookDetail>(`/playbooks/${id}`, {
@@ -234,12 +300,12 @@ export const api = {
     }),
   deletePlaybook: (id: number) => request<void>(`/playbooks/${id}`, { method: "DELETE" }),
 
-  listInventories: () => request<InventorySummary[]>("/inventories"),
+  listInventories: () => request<InventorySummary[]>(scoped("/inventories")),
   getInventory: (id: number) => request<InventoryDetail>(`/inventories/${id}`),
   createInventory: (name: string, description?: string) =>
     request<InventoryDetail>("/inventories", {
       method: "POST",
-      body: JSON.stringify({ name, description }),
+      body: JSON.stringify({ name, description, project_id: activeProjectId ?? undefined }),
     }),
   updateInventory: (id: number, payload: { name?: string; description?: string }) =>
     request<InventoryDetail>(`/inventories/${id}`, {
@@ -293,19 +359,24 @@ export const api = {
       method: "DELETE",
     }),
 
-  listCredentials: () => request<Credential[]>("/credentials"),
+  listCredentials: () => request<Credential[]>(scoped("/credentials")),
   createCredential: (name: string, privateKey: string, description?: string) =>
     request<Credential>("/credentials", {
       method: "POST",
-      body: JSON.stringify({ name, description, private_key: privateKey }),
+      body: JSON.stringify({
+        name,
+        description,
+        private_key: privateKey,
+        project_id: activeProjectId ?? undefined,
+      }),
     }),
   deleteCredential: (id: number) => request<void>(`/credentials/${id}`, { method: "DELETE" }),
 
-  listVaultPasswords: () => request<VaultPassword[]>("/vault-passwords"),
+  listVaultPasswords: () => request<VaultPassword[]>(scoped("/vault-passwords")),
   createVaultPassword: (name: string, password: string, description?: string) =>
     request<VaultPassword>("/vault-passwords", {
       method: "POST",
-      body: JSON.stringify({ name, description, password }),
+      body: JSON.stringify({ name, description, password, project_id: activeProjectId ?? undefined }),
     }),
   deleteVaultPassword: (id: number) => request<void>(`/vault-passwords/${id}`, { method: "DELETE" }),
   encryptVaultString: (vaultPasswordId: number, plaintext: string, varName?: string) =>
@@ -338,7 +409,7 @@ export const api = {
       body: JSON.stringify({ upgrade }),
     }),
 
-  listRuns: () => request<Run[]>("/runs"),
+  listRuns: () => request<Run[]>(scoped("/runs")),
   getRun: (id: number) => request<Run>(`/runs/${id}`),
   createRun: (payload: {
     playbook_id: number;

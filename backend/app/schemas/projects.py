@@ -38,3 +38,8 @@ class MemberOut(BaseModel):
 
 class MemberUpsert(BaseModel):
     role: Role
+
+
+class MemberAdd(BaseModel):
+    username: str = Field(min_length=1, max_length=150)
+    role: Role

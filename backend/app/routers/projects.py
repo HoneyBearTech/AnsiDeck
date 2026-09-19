@@ -23,6 +23,7 @@ from app.permissions import (
     user_project_roles,
 )
 from app.schemas.projects import (
+    MemberAdd,
     MemberOut,
     MemberUpsert,
     ProjectCreate,
@@ -203,27 +204,22 @@ def list_members(
     return [_member_out(user, member.role) for member, user in rows]
 
 
-@router.put("/{project_id}/members/{user_id}", response_model=MemberOut)
-def set_member(
-    project_id: int,
-    user_id: int,
-    payload: MemberUpsert,
+def _upsert_member(
+    db: Session,
+    actor: User,
     request: Request,
-    actor: User = Depends(_member_guard),
-    db: Session = Depends(get_db),
+    project_id: int,
+    target: User,
+    role: str,
 ) -> MemberOut:
     project = require_project_permission(db, actor, request, project_id, Permission.MEMBERS_MANAGE)
-    _guard_own_membership(actor, user_id)
-    target = db.get(User, user_id)
-    if target is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
-
-    member = db.get(ProjectMember, (project_id, user_id))
+    _guard_own_membership(actor, target.id)
+    member = db.get(ProjectMember, (project_id, target.id))
     if member is None:
-        db.add(ProjectMember(project_id=project_id, user_id=user_id, role=payload.role.value))
+        db.add(ProjectMember(project_id=project_id, user_id=target.id, role=role))
         action = "project.member_add"
-    elif member.role != payload.role.value:
-        member.role = payload.role.value
+    elif member.role != role:
+        member.role = role
         action = "project.member_role_change"
     else:
         return _member_out(target, member.role)
@@ -237,9 +233,42 @@ def set_member(
         target_name=target.username,
         ip=client_ip(request),
         project_id=project.id,
-        detail={"role": payload.role.value},
+        detail={"role": role},
     )
-    return _member_out(target, payload.role.value)
+    return _member_out(target, role)
+
+
+@router.post("/{project_id}/members", response_model=MemberOut, status_code=status.HTTP_201_CREATED)
+def add_member_by_username(
+    project_id: int,
+    payload: MemberAdd,
+    request: Request,
+    actor: User = Depends(_member_guard),
+    db: Session = Depends(get_db),
+) -> MemberOut:
+    # Project admins can't list users, so they add by username. A miss is a plain
+    # 404 (they are trusted with membership; this does reveal which usernames exist).
+    require_project_permission(db, actor, request, project_id, Permission.MEMBERS_MANAGE)
+    target = db.query(User).filter(User.username == payload.username).first()
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    return _upsert_member(db, actor, request, project_id, target, payload.role.value)
+
+
+@router.put("/{project_id}/members/{user_id}", response_model=MemberOut)
+def set_member(
+    project_id: int,
+    user_id: int,
+    payload: MemberUpsert,
+    request: Request,
+    actor: User = Depends(_member_guard),
+    db: Session = Depends(get_db),
+) -> MemberOut:
+    require_project_permission(db, actor, request, project_id, Permission.MEMBERS_MANAGE)
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    return _upsert_member(db, actor, request, project_id, target, payload.role.value)
 
 
 @router.delete("/{project_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

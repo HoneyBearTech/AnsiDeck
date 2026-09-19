@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useAuth } from "@/context/auth-context";
 import { api, type HealthStatus } from "@/lib/api";
 
 function CountCard({ to, label, count }: { to: string; label: string; count: number | null }) {
@@ -21,6 +22,8 @@ function CountCard({ to, label, count }: { to: string; label: string; count: num
 }
 
 export function DashboardPage() {
+  const { can } = useAuth();
+  const canListCredentials = can("secrets:list");
   const [health, setHealth] = React.useState<HealthStatus | null>(null);
   const [healthError, setHealthError] = React.useState<string | null>(null);
   const [playbookCount, setPlaybookCount] = React.useState<number | null>(null);
@@ -29,12 +32,30 @@ export function DashboardPage() {
   const [runCount, setRunCount] = React.useState<number | null>(null);
 
   React.useEffect(() => {
-    api.health().then(setHealth).catch(() => setHealthError("Backend unreachable"));
-    api.listPlaybooks().then((p) => setPlaybookCount(p.length));
-    api.listInventories().then((i) => setInventoryCount(i.length));
-    api.listCredentials().then((c) => setCredentialCount(c.length));
-    api.listRuns().then((r) => setRunCount(r.length));
-  }, []);
+    api
+      .health()
+      .then(setHealth)
+      .catch(() => setHealthError("Backend unreachable"));
+    // Counts are best-effort: a failed or forbidden call leaves its card on "…".
+    api
+      .listPlaybooks()
+      .then((p) => setPlaybookCount(p.length))
+      .catch(() => {});
+    api
+      .listInventories()
+      .then((i) => setInventoryCount(i.length))
+      .catch(() => {});
+    if (canListCredentials) {
+      api
+        .listCredentials()
+        .then((c) => setCredentialCount(c.length))
+        .catch(() => {});
+    }
+    api
+      .listRuns()
+      .then((r) => setRunCount(r.length))
+      .catch(() => {});
+  }, [canListCredentials]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -50,10 +71,10 @@ export function DashboardPage() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] gap-4">
         <CountCard to="/playbooks" label="Playbooks" count={playbookCount} />
         <CountCard to="/inventories" label="Inventories" count={inventoryCount} />
-        <CountCard to="/credentials" label="Credentials" count={credentialCount} />
+        {canListCredentials && <CountCard to="/credentials" label="Credentials" count={credentialCount} />}
         <CountCard to="/runs" label="Runs" count={runCount} />
       </div>
 

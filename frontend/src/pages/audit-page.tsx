@@ -132,6 +132,7 @@ export function AuditPage() {
                   {event.actor_username ?? "system"}
                   {target && ` → ${target}`}
                   {event.ip && ` · ${event.ip}`}
+                  {event.project_id !== null && ` · project #${event.project_id}`}
                 </p>
                 {event.detail && Object.keys(event.detail).length > 0 && (
                   <p className="font-mono text-xs text-muted-foreground">{JSON.stringify(event.detail)}</p>

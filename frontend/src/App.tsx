@@ -13,6 +13,7 @@ import { InventoryDetailPage } from "@/pages/inventory-detail-page";
 import { LoginPage } from "@/pages/login-page";
 import { PlaybookDetailPage } from "@/pages/playbook-detail-page";
 import { PlaybooksPage } from "@/pages/playbooks-page";
+import { ProjectsPage } from "@/pages/projects-page";
 import { RunDetailPage } from "@/pages/run-detail-page";
 import { RunTriggerPage } from "@/pages/run-trigger-page";
 import { RunsPage } from "@/pages/runs-page";
@@ -77,6 +78,7 @@ function App() {
               </RequirePermission>
             }
           />
+          <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/runs" element={<RunsPage />} />
           <Route
             path="/runs/new"

@@ -224,6 +224,7 @@ def test_every_project_scoped_route_with_an_id_is_covered_by_the_idor_matrix() -
         ("DELETE", "/api/projects/{project_id}"),
         ("GET", "/api/projects/{project_id}/members"),
         ("PUT", "/api/projects/{project_id}/members/{user_id}"),
+        ("POST", "/api/projects/{project_id}/members"),
         ("DELETE", "/api/projects/{project_id}/members/{user_id}"),
     }
     found = set()
@@ -718,3 +719,37 @@ def test_fresh_install_gets_an_empty_default_project(client: TestClient) -> None
 def test_permission_enum_has_the_new_project_permissions() -> None:
     assert Permission.MEMBERS_MANAGE.value == "members:manage"
     assert Permission.PROJECTS_MANAGE.value == "projects:manage"
+
+
+def test_project_admin_adds_members_by_username(world) -> None:
+    admin, a, b = world["admin"], world["a"], world["b"]
+    boss = _member(admin, "a-boss", {a["project"]: "admin"})
+    make_user_client("by-name", "viewer", default_membership=False)
+
+    added = boss.post(
+        f"/api/projects/{a['project']}/members", json={"username": "by-name", "role": "operator"}
+    )
+    assert added.status_code == 201 and added.json()["role"] == "operator"
+    again = boss.post(
+        f"/api/projects/{a['project']}/members", json={"username": "by-name", "role": "viewer"}
+    )
+    assert again.status_code == 201 and again.json()["role"] == "viewer"
+
+    missing = boss.post(
+        f"/api/projects/{a['project']}/members", json={"username": "ghost", "role": "viewer"}
+    )
+    assert missing.status_code == 404
+    other = boss.post(
+        f"/api/projects/{b['project']}/members", json={"username": "by-name", "role": "viewer"}
+    )
+    assert other.status_code == 404  # not their project
+    self_add = boss.post(
+        f"/api/projects/{a['project']}/members", json={"username": "a-boss", "role": "viewer"}
+    )
+    assert self_add.status_code == 400
+
+    op = _member(admin, "a-op", {a["project"]: "operator"})
+    denied = op.post(
+        f"/api/projects/{a['project']}/members", json={"username": "by-name", "role": "viewer"}
+    )
+    assert denied.status_code == 403

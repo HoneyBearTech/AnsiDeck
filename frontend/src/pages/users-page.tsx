@@ -26,11 +26,17 @@ const ROLE_HELP: Record<AdminUser["role"], string> = {
   viewer: "Read-only: playbooks, inventories, run history and output.",
 };
 
+const NO_PROJECT = "__none__";
+
 function CreateUserDialog({ onCreated }: { onCreated: () => void }) {
+  const { user, activeProjectId } = useAuth();
   const [open, setOpen] = React.useState(false);
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [role, setRole] = React.useState<AdminUser["role"]>("viewer");
+  const [projectId, setProjectId] = React.useState<string>(
+    activeProjectId === null ? NO_PROJECT : String(activeProjectId),
+  );
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
 
@@ -38,7 +44,12 @@ function CreateUserDialog({ onCreated }: { onCreated: () => void }) {
     setError(null);
     setSaving(true);
     try {
-      await api.createUser(username, password, role);
+      await api.createUser(
+        username,
+        password,
+        role,
+        role === "admin" || projectId === NO_PROJECT ? null : Number(projectId),
+      );
       setUsername("");
       setPassword("");
       setRole("viewer");
@@ -97,6 +108,27 @@ function CreateUserDialog({ onCreated }: { onCreated: () => void }) {
             </Select>
             <p className="text-xs text-muted-foreground">{ROLE_HELP[role]}</p>
           </div>
+          {role !== "admin" && (
+            <div className="flex flex-col gap-2">
+              <Label>Add to project</Label>
+              <Select value={projectId} onValueChange={setProjectId}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_PROJECT}>None (no access yet)</SelectItem>
+                  {user?.projects.map((project) => (
+                    <SelectItem key={project.id} value={String(project.id)}>
+                      {project.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Non-admin users only see the projects they are members of, with this role.
+              </p>
+            </div>
+          )}
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
         <DialogFooter>
@@ -273,7 +305,8 @@ export function UsersPage() {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Changing a role, deactivating, or resetting a password signs that user out immediately.
+        Changing a role, deactivating, or resetting a password signs that user out immediately. A non-admin
+        user's role here only seeds new memberships; per-project roles are set on the Projects page.
       </p>
     </div>
   );
