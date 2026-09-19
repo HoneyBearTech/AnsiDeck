@@ -27,7 +27,13 @@ jobs:
       - run: uv sync --all-groups
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run pytest -v
+      - name: Tests with coverage
+        run: uv run pytest -v --cov --cov-report=term-missing:skip-covered --cov-report=json:$RUNNER_TEMP/coverage.json
+
+      # The OpenSSF Best Practices claim is about *branch* coverage, and coverage.py's own
+      # fail_under only gates the blended line + branch figure, so check branches directly.
+      - name: Enforce the branch-coverage floor
+        run: uv run python scripts/check_branch_coverage.py "$RUNNER_TEMP/coverage.json" 80
 
       # Fails on any known vulnerability in the locked runtime + dev dependencies.
       # pip-audit is pinned so the check itself can't change underneath us.

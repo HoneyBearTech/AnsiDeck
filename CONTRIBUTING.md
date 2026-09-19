@@ -44,7 +44,7 @@ Run the same checks CI runs and make sure they pass:
 uv lock --check
 uv run ruff check .
 uv run ruff format --check .    # `uv run ruff format .` fixes formatting
-uv run pytest
+uv run pytest --cov              # prints coverage; CI requires 80% branch coverage
 
 # frontend/
 npm run lint
@@ -52,7 +52,8 @@ npm run typecheck
 npm run build
 ```
 
-CI also audits dependencies for known vulnerabilities and runs CodeQL and Docker image builds.
+CI also enforces a floor of 80% branch coverage for the backend, audits dependencies for known
+vulnerabilities, and runs CodeQL and Docker image builds.
 
 ## Pull requests
 
