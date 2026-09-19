@@ -14,11 +14,14 @@ def test_login_with_wrong_password_fails(client: TestClient) -> None:
 def test_login_then_me_then_logout(client: TestClient) -> None:
     login_response = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
     assert login_response.status_code == 200
-    assert login_response.json() == {"username": "admin"}
+    assert login_response.json()["username"] == "admin"
+    assert login_response.json()["role"] == "admin"
 
     me_response = client.get("/api/auth/me")
     assert me_response.status_code == 200
-    assert me_response.json() == {"username": "admin"}
+    assert me_response.json()["username"] == "admin"
+    assert me_response.json()["role"] == "admin"
+    assert "runs:become" in me_response.json()["permissions"]
 
     logout_response = client.post("/api/auth/logout")
     assert logout_response.status_code == 200

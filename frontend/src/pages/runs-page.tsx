@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { useAuth } from "@/context/auth-context";
 import { api, type Run } from "@/lib/api";
 
 const STATUS_VARIANT: Record<Run["status"], BadgeProps["variant"]> = {
@@ -14,6 +15,7 @@ const STATUS_VARIANT: Record<Run["status"], BadgeProps["variant"]> = {
 };
 
 export function RunsPage() {
+  const { can } = useAuth();
   const [runs, setRuns] = React.useState<Run[]>([]);
   const [loading, setLoading] = React.useState(true);
 
@@ -28,9 +30,11 @@ export function RunsPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Runs</h1>
-        <Button asChild>
-          <Link to="/runs/new">New Run</Link>
-        </Button>
+        {can("runs:trigger") && (
+          <Button asChild>
+            <Link to="/runs/new">New Run</Link>
+          </Button>
+        )}
       </div>
 
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}

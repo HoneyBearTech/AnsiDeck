@@ -1,8 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from sqlalchemy.orm import Session
 
+from app import audit
 from app.db import get_db
-from app.dependencies import SESSION_COOKIE_NAME, get_current_user
+from app.dependencies import SESSION_COOKIE_NAME, authenticate_token
+from app.hardening import client_ip
 from app.models import (
     Credential,
     GalaxyInstall,
@@ -11,11 +21,12 @@ from app.models import (
     Playbook,
     Run,
     RunStatus,
+    User,
     VaultPassword,
 )
+from app.permissions import Permission, guard, has_permission
 from app.run_engine import DONE, get_or_create_stream, start_run
 from app.schemas.runs import RunCreate, RunOut
-from app.security import verify_session_token
 from app.storage import run_log_path
 
 router = APIRouter()
@@ -23,17 +34,41 @@ router = APIRouter()
 _ACTIVE_STATUSES = (RunStatus.QUEUED.value, RunStatus.RUNNING.value)
 
 
-@router.get("", response_model=list[RunOut], dependencies=[Depends(get_current_user)])
-def list_runs(db: Session = Depends(get_db)) -> list[Run]:
-    return db.query(Run).order_by(Run.id.desc()).all()
+_guard = guard(Permission.CONTENT_READ, Permission.RUNS_TRIGGER)
+HIDDEN = "[HIDDEN]"
+
+
+def _run_out(run: Run, user: User) -> RunOut:
+    out = RunOut.model_validate(run)
+    if out.extra_vars and not has_permission(user, Permission.RUNS_READ_EXTRA_VARS):
+        out.extra_vars = {key: HIDDEN for key in out.extra_vars}
+    return out
+
+
+@router.get("", response_model=list[RunOut])
+def list_runs(user: User = Depends(_guard), db: Session = Depends(get_db)) -> list[RunOut]:
+    return [_run_out(run, user) for run in db.query(Run).order_by(Run.id.desc()).all()]
 
 
 @router.post("", response_model=RunOut, status_code=status.HTTP_201_CREATED)
 def create_run(
     payload: RunCreate,
-    current_user: str = Depends(get_current_user),
+    request: Request,
+    current_user: User = Depends(_guard),
     db: Session = Depends(get_db),
-) -> Run:
+) -> RunOut:
+    if payload.become and not has_permission(current_user, Permission.RUNS_BECOME):
+        audit.record(
+            db,
+            "permission.denied",
+            outcome="denied",
+            actor=current_user,
+            target_type="run",
+            ip=client_ip(request),
+            detail={"required": Permission.RUNS_BECOME.value},
+        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You may not run playbooks as root (become)")
+
     playbook = db.get(Playbook, payload.playbook_id)
     if playbook is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Playbook not found")
@@ -104,29 +139,45 @@ def create_run(
         diff_mode=payload.diff_mode,
         limit=payload.limit,
         extra_vars=payload.extra_vars,
-        triggered_by=current_user,
+        triggered_by=current_user.username,
     )
     db.add(run)
     db.commit()
     db.refresh(run)
 
+    audit.record(
+        db,
+        "run.trigger",
+        actor=current_user,
+        target_type="run",
+        target_id=run.id,
+        ip=client_ip(request),
+        detail={
+            "playbook": playbook.name,
+            "inventory": inventory.name,
+            "group": group.name if group else None,
+            "become": payload.become,
+            "check_mode": payload.check_mode,
+        },
+    )
     start_run(run.id)
-    return run
+    return _run_out(run, current_user)
 
 
-@router.get("/{run_id}", response_model=RunOut, dependencies=[Depends(get_current_user)])
-def get_run(run_id: int, db: Session = Depends(get_db)) -> Run:
+@router.get("/{run_id}", response_model=RunOut)
+def get_run(run_id: int, user: User = Depends(_guard), db: Session = Depends(get_db)) -> RunOut:
     run = db.get(Run, run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
-    return run
+    return _run_out(run, user)
 
 
 @router.websocket("/{run_id}/ws")
 async def run_ws(websocket: WebSocket, run_id: int, db: Session = Depends(get_db)) -> None:
-    token = websocket.cookies.get(SESSION_COOKIE_NAME)
-    username = verify_session_token(token) if token else None
-    if not username:
+    # Manually guarded (no Depends on a WebSocket): authenticate the cookie
+    # against the DB and require the same read permission as the HTTP routes.
+    user = authenticate_token(db, websocket.cookies.get(SESSION_COOKIE_NAME))
+    if user is None or not has_permission(user, Permission.CONTENT_READ):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 

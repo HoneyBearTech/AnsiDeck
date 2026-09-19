@@ -2,12 +2,15 @@ import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/context/auth-context";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { api, ApiError } from "@/lib/api";
 
 export function PlaybookDetailPage() {
+  const { can } = useAuth();
+  const canWrite = can("content:write");
   const params = useParams<{ id: string }>();
   const navigate = useNavigate();
   const isNew = params.id === undefined;
@@ -59,23 +62,32 @@ export function PlaybookDetailPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-semibold">{isNew ? "New Playbook" : "Edit Playbook"}</h1>
+      <h1 className="text-xl font-semibold">
+        {isNew ? "New Playbook" : canWrite ? "Edit Playbook" : "Playbook"}
+      </h1>
 
       <div className="flex flex-col gap-2">
         <Label htmlFor="playbook-name">Name</Label>
-        <Input id="playbook-name" value={name} onChange={(e) => setName(e.target.value)} />
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="playbook-file">Upload YAML file</Label>
-        <input
-          id="playbook-file"
-          type="file"
-          accept=".yml,.yaml"
-          onChange={handleFileUpload}
-          className="text-sm text-muted-foreground"
+        <Input
+          id="playbook-name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          readOnly={!canWrite}
         />
       </div>
+
+      {canWrite && (
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="playbook-file">Upload YAML file</Label>
+          <input
+            id="playbook-file"
+            type="file"
+            accept=".yml,.yaml"
+            onChange={handleFileUpload}
+            className="text-sm text-muted-foreground"
+          />
+        </div>
+      )}
 
       <div className="flex flex-col gap-2">
         <Label htmlFor="playbook-content">Content</Label>
@@ -83,6 +95,7 @@ export function PlaybookDetailPage() {
           id="playbook-content"
           value={content}
           onChange={(e) => setContent(e.target.value)}
+          readOnly={!canWrite}
           className="min-h-96 font-mono"
           spellCheck={false}
         />
@@ -90,11 +103,13 @@ export function PlaybookDetailPage() {
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <div>
-        <Button onClick={handleSave} disabled={saving || !name || !content}>
-          {saving ? "Saving…" : "Save"}
-        </Button>
-      </div>
+      {canWrite && (
+        <div>
+          <Button onClick={handleSave} disabled={saving || !name || !content}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

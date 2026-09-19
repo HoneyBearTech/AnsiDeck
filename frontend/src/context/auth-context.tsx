@@ -7,6 +7,7 @@ interface AuthContextValue {
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  can: (permission: string) => boolean;
 }
 
 const AuthContext = React.createContext<AuthContextValue | null>(null);
@@ -33,10 +34,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   }, []);
 
+  const can = React.useCallback(
+    (permission: string) => user?.permissions.includes(permission) ?? false,
+    [user],
+  );
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
-      {children}
-    </AuthContext.Provider>
+    <AuthContext.Provider value={{ user, loading, login, logout, can }}>{children}</AuthContext.Provider>
   );
 }
 

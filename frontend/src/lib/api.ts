@@ -35,6 +35,35 @@ export interface HealthStatus {
 
 export interface User {
   username: string;
+  role: "admin" | "operator" | "viewer";
+  permissions: string[];
+}
+
+export interface AdminUser {
+  id: number;
+  username: string;
+  role: "admin" | "operator" | "viewer";
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface AuditEvent {
+  id: number;
+  created_at: string;
+  actor_username: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: number | null;
+  target_name: string | null;
+  outcome: "success" | "failure" | "denied";
+  ip: string | null;
+  detail: Record<string, unknown> | null;
+}
+
+export interface AuditPage {
+  items: AuditEvent[];
+  total: number;
 }
 
 export interface PlaybookSummary {
@@ -148,15 +177,61 @@ export const api = {
   changePassword: (currentPassword: string, newPassword: string) =>
     request<{ ok: boolean }>("/auth/change-password", {
       method: "POST",
-      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
     }),
+
+  listUsers: () => request<AdminUser[]>("/users"),
+  createUser: (username: string, password: string, role: AdminUser["role"]) =>
+    request<AdminUser>("/users", {
+      method: "POST",
+      body: JSON.stringify({ username, password, role }),
+    }),
+  updateUser: (
+    id: number,
+    payload: {
+      role?: AdminUser["role"];
+      is_active?: boolean;
+      password?: string;
+    },
+  ) =>
+    request<AdminUser>(`/users/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deleteUser: (id: number) => request<void>(`/users/${id}`, { method: "DELETE" }),
+
+  listAudit: (params: {
+    limit: number;
+    offset: number;
+    action?: string;
+    actor?: string;
+    outcome?: string;
+  }) => {
+    const query = new URLSearchParams({
+      limit: String(params.limit),
+      offset: String(params.offset),
+    });
+    for (const key of ["action", "actor", "outcome"] as const) {
+      if (params[key]) query.set(key, params[key]);
+    }
+    return request<AuditPage>(`/audit?${query.toString()}`);
+  },
 
   listPlaybooks: () => request<PlaybookSummary[]>("/playbooks"),
   getPlaybook: (id: number) => request<PlaybookDetail>(`/playbooks/${id}`),
   createPlaybook: (name: string, content: string) =>
-    request<PlaybookDetail>("/playbooks", { method: "POST", body: JSON.stringify({ name, content }) }),
+    request<PlaybookDetail>("/playbooks", {
+      method: "POST",
+      body: JSON.stringify({ name, content }),
+    }),
   updatePlaybook: (id: number, payload: { name?: string; content?: string }) =>
-    request<PlaybookDetail>(`/playbooks/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
+    request<PlaybookDetail>(`/playbooks/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
   deletePlaybook: (id: number) => request<void>(`/playbooks/${id}`, { method: "DELETE" }),
 
   listInventories: () => request<InventorySummary[]>("/inventories"),
@@ -167,7 +242,10 @@ export const api = {
       body: JSON.stringify({ name, description }),
     }),
   updateInventory: (id: number, payload: { name?: string; description?: string }) =>
-    request<InventoryDetail>(`/inventories/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
+    request<InventoryDetail>(`/inventories/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
   deleteInventory: (id: number) => request<void>(`/inventories/${id}`, { method: "DELETE" }),
 
   createGroup: (inventoryId: number, name: string) =>
@@ -181,11 +259,17 @@ export const api = {
       body: JSON.stringify({ name }),
     }),
   deleteGroup: (inventoryId: number, groupId: number) =>
-    request<void>(`/inventories/${inventoryId}/groups/${groupId}`, { method: "DELETE" }),
+    request<void>(`/inventories/${inventoryId}/groups/${groupId}`, {
+      method: "DELETE",
+    }),
 
   createHost: (
     inventoryId: number,
-    payload: { hostname: string; vars?: Record<string, unknown>; group_ids?: number[] },
+    payload: {
+      hostname: string;
+      vars?: Record<string, unknown>;
+      group_ids?: number[];
+    },
   ) =>
     request<InventoryHost>(`/inventories/${inventoryId}/hosts`, {
       method: "POST",
@@ -194,14 +278,20 @@ export const api = {
   updateHost: (
     inventoryId: number,
     hostId: number,
-    payload: { hostname?: string; vars?: Record<string, unknown>; group_ids?: number[] },
+    payload: {
+      hostname?: string;
+      vars?: Record<string, unknown>;
+      group_ids?: number[];
+    },
   ) =>
     request<InventoryHost>(`/inventories/${inventoryId}/hosts/${hostId}`, {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
   deleteHost: (inventoryId: number, hostId: number) =>
-    request<void>(`/inventories/${inventoryId}/hosts/${hostId}`, { method: "DELETE" }),
+    request<void>(`/inventories/${inventoryId}/hosts/${hostId}`, {
+      method: "DELETE",
+    }),
 
   listCredentials: () => request<Credential[]>("/credentials"),
   createCredential: (name: string, privateKey: string, description?: string) =>
@@ -217,8 +307,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name, description, password }),
     }),
-  deleteVaultPassword: (id: number) =>
-    request<void>(`/vault-passwords/${id}`, { method: "DELETE" }),
+  deleteVaultPassword: (id: number) => request<void>(`/vault-passwords/${id}`, { method: "DELETE" }),
   encryptVaultString: (vaultPasswordId: number, plaintext: string, varName?: string) =>
     request<VaultEncryptResult>("/vault/encrypt", {
       method: "POST",

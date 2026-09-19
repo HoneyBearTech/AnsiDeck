@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useAuth } from "@/context/auth-context";
 import { api, ApiError, type VaultEncryptResult, type VaultPassword } from "@/lib/api";
 
 function CreateVaultPasswordDialog({ onCreated }: { onCreated: () => void }) {
@@ -287,6 +288,10 @@ function DecryptCard({ vaultPasswords }: { vaultPasswords: VaultPassword[] }) {
 }
 
 export function VaultPage() {
+  const { can } = useAuth();
+  const canManage = can("secrets:manage");
+  const canEncrypt = can("vault:encrypt");
+  const canDecrypt = can("vault:decrypt");
   const [vaultPasswords, setVaultPasswords] = React.useState<VaultPassword[]>([]);
   const [loading, setLoading] = React.useState(true);
 
@@ -310,7 +315,7 @@ export function VaultPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Vault</h1>
-        <CreateVaultPasswordDialog onCreated={refresh} />
+        {canManage && <CreateVaultPasswordDialog onCreated={refresh} />}
       </div>
 
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -330,18 +335,20 @@ export function VaultPage() {
                   <span className="text-xs text-muted-foreground">{vaultPassword.description}</span>
                 )}
               </div>
-              <Button variant="outline" size="sm" onClick={() => handleDelete(vaultPassword.id)}>
-                Delete
-              </Button>
+              {canManage && (
+                <Button variant="outline" size="sm" onClick={() => handleDelete(vaultPassword.id)}>
+                  Delete
+                </Button>
+              )}
             </CardContent>
           </Card>
         ))}
       </div>
 
-      {vaultPasswords.length > 0 && (
+      {vaultPasswords.length > 0 && (canEncrypt || canDecrypt) && (
         <div className="grid gap-6 md:grid-cols-2">
-          <EncryptCard vaultPasswords={vaultPasswords} />
-          <DecryptCard vaultPasswords={vaultPasswords} />
+          {canEncrypt && <EncryptCard vaultPasswords={vaultPasswords} />}
+          {canDecrypt && <DecryptCard vaultPasswords={vaultPasswords} />}
         </div>
       )}
     </div>

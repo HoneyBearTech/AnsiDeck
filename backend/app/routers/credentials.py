@@ -1,15 +1,18 @@
 from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_ssh_private_key
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import audit
 from app.crypto import encrypt_secret
 from app.db import get_db
-from app.dependencies import get_current_user
-from app.models import Credential
+from app.hardening import client_ip
+from app.models import Credential, User
+from app.permissions import Permission, guard
 from app.schemas.credentials import CredentialCreate, CredentialOut
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+_guard = guard(Permission.SECRETS_LIST, Permission.SECRETS_MANAGE)
+router = APIRouter(dependencies=[Depends(_guard)])
 
 
 def _validate_private_key(key_bytes: bytes) -> None:
@@ -38,7 +41,12 @@ def list_credentials(db: Session = Depends(get_db)) -> list[Credential]:
 
 
 @router.post("", response_model=CredentialOut, status_code=status.HTTP_201_CREATED)
-def create_credential(payload: CredentialCreate, db: Session = Depends(get_db)) -> Credential:
+def create_credential(
+    payload: CredentialCreate,
+    request: Request,
+    actor: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> Credential:
     key_bytes = payload.private_key.encode()
     _validate_private_key(key_bytes)
 
@@ -54,13 +62,37 @@ def create_credential(payload: CredentialCreate, db: Session = Depends(get_db)) 
         db.rollback()
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Credential name already exists") from exc
     db.refresh(credential)
+    audit.record(
+        db,
+        "credential.create",
+        actor=actor,
+        target_type="credential",
+        target_id=credential.id,
+        target_name=credential.name,
+        ip=client_ip(request),
+    )
     return credential
 
 
 @router.delete("/{credential_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_credential(credential_id: int, db: Session = Depends(get_db)) -> None:
+def delete_credential(
+    credential_id: int,
+    request: Request,
+    actor: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> None:
     credential = db.get(Credential, credential_id)
     if credential is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Credential not found")
+    name = credential.name
     db.delete(credential)
     db.commit()
+    audit.record(
+        db,
+        "credential.delete",
+        actor=actor,
+        target_type="credential",
+        target_id=credential_id,
+        target_name=name,
+        ip=client_ip(request),
+    )

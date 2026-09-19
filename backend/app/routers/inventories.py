@@ -3,8 +3,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.dependencies import get_current_user
 from app.models import Inventory, InventoryGroup, InventoryHost
+from app.permissions import Permission, guard
 from app.schemas.inventories import (
     GroupCreate,
     GroupOut,
@@ -18,7 +18,7 @@ from app.schemas.inventories import (
     InventoryUpdate,
 )
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+router = APIRouter(dependencies=[Depends(guard(Permission.CONTENT_READ, Permission.CONTENT_WRITE))])
 
 
 def _get_inventory_or_404(db: Session, inventory_id: int) -> Inventory:

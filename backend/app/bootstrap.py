@@ -12,6 +12,10 @@ def seed_admin_user(db: Session) -> None:
         return
     settings = get_settings()
     db.add(
-        User(username=settings.admin_username, password_hash=hash_password(settings.admin_password))
+        User(
+            username=settings.admin_username,
+            password_hash=hash_password(settings.admin_password),
+            role="admin",
+        )
     )
     db.commit()

@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from app import audit
 from app.crypto import decrypt_secret
 from app.db import get_db
-from app.dependencies import get_current_user
-from app.models import VaultPassword
+from app.hardening import client_ip
+from app.models import User, VaultPassword
+from app.permissions import Permission, require_permission
 from app.schemas.vault import (
     VaultDecryptRequest,
     VaultDecryptResponse,
@@ -13,33 +15,60 @@ from app.schemas.vault import (
 )
 from app.vault import VaultError, decrypt_vault_text, encrypt_to_vault_envelope, to_yaml_block
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+router = APIRouter()
+
+_encrypt_guard = require_permission(Permission.VAULT_ENCRYPT)
+_decrypt_guard = require_permission(Permission.VAULT_DECRYPT)
 
 
-def _load_password(db: Session, vault_password_id: int) -> str:
+def _load_password(db: Session, vault_password_id: int) -> tuple[VaultPassword, str]:
     vault_password = db.get(VaultPassword, vault_password_id)
     if vault_password is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Vault password not found")
-    return decrypt_secret(vault_password.encrypted_password).decode()
+    return vault_password, decrypt_secret(vault_password.encrypted_password).decode()
+
+
+def _audit_use(db: Session, action: str, actor: User, request: Request, vp: VaultPassword) -> None:
+    audit.record(
+        db,
+        action,
+        actor=actor,
+        target_type="vault_password",
+        target_id=vp.id,
+        target_name=vp.name,
+        ip=client_ip(request),
+    )
 
 
 @router.post("/encrypt", response_model=VaultEncryptResponse)
-def encrypt(payload: VaultEncryptRequest, db: Session = Depends(get_db)) -> VaultEncryptResponse:
-    password = _load_password(db, payload.vault_password_id)
+def encrypt(
+    payload: VaultEncryptRequest,
+    request: Request,
+    actor: User = Depends(_encrypt_guard),
+    db: Session = Depends(get_db),
+) -> VaultEncryptResponse:
+    vault_password, password = _load_password(db, payload.vault_password_id)
     try:
         envelope = encrypt_to_vault_envelope(payload.plaintext, password)
     except VaultError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Encryption failed: {exc}") from exc
+    _audit_use(db, "vault.encrypt", actor, request, vault_password)
     return VaultEncryptResponse(
         vault_text=envelope, yaml_block=to_yaml_block(envelope, payload.var_name)
     )
 
 
 @router.post("/decrypt", response_model=VaultDecryptResponse)
-def decrypt(payload: VaultDecryptRequest, db: Session = Depends(get_db)) -> VaultDecryptResponse:
-    password = _load_password(db, payload.vault_password_id)
+def decrypt(
+    payload: VaultDecryptRequest,
+    request: Request,
+    actor: User = Depends(_decrypt_guard),
+    db: Session = Depends(get_db),
+) -> VaultDecryptResponse:
+    vault_password, password = _load_password(db, payload.vault_password_id)
     try:
         plaintext = decrypt_vault_text(payload.ciphertext, password)
     except VaultError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Decryption failed: {exc}") from exc
+    _audit_use(db, "vault.decrypt", actor, request, vault_password)
     return VaultDecryptResponse(plaintext=plaintext)

@@ -5,9 +5,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app import audit
 from app.bootstrap import seed_admin_user
 from app.config import get_settings
 from app.db import get_sessionmaker, init_db
+from app.hardening import OriginCheckMiddleware
+from app.routers import (
+    audit as audit_router,
+)
 from app.routers import (
     auth,
     credentials,
@@ -16,6 +21,7 @@ from app.routers import (
     inventories,
     playbooks,
     runs,
+    users,
     vault,
     vault_passwords,
 )
@@ -31,6 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     session = get_sessionmaker()()
     try:
         seed_admin_user(session)
+        audit.prune(session, settings.audit_retention_days)
     finally:
         session.close()
     yield
@@ -46,6 +53,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(OriginCheckMiddleware, allowed_origins=settings.cors_origins)
+
 app.include_router(health.router, prefix="/api")
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(playbooks.router, prefix="/api/playbooks", tags=["playbooks"])
@@ -55,3 +64,5 @@ app.include_router(vault_passwords.router, prefix="/api/vault-passwords", tags=[
 app.include_router(vault.router, prefix="/api/vault", tags=["vault"])
 app.include_router(galaxy.router, prefix="/api/galaxy", tags=["galaxy"])
 app.include_router(runs.router, prefix="/api/runs", tags=["runs"])
+app.include_router(users.router, prefix="/api/users", tags=["users"])
+app.include_router(audit_router.router, prefix="/api/audit", tags=["audit"])

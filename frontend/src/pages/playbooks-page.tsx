@@ -3,9 +3,13 @@ import { Link } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { useAuth } from "@/context/auth-context";
 import { api, type PlaybookSummary } from "@/lib/api";
 
 export function PlaybooksPage() {
+  const { can } = useAuth();
+  const canWrite = can("content:write");
+  const canRun = can("runs:trigger");
   const [playbooks, setPlaybooks] = React.useState<PlaybookSummary[]>([]);
   const [loading, setLoading] = React.useState(true);
 
@@ -29,9 +33,11 @@ export function PlaybooksPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Playbooks</h1>
-        <Button asChild>
-          <Link to="/playbooks/new">New Playbook</Link>
-        </Button>
+        {canWrite && (
+          <Button asChild>
+            <Link to="/playbooks/new">New Playbook</Link>
+          </Button>
+        )}
       </div>
 
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -50,12 +56,16 @@ export function PlaybooksPage() {
                 </span>
               </Link>
               <div className="flex gap-2">
-                <Button asChild size="sm">
-                  <Link to="/runs/new">Run</Link>
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => handleDelete(playbook.id)}>
-                  Delete
-                </Button>
+                {canRun && (
+                  <Button asChild size="sm">
+                    <Link to="/runs/new">Run</Link>
+                  </Button>
+                )}
+                {canWrite && (
+                  <Button variant="outline" size="sm" onClick={() => handleDelete(playbook.id)}>
+                    Delete
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>

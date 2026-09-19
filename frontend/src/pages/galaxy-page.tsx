@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useAuth } from "@/context/auth-context";
 import {
   api,
   ApiError,
@@ -53,6 +54,8 @@ function ItemList({ title, items }: { title: string; items: GalaxyItem[] }) {
 }
 
 export function GalaxyPage() {
+  const { can } = useAuth();
+  const canManage = can("galaxy:manage");
   const [content, setContent] = React.useState("");
   const [savedContent, setSavedContent] = React.useState("");
   const [saveError, setSaveError] = React.useState<string | null>(null);
@@ -125,14 +128,16 @@ export function GalaxyPage() {
     <div className="flex flex-col gap-6">
       <h1 className="text-xl font-semibold">Galaxy</h1>
 
-      <div className="flex flex-col gap-1 rounded-md bg-destructive/10 p-4">
-        <p className="text-sm font-medium text-destructive">Installed content runs as code</p>
-        <p className="text-sm text-destructive">
-          Installing roles and collections downloads and runs third-party code. Modules and plugins
-          run inside the AnsiDeck container and can access decrypted SSH keys and vault passwords
-          whenever a playbook runs. Only install content you trust.
-        </p>
-      </div>
+      {canManage && (
+        <div className="flex flex-col gap-1 rounded-md bg-destructive/10 p-4">
+          <p className="text-sm font-medium text-destructive">Installed content runs as code</p>
+          <p className="text-sm text-destructive">
+            Installing roles and collections downloads and runs third-party code. Modules and plugins run
+            inside the AnsiDeck container and can access decrypted SSH keys and vault passwords whenever a
+            playbook runs. Only install content you trust.
+          </p>
+        </div>
+      )}
 
       <Card>
         <CardHeader>
@@ -147,68 +152,68 @@ export function GalaxyPage() {
               onChange={(e) => setContent(e.target.value)}
               className="min-h-48 font-mono"
               spellCheck={false}
+              readOnly={!canManage}
               placeholder={REQUIREMENTS_PLACEHOLDER}
             />
             <p className="text-xs text-muted-foreground">
-              Galaxy names, https:// URLs and git+https:// sources only. Local paths and other
-              schemes are rejected.
+              Galaxy names, https:// URLs and git+https:// sources only. Local paths and other schemes are
+              rejected.
             </p>
           </div>
           {saveError && <p className="text-sm text-destructive">{saveError}</p>}
-          <div>
-            <Button onClick={handleSave} disabled={saving || !dirty}>
-              {saving ? "Saving…" : dirty ? "Save" : "Saved"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Install</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <p className="text-sm text-muted-foreground">
-            Installs the last saved requirements. Runs are blocked while an install is in progress,
-            and installs wait for active runs to finish. Collections already bundled with AnsiDeck's
-            Ansible are skipped unless you pin a newer version or tick upgrade below.
-          </p>
-          <div className="flex flex-col gap-2">
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox checked={upgrade} onCheckedChange={(c) => setUpgrade(c === true)} />
-              Upgrade / reinstall items that are already installed
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox checked={confirmed} onCheckedChange={(c) => setConfirmed(c === true)} />
-              I understand this runs third-party code.
-            </label>
-          </div>
-          {installError && <p className="text-sm text-destructive">{installError}</p>}
-          <div>
-            <Button
-              onClick={handleInstall}
-              disabled={!confirmed || starting || dirty || currentActive}
-            >
-              {starting ? "Starting…" : currentActive ? "Installing…" : "Install"}
-            </Button>
-            {dirty && (
-              <span className="ml-3 text-xs text-muted-foreground">Save your changes first.</span>
-            )}
-          </div>
-
-          {current && (
-            <div className="flex flex-col gap-2 border-t border-border pt-4">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">Install #{current.id}</span>
-                <Badge variant={STATUS_VARIANT[current.status]}>{current.status}</Badge>
-              </div>
-              <pre className="max-h-96 overflow-auto rounded-md bg-muted p-3 font-mono text-xs whitespace-pre-wrap">
-                {current.log || "Waiting for output…"}
-              </pre>
+          {canManage && (
+            <div>
+              <Button onClick={handleSave} disabled={saving || !dirty}>
+                {saving ? "Saving…" : dirty ? "Save" : "Saved"}
+              </Button>
             </div>
           )}
         </CardContent>
       </Card>
+
+      {canManage && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Install</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <p className="text-sm text-muted-foreground">
+              Installs the last saved requirements. Runs are blocked while an install is in progress, and
+              installs wait for active runs to finish. Collections already bundled with AnsiDeck's Ansible are
+              skipped unless you pin a newer version or tick upgrade below.
+            </p>
+            <div className="flex flex-col gap-2">
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox checked={upgrade} onCheckedChange={(c) => setUpgrade(c === true)} />
+                Upgrade / reinstall items that are already installed
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox checked={confirmed} onCheckedChange={(c) => setConfirmed(c === true)} />I understand
+                this runs third-party code.
+              </label>
+            </div>
+            {installError && <p className="text-sm text-destructive">{installError}</p>}
+            <div>
+              <Button onClick={handleInstall} disabled={!confirmed || starting || dirty || currentActive}>
+                {starting ? "Starting…" : currentActive ? "Installing…" : "Install"}
+              </Button>
+              {dirty && <span className="ml-3 text-xs text-muted-foreground">Save your changes first.</span>}
+            </div>
+
+            {current && (
+              <div className="flex flex-col gap-2 border-t border-border pt-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">Install #{current.id}</span>
+                  <Badge variant={STATUS_VARIANT[current.status]}>{current.status}</Badge>
+                </div>
+                <pre className="max-h-96 overflow-auto rounded-md bg-muted p-3 font-mono text-xs whitespace-pre-wrap">
+                  {current.log || "Waiting for output…"}
+                </pre>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -234,8 +239,7 @@ export function GalaxyPage() {
                 onClick={() => api.getGalaxyInstall(install.id).then(setCurrent)}
               >
                 <span>
-                  #{install.id} · {install.triggered_by} ·{" "}
-                  {new Date(install.created_at).toLocaleString()}
+                  #{install.id} · {install.triggered_by} · {new Date(install.created_at).toLocaleString()}
                   {install.upgrade && " · upgrade"}
                 </span>
                 <Badge variant={STATUS_VARIANT[install.status]}>{install.status}</Badge>

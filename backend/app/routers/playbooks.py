@@ -3,12 +3,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.dependencies import get_current_user
 from app.models import Playbook
+from app.permissions import Permission, guard
 from app.schemas.playbooks import PlaybookCreate, PlaybookDetail, PlaybookSummary, PlaybookUpdate
 from app.storage import playbook_path
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+router = APIRouter(dependencies=[Depends(guard(Permission.CONTENT_READ, Permission.CONTENT_WRITE))])
 
 
 class _PlaybookLoader(yaml.SafeLoader):

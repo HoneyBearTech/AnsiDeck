@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from app import audit
 from app.db import get_db
-from app.dependencies import get_current_user
 from app.galaxy import (
     RequirementsError,
     list_installed_collections,
@@ -10,7 +10,9 @@ from app.galaxy import (
     start_install,
     validate_requirements,
 )
-from app.models import GalaxyInstall, Run, RunStatus
+from app.hardening import client_ip
+from app.models import GalaxyInstall, Run, RunStatus, User
+from app.permissions import Permission, guard
 from app.schemas.galaxy import (
     InstallCreate,
     InstallDetail,
@@ -20,7 +22,8 @@ from app.schemas.galaxy import (
 )
 from app.storage import galaxy_install_log_path, galaxy_requirements_path
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+_guard = guard(Permission.CONTENT_READ, Permission.GALAXY_MANAGE)
+router = APIRouter(dependencies=[Depends(_guard)])
 
 _ACTIVE_STATUSES = (RunStatus.QUEUED.value, RunStatus.RUNNING.value)
 
@@ -41,12 +44,24 @@ def get_requirements() -> RequirementsPayload:
 
 
 @router.put("/requirements", response_model=RequirementsPayload)
-def put_requirements(payload: RequirementsPayload) -> RequirementsPayload:
+def put_requirements(
+    payload: RequirementsPayload,
+    request: Request,
+    actor: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> RequirementsPayload:
     try:
         validate_requirements(payload.content)
     except RequirementsError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     galaxy_requirements_path().write_text(payload.content)
+    audit.record(
+        db,
+        "galaxy.requirements_update",
+        actor=actor,
+        target_type="galaxy_requirements",
+        ip=client_ip(request),
+    )
     return payload
 
 
@@ -71,7 +86,8 @@ def get_install(install_id: int, db: Session = Depends(get_db)) -> InstallDetail
 @router.post("/installs", response_model=InstallDetail, status_code=status.HTTP_201_CREATED)
 def create_install(
     payload: InstallCreate,
-    current_user: str = Depends(get_current_user),
+    request: Request,
+    current_user: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> InstallDetail:
     path = galaxy_requirements_path()
@@ -101,11 +117,20 @@ def create_install(
         )
 
     install = GalaxyInstall(
-        requirements_snapshot=text, upgrade=payload.upgrade, triggered_by=current_user
+        requirements_snapshot=text, upgrade=payload.upgrade, triggered_by=current_user.username
     )
     db.add(install)
     db.commit()
     db.refresh(install)
 
+    audit.record(
+        db,
+        "galaxy.install",
+        actor=current_user,
+        target_type="galaxy_install",
+        target_id=install.id,
+        ip=client_ip(request),
+        detail={"upgrade": payload.upgrade},
+    )
     start_install(install.id)
     return _to_detail(install)

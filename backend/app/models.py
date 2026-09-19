@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from sqlalchemy import (
@@ -41,6 +41,12 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(150), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(20), default="viewer")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Bumped on password change / role change / deactivation; a session token
+    # carrying an older value is rejected, so those changes take effect at once.
+    session_version: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[str | None] = mapped_column(String(150), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -187,3 +193,24 @@ class GalaxyInstall(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AuditEvent(Base):
+    """Security-relevant event trail. Actor/target are snapshots with no FKs so the
+    trail survives deleting users or resources. Never store secrets or bodies."""
+
+    __tablename__ = "audit_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
+    )
+    actor_user_id: Mapped[int | None] = mapped_column(Integer, default=None)
+    actor_username: Mapped[str | None] = mapped_column(String(150), default=None)
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    target_type: Mapped[str | None] = mapped_column(String(50), default=None)
+    target_id: Mapped[int | None] = mapped_column(Integer, default=None)
+    target_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    outcome: Mapped[str] = mapped_column(String(20))
+    ip: Mapped[str | None] = mapped_column(String(64), default=None)
+    detail: Mapped[dict | None] = mapped_column(JSON, default=None)

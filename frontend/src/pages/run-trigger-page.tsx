@@ -24,7 +24,7 @@ const NO_VAULT = "__none__";
 
 export function RunTriggerPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, can } = useAuth();
 
   const [playbooks, setPlaybooks] = React.useState<PlaybookSummary[]>([]);
   const [inventories, setInventories] = React.useState<InventorySummary[]>([]);
@@ -63,10 +63,7 @@ export function RunTriggerPage() {
   }, [inventoryId]);
 
   const canSubmit =
-    playbookId !== "" &&
-    inventoryId !== "" &&
-    credentialId !== "" &&
-    (!become || becomeConfirmed);
+    playbookId !== "" && inventoryId !== "" && credentialId !== "" && (!become || becomeConfirmed);
 
   async function handleSubmit() {
     setError(null);
@@ -225,37 +222,39 @@ export function RunTriggerPage() {
         />
       </div>
 
-      <div className="flex flex-col gap-3 rounded-md border border-border p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium">Run as admin (become root)</p>
-            <p className="text-xs text-muted-foreground">Escalates privileges on the target host(s).</p>
+      {can("runs:become") && (
+        <div className="flex flex-col gap-3 rounded-md border border-border p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Run as admin (become root)</p>
+              <p className="text-xs text-muted-foreground">Escalates privileges on the target host(s).</p>
+            </div>
+            <Switch
+              checked={become}
+              onCheckedChange={(checked) => {
+                setBecome(checked);
+                if (!checked) setBecomeConfirmed(false);
+              }}
+            />
           </div>
-          <Switch
-            checked={become}
-            onCheckedChange={(checked) => {
-              setBecome(checked);
-              if (!checked) setBecomeConfirmed(false);
-            }}
-          />
-        </div>
 
-        {become && (
-          <div className="flex flex-col gap-2 rounded-md bg-destructive/10 p-3">
-            <p className="text-sm text-destructive">
-              This run will execute with root privileges on the target host(s). Triggered as{" "}
-              <span className="font-medium">{user?.username}</span>.
-            </p>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={becomeConfirmed}
-                onCheckedChange={(checked) => setBecomeConfirmed(checked === true)}
-              />
-              I understand this grants root and want to proceed.
-            </label>
-          </div>
-        )}
-      </div>
+          {become && (
+            <div className="flex flex-col gap-2 rounded-md bg-destructive/10 p-3">
+              <p className="text-sm text-destructive">
+                This run will execute with root privileges on the target host(s). Triggered as{" "}
+                <span className="font-medium">{user?.username}</span>.
+              </p>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={becomeConfirmed}
+                  onCheckedChange={(checked) => setBecomeConfirmed(checked === true)}
+                />
+                I understand this grants root and want to proceed.
+              </label>
+            </div>
+          )}
+        </div>
+      )}
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 

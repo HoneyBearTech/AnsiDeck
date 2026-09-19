@@ -26,6 +26,16 @@ _RUN_COLUMN_MIGRATIONS = {
     "vault_password_name": "ALTER TABLE runs ADD COLUMN vault_password_name VARCHAR(150)",
 }
 
+# Same idea for the users table. The role column defaults to 'admin' *for the
+# ALTER only*, so the pre-RBAC single user becomes an admin instead of being
+# locked out; new rows always get an explicit role from the ORM.
+_USER_COLUMN_MIGRATIONS = {
+    "role": "ALTER TABLE users ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'admin'",
+    "is_active": "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1",
+    "session_version": "ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0",
+    "created_by": "ALTER TABLE users ADD COLUMN created_by VARCHAR(150)",
+}
+
 
 class Base(DeclarativeBase):
     pass
@@ -63,13 +73,13 @@ def get_db() -> Generator[Session, None, None]:
         session.close()
 
 
-def _ensure_run_columns(engine: Engine) -> None:
+def _ensure_columns(engine: Engine, table: str, migrations: dict[str, str]) -> None:
     inspector = inspect(engine)
-    if not inspector.has_table("runs"):
-        return  # fresh DB — create_all() below creates it with every column
-    existing = {col["name"] for col in inspector.get_columns("runs")}
+    if not inspector.has_table(table):
+        return  # fresh DB — create_all() creates it with every column
+    existing = {col["name"] for col in inspector.get_columns(table)}
     with engine.begin() as conn:
-        for column, ddl in _RUN_COLUMN_MIGRATIONS.items():
+        for column, ddl in migrations.items():
             if column not in existing:
                 conn.exec_driver_sql(ddl)
 
@@ -81,4 +91,5 @@ def init_db() -> None:
     # FK column (like Run.vault_password_id) always has its target table
     # present by the time it's added.
     Base.metadata.create_all(bind=engine)
-    _ensure_run_columns(engine)
+    _ensure_columns(engine, "runs", _RUN_COLUMN_MIGRATIONS)
+    _ensure_columns(engine, "users", _USER_COLUMN_MIGRATIONS)

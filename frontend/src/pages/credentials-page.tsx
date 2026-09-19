@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useAuth } from "@/context/auth-context";
 import { api, ApiError, type Credential } from "@/lib/api";
 
 function CreateCredentialDialog({ onCreated }: { onCreated: () => void }) {
@@ -104,6 +105,8 @@ function CreateCredentialDialog({ onCreated }: { onCreated: () => void }) {
 }
 
 export function CredentialsPage() {
+  const { can } = useAuth();
+  const canManage = can("secrets:manage");
   const [credentials, setCredentials] = React.useState<Credential[]>([]);
   const [loading, setLoading] = React.useState(true);
 
@@ -127,7 +130,7 @@ export function CredentialsPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Credentials</h1>
-        <CreateCredentialDialog onCreated={refresh} />
+        {canManage && <CreateCredentialDialog onCreated={refresh} />}
       </div>
 
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -145,9 +148,11 @@ export function CredentialsPage() {
                   <span className="text-xs text-muted-foreground">{credential.description}</span>
                 )}
               </div>
-              <Button variant="outline" size="sm" onClick={() => handleDelete(credential.id)}>
-                Delete
-              </Button>
+              {canManage && (
+                <Button variant="outline" size="sm" onClick={() => handleDelete(credential.id)}>
+                  Delete
+                </Button>
+              )}
             </CardContent>
           </Card>
         ))}
