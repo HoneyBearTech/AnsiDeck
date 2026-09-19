@@ -5,6 +5,7 @@ from app.db import get_db
 from app.dependencies import SESSION_COOKIE_NAME, get_current_user
 from app.models import (
     Credential,
+    GalaxyInstall,
     Inventory,
     InventoryGroup,
     Playbook,
@@ -75,6 +76,16 @@ def create_run(
             status.HTTP_409_CONFLICT,
             f"Inventory '{inventory.name}' already has an active run "
             f"(#{conflicting.id}, status={conflicting.status})",
+        )
+
+    active_install = (
+        db.query(GalaxyInstall).filter(GalaxyInstall.status.in_(_ACTIVE_STATUSES)).first()
+    )
+    if active_install is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"A role/collection install (#{active_install.id}) is in progress; "
+            "wait for it to finish before starting a run",
         )
 
     run = Run(

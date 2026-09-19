@@ -5,6 +5,7 @@ import { ProtectedRoute } from "@/components/protected-route";
 import { AuthProvider } from "@/context/auth-context";
 import { CredentialsPage } from "@/pages/credentials-page";
 import { DashboardPage } from "@/pages/dashboard-page";
+import { GalaxyPage } from "@/pages/galaxy-page";
 import { InventoriesPage } from "@/pages/inventories-page";
 import { InventoryDetailPage } from "@/pages/inventory-detail-page";
 import { LoginPage } from "@/pages/login-page";
@@ -34,6 +35,7 @@ function App() {
           <Route path="/inventories" element={<InventoriesPage />} />
           <Route path="/inventories/:id" element={<InventoryDetailPage />} />
           <Route path="/credentials" element={<CredentialsPage />} />
+          <Route path="/galaxy" element={<GalaxyPage />} />
           <Route path="/vault" element={<VaultPage />} />
           <Route path="/runs" element={<RunsPage />} />
           <Route path="/runs/new" element={<RunTriggerPage />} />

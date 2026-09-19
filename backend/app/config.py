@@ -20,6 +20,11 @@ class Settings(BaseSettings):
 
     data_dir: str = "/data"
 
+    # Test-only escape hatch: lets requirements.yml reference local tarballs/dirs
+    # so tests can install offline. Must stay False in any real deployment —
+    # local sources let a user read arbitrary paths inside the container.
+    galaxy_allow_local_sources: bool = False
+
     # No default, deliberately: this encrypts credential secrets at rest, so the
     # app must fail fast at startup if it's unset rather than silently falling
     # back to a shared/insecure key.

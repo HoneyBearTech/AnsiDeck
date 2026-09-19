@@ -10,6 +10,7 @@ import ansible_runner
 
 from app.crypto import decrypt_secret
 from app.db import get_sessionmaker
+from app.galaxy import galaxy_env
 from app.inventory_render import render_inventory_yaml
 from app.models import Credential, Inventory, InventoryGroup, Run, RunStatus, VaultPassword
 from app.storage import playbook_path, run_log_path
@@ -143,6 +144,7 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
                     cmdline=" ".join(flags) or None,
                     limit=run.limit,
                     extravars=run.extra_vars or {},
+                    envvars=galaxy_env(),
                     passwords=(
                         {r"Vault password:\s*?$": vault_password_plain}
                         if vault_password_plain is not None

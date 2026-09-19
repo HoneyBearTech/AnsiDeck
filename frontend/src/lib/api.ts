@@ -90,6 +90,32 @@ export interface VaultEncryptResult {
   yaml_block: string;
 }
 
+export interface GalaxyInstall {
+  id: number;
+  status: "queued" | "running" | "success" | "failed";
+  triggered_by: string;
+  upgrade: boolean;
+  return_code: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+}
+
+export interface GalaxyInstallDetail extends GalaxyInstall {
+  requirements_snapshot: string;
+  log: string;
+}
+
+export interface GalaxyItem {
+  name: string;
+  version: string | null;
+}
+
+export interface GalaxyInstalled {
+  collections: GalaxyItem[];
+  roles: GalaxyItem[];
+}
+
 export interface Run {
   id: number;
   playbook_name: string;
@@ -206,6 +232,21 @@ export const api = {
     request<{ plaintext: string }>("/vault/decrypt", {
       method: "POST",
       body: JSON.stringify({ vault_password_id: vaultPasswordId, ciphertext }),
+    }),
+
+  getGalaxyRequirements: () => request<{ content: string }>("/galaxy/requirements"),
+  saveGalaxyRequirements: (content: string) =>
+    request<{ content: string }>("/galaxy/requirements", {
+      method: "PUT",
+      body: JSON.stringify({ content }),
+    }),
+  getGalaxyInstalled: () => request<GalaxyInstalled>("/galaxy/installed"),
+  listGalaxyInstalls: () => request<GalaxyInstall[]>("/galaxy/installs"),
+  getGalaxyInstall: (id: number) => request<GalaxyInstallDetail>(`/galaxy/installs/${id}`),
+  createGalaxyInstall: (upgrade: boolean) =>
+    request<GalaxyInstallDetail>("/galaxy/installs", {
+      method: "POST",
+      body: JSON.stringify({ upgrade }),
     }),
 
   listRuns: () => request<Run[]>("/runs"),

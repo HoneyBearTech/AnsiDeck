@@ -4,9 +4,9 @@ WORKDIR /app
 RUN mkdir -p /data
 # Ansible's default connection plugin shells out to the system `ssh` binary —
 # not present in the slim base image, and not something this app should rely
-# on the host to provide.
+# on the host to provide. git is for ansible-galaxy installs from git sources.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openssh-client \
+    && apt-get install -y --no-install-recommends openssh-client git \
     && rm -rf /var/lib/apt/lists/*
 
 FROM base AS deps
@@ -24,7 +24,7 @@ RUN uv sync --frozen --no-dev
 
 FROM python:3.12-slim AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openssh-client \
+    && apt-get install -y --no-install-recommends openssh-client git \
     && rm -rf /var/lib/apt/lists/*
 RUN useradd --create-home --uid 1000 appuser \
     && mkdir -p /data \

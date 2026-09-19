@@ -11,6 +11,7 @@ from app.db import get_sessionmaker, init_db
 from app.routers import (
     auth,
     credentials,
+    galaxy,
     health,
     inventories,
     playbooks,
@@ -52,4 +53,5 @@ app.include_router(inventories.router, prefix="/api/inventories", tags=["invento
 app.include_router(credentials.router, prefix="/api/credentials", tags=["credentials"])
 app.include_router(vault_passwords.router, prefix="/api/vault-passwords", tags=["vault-passwords"])
 app.include_router(vault.router, prefix="/api/vault", tags=["vault"])
+app.include_router(galaxy.router, prefix="/api/galaxy", tags=["galaxy"])
 app.include_router(runs.router, prefix="/api/runs", tags=["runs"])

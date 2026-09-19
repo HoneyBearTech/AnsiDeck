@@ -11,6 +11,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Table,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -163,6 +164,24 @@ class Run(Base):
     extra_vars: Mapped[dict | None] = mapped_column(JSON, default=None)
     status: Mapped[str] = mapped_column(String(20), default=RunStatus.QUEUED.value)
     triggered_by: Mapped[str] = mapped_column(String(150))
+    return_code: Mapped[int | None] = mapped_column(Integer, default=None)
+
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class GalaxyInstall(Base):
+    """History/audit record of an ansible-galaxy install. The requirements text
+    is snapshotted so history survives later edits to the managed document."""
+
+    __tablename__ = "galaxy_installs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(20), default=RunStatus.QUEUED.value)
+    triggered_by: Mapped[str] = mapped_column(String(150))
+    requirements_snapshot: Mapped[str] = mapped_column(Text)
+    upgrade: Mapped[bool] = mapped_column(Boolean, default=False)
     return_code: Mapped[int | None] = mapped_column(Integer, default=None)
 
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

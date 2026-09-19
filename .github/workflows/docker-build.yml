@@ -51,6 +51,13 @@ jobs:
           curl -sf http://localhost:8000/api/health
           docker logs smoke
 
+      - name: Smoke test ansible-galaxy prerequisites in backend runtime image
+        if: matrix.service == 'backend' && matrix.target == 'runtime'
+        run: |
+          docker exec smoke ansible-galaxy --version
+          docker exec smoke git --version
+          docker exec smoke sh -c 'mkdir -p /data/galaxy/collections && touch /data/galaxy/collections/.write-test'
+
       - name: Smoke test frontend runtime image
         if: matrix.service == 'frontend' && matrix.target == 'runtime'
         run: |
