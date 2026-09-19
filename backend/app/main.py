@@ -9,7 +9,7 @@ from app import audit
 from app.bootstrap import seed_admin_user
 from app.config import get_settings
 from app.db import get_sessionmaker, init_db
-from app.hardening import OriginCheckMiddleware
+from app.hardening import OriginCheckMiddleware, disable_process_inspection
 from app.routers import (
     audit as audit_router,
 )
@@ -33,6 +33,7 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    disable_process_inspection()
     init_db()
     set_event_loop(asyncio.get_running_loop())
     session = get_sessionmaker()()

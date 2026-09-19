@@ -1,12 +1,17 @@
 import asyncio
+import contextlib
 import json
+import logging
+import os
 import shutil
+import signal
+import subprocess
+import sys
 import tempfile
 import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-
-import ansible_runner
 
 from app.crypto import decrypt_secret
 from app.db import get_sessionmaker
@@ -23,8 +28,15 @@ from app.models import (
 )
 from app.scrub import build_scrubber, collect_secrets
 from app.storage import playbook_path, run_log_path
+from app.subprocess_env import clean_env
+
+logger = logging.getLogger(__name__)
 
 DONE = object()
+
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+_WORKER_COMMAND = [sys.executable, "-m", "app.run_worker"]
+_WORKER_STOP_GRACE_SECONDS = 10
 
 
 class RunStream:
@@ -97,6 +109,70 @@ def _assert_same_project(run: Run, obj, label: str) -> None:
         raise RuntimeError(f"run {run.id}: {label} is not in the run's project")
 
 
+def _stop_worker(proc: subprocess.Popen) -> None:
+    """SIGTERM makes ansible-runner cancel cleanly; SIGKILL only if that doesn't land."""
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=_WORKER_STOP_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
+
+
+def _run_in_worker(
+    job: dict, env: dict[str, str], on_event: Callable[[dict], None]
+) -> tuple[str | None, int | None]:
+    """Runs ansible-runner in a child process started with `env` instead of the app's
+    environment (see app.run_worker). Returns (ansible-runner status, rc); status is
+    None if the worker died without reporting a result."""
+    read_fd, write_fd = os.pipe()
+    try:
+        proc = subprocess.Popen(
+            _WORKER_COMMAND,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            cwd=_BACKEND_ROOT,
+            pass_fds=(write_fd,),
+            start_new_session=True,
+        )
+    except BaseException:
+        os.close(read_fd)
+        raise
+    finally:
+        os.close(write_fd)
+
+    result: tuple[str | None, int | None] = (None, None)
+    try:
+        with os.fdopen(read_fd, encoding="utf-8") as events:
+            assert proc.stdin is not None
+            # The job (SSH key, vault password) travels over stdin — never argv or env.
+            proc.stdin.write(json.dumps({**job, "event_fd": write_fd}).encode())
+            proc.stdin.close()
+            for line in events:
+                message = json.loads(line)
+                if message["type"] == "event":
+                    on_event(message["event"])
+                elif message["type"] == "result":
+                    result = (message["status"], message["rc"])
+    except BaseException:
+        _stop_worker(proc)
+        raise
+    try:
+        returncode = proc.wait(timeout=_WORKER_STOP_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        _stop_worker(proc)
+        returncode = proc.returncode
+    if result[0] is None:
+        logger.error("run worker exited (code %s) without reporting a result", returncode)
+        return None, returncode or None
+    return result
+
+
 def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
     db = get_sessionmaker()()
     stream = get_or_create_stream(run_id)
@@ -150,8 +226,7 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
             inventory_path.write_text(rendered_inventory)
 
             with run_log_path(run_id).open("w", encoding="utf-8") as log_file:
-                # Must return None: ansible-runner writes its own unscrubbed
-                # job_events when the handler returns truthy.
+
                 def on_event(event: dict) -> None:
                     event = scrub_event(event)
                     log_file.write(json.dumps(event) + "\n")
@@ -168,29 +243,29 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
                 if vault_password_plain is not None:
                     flags.append("--ask-vault-pass")
 
-                runner = ansible_runner.run(
-                    private_data_dir=pdd,
-                    playbook="playbook.yml",
-                    inventory=str(inventory_path),
-                    ssh_key=private_key_pem,
-                    cmdline=" ".join(flags) or None,
-                    limit=run.limit,
-                    extravars=run.extra_vars or {},
-                    envvars=galaxy_env(),
-                    passwords=(
-                        {r"Vault password:\s*?$": vault_password_plain}
-                        if vault_password_plain is not None
-                        else None
-                    ),
-                    event_handler=on_event,
+                status, return_code = _run_in_worker(
+                    {
+                        "private_data_dir": pdd,
+                        "playbook": "playbook.yml",
+                        "inventory": str(inventory_path),
+                        "ssh_key": private_key_pem,
+                        "cmdline": " ".join(flags) or None,
+                        "limit": run.limit,
+                        "extravars": run.extra_vars or {},
+                        "passwords": (
+                            {r"Vault password:\s*?$": vault_password_plain}
+                            if vault_password_plain is not None
+                            else None
+                        ),
+                    },
+                    clean_env(galaxy_env()),
+                    on_event,
                 )
         finally:
             shutil.rmtree(pdd, ignore_errors=True)
 
-        run.status = (
-            RunStatus.SUCCESS.value if runner.status == "successful" else RunStatus.FAILED.value
-        )
-        run.return_code = runner.rc
+        run.status = RunStatus.SUCCESS.value if status == "successful" else RunStatus.FAILED.value
+        run.return_code = return_code
     except Exception:
         run.status = RunStatus.FAILED.value
         raise

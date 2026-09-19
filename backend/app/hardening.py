@@ -1,14 +1,44 @@
-"""Request hardening: Origin check (CSRF), login throttling, client IP."""
+"""Request hardening (Origin check for CSRF, login throttling, client IP) and process
+hardening (keeping playbook runs from reading the app's memory/environment)."""
 
+import ctypes
 import ipaddress
 import json
+import logging
+import sys
 import threading
 import time
 from urllib.parse import urlsplit
 
 from fastapi import Request
 
+logger = logging.getLogger(__name__)
+
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+_PR_SET_DUMPABLE = 4
+
+
+def disable_process_inspection() -> bool:
+    """Marks this process non-dumpable (Linux), which makes /proc/<pid>/environ, mem and
+    friends unreadable to other processes of the same user. Playbook runs execute as the
+    app's own user, so without this a playbook could read the app's original environment
+    (encryption key, auth key) straight out of /proc even though runs are spawned with a
+    clean environment. execve resets the flag, so the spawned worker/ansible are unaffected.
+    Returns whether it took effect; a no-op (False) off Linux."""
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(_PR_SET_DUMPABLE, 0, 0, 0, 0) != 0:
+            raise OSError(ctypes.get_errno(), "prctl(PR_SET_DUMPABLE) failed")
+    except (OSError, AttributeError):
+        logger.warning(
+            "Could not mark the process non-dumpable; playbook runs may be able to read "
+            "the app's environment via /proc",
+            exc_info=True,
+        )
+        return False
+    return True
 
 
 def client_ip(request: Request) -> str:

@@ -26,6 +26,7 @@ from app.storage import (
     galaxy_install_log_path,
     galaxy_roles_dir,
 )
+from app.subprocess_env import clean_env
 
 MAX_REQUIREMENTS_BYTES = 64 * 1024
 MAX_ENTRIES = 100
@@ -193,37 +194,15 @@ def galaxy_env() -> dict[str, str]:
     }
 
 
-_PASSTHROUGH_ENV = (
-    "PATH",
-    "HOME",
-    "LANG",
-    "LC_ALL",
-    "TMPDIR",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "REQUESTS_CA_BUNDLE",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "NO_PROXY",
-    "http_proxy",
-    "https_proxy",
-    "no_proxy",
-)
-
-
 def _install_env() -> dict[str, str]:
-    # Built from an allowlist, not os.environ, so the app's own secrets
-    # (encryption key, auth key, admin password) never reach these subprocesses.
-    env = {k: os.environ[k] for k in _PASSTHROUGH_ENV if k in os.environ}
-    env.update(galaxy_env())
-    env.update(
+    return clean_env(
         {
+            **galaxy_env(),
             "ANSIBLE_NOCOLOR": "1",
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_ALLOW_PROTOCOL": "https",
         }
     )
-    return env
 
 
 def _galaxy_binary() -> str:
