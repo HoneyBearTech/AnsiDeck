@@ -1,0 +1,73 @@
+# Contributing to AnsiDeck
+
+AnsiDeck is a personal project with a single maintainer. Contributions are welcome, but there is no
+service-level agreement, and review may take a while. There are no tagged releases yet, so `main` is the
+only supported line.
+
+## Reporting bugs and suggesting changes
+
+- Use [GitHub Issues](https://github.com/HoneyBearTech/AnsiDeck/issues) for bugs, questions and feature ideas.
+  For anything bigger than a small fix, please open an issue first so we can agree on the approach before you
+  spend time on it.
+- **Do not report security vulnerabilities in a public issue.** Follow [SECURITY.md](SECURITY.md) and use
+  GitHub's private vulnerability reporting instead.
+
+## Development setup
+
+The whole stack, with hot reload (backend on `:8000`, frontend on `:5173`):
+
+```sh
+cp .env.example .env    # then edit as needed
+docker compose up --build
+```
+
+Or run the pieces on their own:
+
+```sh
+# backend (Python, FastAPI, managed with uv)
+cd backend
+uv sync --all-groups
+uv run fastapi dev app/main.py
+
+# frontend (React + TypeScript, Vite)
+cd frontend
+npm install
+npm run dev
+```
+
+## Before you open a pull request
+
+Run the same checks CI runs and make sure they pass:
+
+```sh
+# backend/
+uv lock --check
+uv run ruff check .
+uv run ruff format --check .    # `uv run ruff format .` fixes formatting
+uv run pytest
+
+# frontend/
+npm run lint
+npm run typecheck
+npm run build
+```
+
+CI also audits dependencies for known vulnerabilities and runs CodeQL and Docker image builds.
+
+## Pull requests
+
+- `main` is protected: changes land only through a pull request, and the required CI checks must pass. Pull
+  requests are squash-merged.
+- Keep each pull request focused on one change, and describe what it does and why.
+- Add or update tests for behaviour changes, and update `README.md` or `.env.example` if you change
+  configuration or user-visible behaviour.
+- Follow the style of the surrounding code rather than introducing a new one.
+- Never commit secrets, private keys, vault passwords or `.env` files. Secret scanning and push protection are
+  enabled on the repository.
+- AnsiDeck holds SSH keys and runs automation against real infrastructure, so treat changes to
+  authentication, credentials, secret handling or how runs are executed with extra care, and call them out in
+  the pull request description.
+
+## License
+
+By contributing, you agree that your contribution is licensed under the project's [MIT License](LICENSE).
