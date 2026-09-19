@@ -2,8 +2,9 @@ import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app import audit
 from app.bootstrap import seed_admin_user
@@ -48,6 +49,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(title="AnsiDeck API", version="0.1.0", lifespan=lifespan)
+
+
+@app.exception_handler(OverflowError)
+async def _integer_out_of_range(request: Request, exc: OverflowError) -> JSONResponse:
+    """An id beyond SQLite's 64-bit INTEGER range cannot match any row, so answer it like any
+    other missing resource instead of a 500. Any other OverflowError is a real bug: re-raise."""
+    if "SQLite INTEGER" not in str(exc):
+        raise exc
+    return JSONResponse({"detail": "Not found"}, status_code=404)
+
 
 app.add_middleware(
     CORSMiddleware,
