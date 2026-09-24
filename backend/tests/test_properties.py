@@ -161,14 +161,14 @@ def test_scrub_event_never_hits_the_fail_closed_path(event: object) -> None:
 @pytest.mark.parametrize(
     "text",
     [
-        "-----BEGIN RSA PRIVATE KEY-----" * 20_000,
-        "://a:" * 100_000,
-        "://a:" + "b" * 500_000,
-        "ghp_" + "a" * 500_000 + "_",
-        "password=" * 50_000,
-        "authorization: bearer " * 30_000,
-        "abcd" * 200_000,
-        "hunter2hunterabc " * 50_000,
+        pytest.param("-----BEGIN RSA PRIVATE KEY-----" * 20_000, id="unterminated-keys"),
+        pytest.param("://a:" * 100_000, id="url-userinfo-repeat"),
+        pytest.param("://a:" + "b" * 500_000, id="url-userinfo-long"),
+        pytest.param("ghp_" + "a" * 500_000 + "_", id="github-token-long"),
+        pytest.param("password=" * 50_000, id="assignment-repeat"),
+        pytest.param("authorization: bearer " * 30_000, id="bearer-repeat"),
+        pytest.param("abcd" * 200_000, id="short-secret-run"),
+        pytest.param("hunter2hunterabc " * 50_000, id="near-miss-secret"),
     ],
 )
 def test_scrub_text_stays_fast_on_pathological_input(text: str) -> None:
