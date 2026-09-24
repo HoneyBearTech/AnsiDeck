@@ -1,4 +1,5 @@
 import * as React from "react";
+import { Link } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -362,7 +363,13 @@ export function UsersPage() {
                       Unlink SSO
                     </Button>
                   )}
-                  {!isSelf && <ResetPasswordDialog user={u} onDone={refresh} />}
+                  {isSelf ? (
+                    <Button variant="outline" size="sm" asChild>
+                      <Link to="/account">Change password</Link>
+                    </Button>
+                  ) : (
+                    <ResetPasswordDialog user={u} onDone={refresh} />
+                  )}
                   {!isSelf && (
                     <Button
                       variant="outline"
