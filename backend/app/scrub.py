@@ -84,16 +84,20 @@ _PlaybookLoader.add_constructor(
 )
 
 
-def _collect_vault_texts(obj: Any, out: list[str]) -> None:
+def _collect_vault_texts(obj: Any, out: list[str], seen: set[int] | None = None) -> None:
+    # YAML aliases share containers; visiting each once keeps an alias bomb
+    # ("billion laughs") linear instead of exponential.
+    if seen is None:
+        seen = set()
     if isinstance(obj, str):
         if isinstance(obj, _VaultText) or obj.lstrip().startswith(_VAULT_PREFIX):
             out.append(str(obj))
-    elif isinstance(obj, dict):
-        for v in obj.values():
-            _collect_vault_texts(v, out)
-    elif isinstance(obj, list):
-        for v in obj:
-            _collect_vault_texts(v, out)
+    elif isinstance(obj, (dict, list)):
+        if id(obj) in seen:
+            return
+        seen.add(id(obj))
+        for v in obj.values() if isinstance(obj, dict) else obj:
+            _collect_vault_texts(v, out, seen)
 
 
 def collect_secrets(
@@ -117,7 +121,7 @@ def collect_secrets(
         vaulted: list[str] = []
         try:
             _collect_vault_texts(yaml.load(playbook_text, Loader=_PlaybookLoader), vaulted)  # noqa: S506
-        except yaml.YAMLError:
+        except (yaml.YAMLError, RecursionError):  # too deep to parse = unparsable
             pass
         _collect_vault_texts(extra_vars, vaulted)
         for hv in host_vars:
@@ -211,9 +215,7 @@ class Scrubber:
         if isinstance(value, str):
             return self.scrub_text(value)
         if isinstance(value, dict):
-            return {
-                k: self._scrub_value(v, k if isinstance(k, str) else None) for k, v in value.items()
-            }
+            return self._scrub_dict(value)
         if isinstance(value, list):
             if (
                 key is not None
@@ -225,6 +227,20 @@ class Scrubber:
                 return value if scrubbed == joined else scrubbed.split("\n")
             return [self._scrub_value(v) for v in value]
         return value
+
+    def _scrub_dict(self, value: dict) -> dict:
+        # Keys can carry secrets too (e.g. a with_dict loop keyed by a token).
+        # A redacted key gets a "#n" suffix when its new name is taken, so no
+        # value is silently overwritten.
+        out: dict = {}
+        for k, v in value.items():
+            new_k = self.scrub_text(k) if isinstance(k, str) else k
+            if new_k != k:
+                base, n = new_k, 2
+                while new_k in out or new_k in value:
+                    new_k, n = f"{base}#{n}", n + 1
+            out[new_k] = self._scrub_value(v, k if isinstance(k, str) else None)
+        return out
 
     def scrub_event(self, event: dict) -> dict:
         # Fail closed: a scrubbing error must never let the raw event through.
