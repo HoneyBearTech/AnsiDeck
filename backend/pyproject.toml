@@ -24,6 +24,11 @@ dev = [
     "pytest-cov>=6",
     "hypothesis>=6",
 ]
+# Atheris only ships Linux x86_64 wheels, so the fuzz harnesses run in CI (or an
+# amd64 container), and syncing on a Mac or the arm64 dev container skips it.
+fuzz = [
+    "atheris>=3.1; platform_machine == 'x86_64' and sys_platform == 'linux'",
+]
 
 [tool.ruff]
 line-length = 100

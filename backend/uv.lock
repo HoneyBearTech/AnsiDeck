@@ -102,6 +102,9 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
+fuzz = [
+    { name = "atheris", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -125,6 +128,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=6" },
     { name = "ruff", specifier = ">=0.7" },
 ]
+fuzz = [{ name = "atheris", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = ">=3.1" }]
 
 [[package]]
 name = "anyio"
@@ -192,6 +196,16 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a9/02/0bfc59e781c89acf64c31c388aade9d9d1c1ea38aa1ba1292fe07f607fe9/argon2_cffi_bindings-26.1.0-cp315-cp315t-win32.whl", hash = "sha256:df612391feca41c44d20118f3b88d1b86419465cd1f5496859f715ca60ec2210", size = 24875, upload-time = "2026-08-20T07:33:12.616Z" },
     { url = "https://files.pythonhosted.org/packages/61/c7/c3e46068cddffccecb8ad94d71135e9bf62bbc789589e7dfadc7c6f59214/argon2_cffi_bindings-26.1.0-cp315-cp315t-win_amd64.whl", hash = "sha256:1a0a29ed86960e44eaace7e081bdfab4f08b012fd96ec8edba71e2ad020939e4", size = 26655, upload-time = "2026-08-20T07:33:13.521Z" },
     { url = "https://files.pythonhosted.org/packages/f4/ca/18b9c8c45fecf34b9100ec6d7946057f14a158f2eaa20ea123a3e82351cb/argon2_cffi_bindings-26.1.0-cp315-cp315t-win_arm64.whl", hash = "sha256:d157ddfab1e8b21f2f1dedda9c09645d98b5ed0b667b0626be600a345d426440", size = 25376, upload-time = "2026-08-20T07:33:14.491Z" },
+]
+
+[[package]]
+name = "atheris"
+version = "3.1.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0a/88/fd6ad595dafa9c7ce56dbfcaff0c7244988dac3af86c771166c6516ccf6b/atheris-3.1.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:ec5e11f21a4c197fe91f7aea2b2de88e623c73a21fc07b105ac6329a1588457b", size = 36875908, upload-time = "2026-06-17T00:04:01.104Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/18/e19718c384fd7d801d0da7485407daef9af6194b6d8c8818175bec5efec6/atheris-3.1.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:f8a9f51ce8369026e8eb7b7174835e8c4c85a1a6db5d9add36c15100779d2a39", size = 36800563, upload-time = "2026-06-17T00:04:04.559Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/ff/ae7a5bfe99033e510bea4ed09934e636d93777317a48147369bc0dc2b71f/atheris-3.1.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:315a0b5c819852b1ffe1ca72efc389c7724881f2c33e4aacb8c6bcec49bd5011", size = 36772569, upload-time = "2026-06-17T00:04:07.702Z" },
 ]
 
 [[package]]

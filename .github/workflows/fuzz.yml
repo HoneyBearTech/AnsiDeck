@@ -1,0 +1,70 @@
+name: Fuzz
+
+# Coverage-guided fuzzing (Atheris) of the backend's Hypothesis properties:
+# a short run on backend PRs, a longer one weekly. See backend/fuzz/.
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/fuzz.yml"
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Fuzzing time per target, in seconds"
+        default: "600"
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - scrub_text
+          - scrub_long_secrets
+          - scrub_short_secrets
+          - scrub_idempotent
+          - scrub_event_leaks
+          - scrub_event_fail_closed
+          - collect_secrets
+          - vault_decrypt
+          - vault_encrypt
+          - inventory_render
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "latest"
+          enable-cache: true
+          # Atheris ships wheels for CPython 3.12-3.14 only.
+          python-version: "3.12"
+      - run: uv sync --frozen --group fuzz
+      - name: Fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+          SECONDS_PER_TARGET: ${{ inputs.seconds || (github.event_name == 'pull_request' && '60') || '600' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/crashes"
+          uv run --frozen python fuzz/fuzz_properties.py "$TARGET" \
+            -max_total_time="$SECONDS_PER_TARGET" -timeout=10 \
+            -artifact_prefix="$RUNNER_TEMP/crashes/$TARGET-"
+      # Replay locally (Linux x86_64): uv run python fuzz/fuzz_properties.py <target> <file>
+      - name: Upload crashing input
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: crash-${{ matrix.target }}
+          path: ${{ runner.temp }}/crashes/
+          if-no-files-found: ignore
