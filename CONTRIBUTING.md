@@ -53,7 +53,10 @@ npm run build
 ```
 
 CI also enforces a floor of 80% branch coverage for the backend, audits dependencies for known
-vulnerabilities, and runs CodeQL and Docker image builds.
+vulnerabilities, and runs CodeQL and Docker image builds. Pull requests that touch `backend/` are also
+fuzzed for a minute per target: Atheris drives the Hypothesis properties in `backend/tests/test_properties.py`
+through `backend/fuzz/fuzz_properties.py` (Linux x86_64 only; `uv sync --group fuzz`). If a fuzz job fails,
+download its `crash-<target>` artifact and replay it with `uv run python fuzz/fuzz_properties.py <target> <file>`.
 
 ## Pull requests
 
