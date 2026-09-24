@@ -61,11 +61,16 @@ viewer, assigned per project) and read the **Audit** log.
   sees, add it to `CORS_ORIGINS`.
 - AnsiDeck is not designed to be exposed directly to the public internet. See [SECURITY.md](SECURITY.md).
 - Back up the data volume, and keep `CREDENTIAL_ENCRYPTION_KEY` backed up separately: losing it makes stored
-  credentials unrecoverable, and leaking it exposes every stored key.
+  credentials and two-factor secrets unrecoverable, and leaking it exposes every stored key.
 - Give people the least role they need. Anyone who can run a playbook can run commands on the targets, and
   runs are **not sandboxed** from the application's data directory. Details are in [SECURITY.md](SECURITY.md).
 - Global admins cannot use single sign-on unless you set `SSO_ALLOW_ADMIN=true`, so password login stays your
   break-glass.
+- Turn on two-factor login under **Account** (authenticator-app codes for password sign-ins; SSO and GitHub
+  sign-ins rely on your provider's MFA). Keep the recovery codes it shows. An admin can reset someone else's
+  under **Users**; if no admin can sign in, reset it on the server with
+  `docker compose exec backend uv run python -m app.cli reset-totp <username>` (in the production image,
+  which has no `uv`: `python -m app.cli reset-totp <username>`).
 - The audit log records sign-ins, run activity and permission denials, and is kept for
   `AUDIT_RETENTION_DAYS` (365 by default).
 

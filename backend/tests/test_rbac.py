@@ -71,6 +71,7 @@ def _walk(dependant):
 PUBLIC = {
     ("/api/health", "GET"),
     ("/api/auth/login", "POST"),
+    ("/api/auth/login/mfa", "POST"),  # authorised by the signed password-step cookie
     ("/api/auth/logout", "POST"),
     # SSO runs before there is a session; each provider's routes 404 unless it is configured.
     ("/api/auth/providers", "GET"),

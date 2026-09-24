@@ -62,6 +62,18 @@ export interface User {
   // Union across the user's projects (everything for a global admin).
   permissions: string[];
   projects: ProjectAccess[];
+  totp_enabled: boolean;
+}
+
+// The password was right; the login finishes with loginMfa().
+export interface MfaChallenge {
+  mfa_required: true;
+}
+
+export interface TotpSetup {
+  secret: string;
+  otpauth_uri: string;
+  qr: string; // SVG data URI, for an <img>
 }
 
 export interface ProjectSummary {
@@ -110,6 +122,7 @@ export interface AdminUser {
   email: string | null;
   sso_linked: boolean;
   sso_provider: string | null;
+  totp_enabled: boolean;
 }
 
 export interface AuthProviders {
@@ -243,10 +256,12 @@ export interface Run {
 export const api = {
   health: () => request<HealthStatus>("/health"),
   login: (username: string, password: string) =>
-    request<User>("/auth/login", {
+    request<User | MfaChallenge>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
     }),
+  loginMfa: (second: { code: string } | { recovery_code: string }) =>
+    request<User>("/auth/login/mfa", { method: "POST", body: JSON.stringify(second) }),
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
   me: () => request<User>("/auth/me"),
   changePassword: (currentPassword: string, newPassword: string) =>
@@ -256,6 +271,26 @@ export const api = {
         current_password: currentPassword,
         new_password: newPassword,
       }),
+    }),
+  totpSetup: (currentPassword: string) =>
+    request<TotpSetup>("/auth/totp/setup", {
+      method: "POST",
+      body: JSON.stringify({ current_password: currentPassword }),
+    }),
+  totpEnable: (code: string) =>
+    request<{ recovery_codes: string[] }>("/auth/totp/enable", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
+  totpDisable: (currentPassword: string, code: string) =>
+    request<{ ok: boolean }>("/auth/totp/disable", {
+      method: "POST",
+      body: JSON.stringify({ current_password: currentPassword, code }),
+    }),
+  totpRegenerateRecoveryCodes: (currentPassword: string) =>
+    request<{ recovery_codes: string[] }>("/auth/totp/recovery-codes", {
+      method: "POST",
+      body: JSON.stringify({ current_password: currentPassword }),
     }),
 
   listProjects: () => request<ProjectSummary[]>("/projects"),
@@ -323,6 +358,7 @@ export const api = {
     }),
   deleteUser: (id: number) => request<void>(`/users/${id}`, { method: "DELETE" }),
   unlinkSso: (id: number) => request<void>(`/users/${id}/sso-link`, { method: "DELETE" }),
+  resetUserTotp: (id: number) => request<void>(`/users/${id}/totp`, { method: "DELETE" }),
 
   getAuthProviders: () => request<AuthProviders>("/auth/providers"),
 

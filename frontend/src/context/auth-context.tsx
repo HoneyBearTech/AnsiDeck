@@ -9,7 +9,9 @@ const STORAGE_KEY = "ansideck.activeProject";
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  // Resolves to "mfa" when the account needs a second factor (then call completeMfa).
+  login: (username: string, password: string) => Promise<"ok" | "mfa">;
+  completeMfa: (second: { code: string } | { recovery_code: string }) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   // Permission in the active project (or globally for global-only permissions).
@@ -62,7 +64,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = React.useCallback(async (username: string, password: string) => {
-    setUser(await api.login(username, password));
+    const result = await api.login(username, password);
+    if ("mfa_required" in result) return "mfa";
+    setUser(result);
+    return "ok";
+  }, []);
+
+  const completeMfa = React.useCallback(async (second: { code: string } | { recovery_code: string }) => {
+    setUser(await api.loginMfa(second));
   }, []);
 
   const logout = React.useCallback(async () => {
@@ -112,6 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         loading,
         login,
+        completeMfa,
         logout,
         refreshUser,
         can,

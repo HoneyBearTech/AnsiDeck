@@ -16,6 +16,7 @@ from app.hardening import (  # noqa: E402
     api_key_ip_throttle,
     ip_login_throttle,
     sso_ip_throttle,
+    totp_user_throttle,
     user_login_throttle,
 )
 from app.main import app  # noqa: E402
@@ -33,6 +34,7 @@ def client(tmp_path, monkeypatch) -> Generator[TestClient, None, None]:
     ip_login_throttle.clear()
     api_key_ip_throttle.clear()
     sso_ip_throttle.clear()
+    totp_user_throttle.clear()
     init_db()
 
     seed_db = get_sessionmaker()()

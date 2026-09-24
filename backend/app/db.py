@@ -37,6 +37,10 @@ _USER_COLUMN_MIGRATIONS = {
     "email": "ALTER TABLE users ADD COLUMN email VARCHAR(320)",
     "sso_issuer": "ALTER TABLE users ADD COLUMN sso_issuer VARCHAR(500)",
     "sso_subject": "ALTER TABLE users ADD COLUMN sso_subject VARCHAR(255)",
+    "totp_secret": "ALTER TABLE users ADD COLUMN totp_secret BLOB",
+    "totp_pending_secret": "ALTER TABLE users ADD COLUMN totp_pending_secret BLOB",
+    "totp_last_counter": "ALTER TABLE users ADD COLUMN totp_last_counter INTEGER",
+    "totp_recovery_hashes": "ALTER TABLE users ADD COLUMN totp_recovery_hashes JSON",
 }
 
 # create_all() only creates indexes together with a brand-new table, so upgraded

@@ -229,6 +229,11 @@ def test_a_key_cannot_reach_any_other_endpoint(world) -> None:
     calls = [
         ("GET", "/api/auth/me", None),
         ("POST", "/api/auth/change-password", {"current_password": "x", "new_password": "y" * 14}),
+        ("POST", "/api/auth/totp/setup", {"current_password": "x"}),
+        ("POST", "/api/auth/totp/enable", {"code": "123456"}),
+        ("POST", "/api/auth/totp/disable", {"current_password": "x", "code": "123456"}),
+        ("POST", "/api/auth/totp/recovery-codes", {"current_password": "x"}),
+        ("DELETE", "/api/users/1/totp", None),
         ("GET", "/api/playbooks", None),
         ("POST", "/api/playbooks", {"name": "evil.yml", "content": "- hosts: all"}),
         ("GET", "/api/inventories", None),

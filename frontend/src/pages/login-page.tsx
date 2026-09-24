@@ -14,6 +14,74 @@ const SSO_MESSAGES: Record<string, string> = {
   failed: "SSO sign-in failed. Try again, or sign in with your password.",
 };
 
+function SecondFactorForm({ onStartOver }: { onStartOver: () => void }) {
+  const { completeMfa } = useAuth();
+  const navigate = useNavigate();
+  const [useRecovery, setUseRecovery] = React.useState(false);
+  const [value, setValue] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
+  const [submitting, setSubmitting] = React.useState(false);
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      await completeMfa(useRecovery ? { recovery_code: value } : { code: value });
+      navigate("/");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong");
+      setValue("");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="second-factor">{useRecovery ? "Recovery code" : "Authentication code"}</Label>
+        <Input
+          id="second-factor"
+          key={useRecovery ? "recovery" : "code"}
+          autoFocus
+          autoComplete={useRecovery ? "off" : "one-time-code"}
+          inputMode={useRecovery ? "text" : "numeric"}
+          placeholder={useRecovery ? "xxxxx-xxxxx" : "123456"}
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          required
+        />
+        <p className="text-xs text-muted-foreground">
+          {useRecovery
+            ? "Each recovery code works once."
+            : "Enter the 6-digit code from your authenticator app."}
+        </p>
+      </div>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      <Button type="submit" disabled={submitting || !value.trim()} className="mt-2">
+        {submitting ? "Checking…" : "Verify"}
+      </Button>
+      <div className="flex justify-between text-sm">
+        <button
+          type="button"
+          className="text-muted-foreground hover:text-foreground"
+          onClick={() => {
+            setUseRecovery(!useRecovery);
+            setValue("");
+            setError(null);
+          }}
+        >
+          {useRecovery ? "Use an authenticator code" : "Use a recovery code instead"}
+        </button>
+        <button type="button" className="text-muted-foreground hover:text-foreground" onClick={onStartOver}>
+          Start over
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export function LoginPage() {
   const { user, login } = useAuth();
   const navigate = useNavigate();
@@ -21,6 +89,7 @@ export function LoginPage() {
   const [password, setPassword] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
+  const [needsSecondFactor, setNeedsSecondFactor] = React.useState(false);
   const [providers, setProviders] = React.useState<AuthProviders | null>(null);
   const [searchParams] = useSearchParams();
   const ssoError = searchParams.get("sso_error");
@@ -41,8 +110,12 @@ export function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await login(username, password);
-      navigate("/");
+      if ((await login(username, password)) === "mfa") {
+        setPassword("");
+        setNeedsSecondFactor(true);
+      } else {
+        navigate("/");
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
     } finally {
@@ -55,41 +128,49 @@ export function LoginPage() {
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle className="font-mono text-xl text-primary">AnsiDeck</CardTitle>
-          <CardDescription>Sign in to run playbooks against your infrastructure.</CardDescription>
+          <CardDescription>
+            {needsSecondFactor
+              ? "Two-factor login is on for this account."
+              : "Sign in to run playbooks against your infrastructure."}
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="username">Username</Label>
-              <Input
-                id="username"
-                autoComplete="username"
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                required
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                required
-              />
-            </div>
-            {(error || ssoError) && (
-              <p className="text-sm text-destructive">
-                {error ?? SSO_MESSAGES[ssoError ?? ""] ?? SSO_MESSAGES.failed}
-              </p>
-            )}
-            <Button type="submit" disabled={submitting} className="mt-2">
-              {submitting ? "Signing in…" : "Sign in"}
-            </Button>
-          </form>
-          {(providers?.oidc.enabled || providers?.github.enabled) && (
+          {needsSecondFactor ? (
+            <SecondFactorForm onStartOver={() => setNeedsSecondFactor(false)} />
+          ) : (
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="username">Username</Label>
+                <Input
+                  id="username"
+                  autoComplete="username"
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  required
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  required
+                />
+              </div>
+              {(error || ssoError) && (
+                <p className="text-sm text-destructive">
+                  {error ?? SSO_MESSAGES[ssoError ?? ""] ?? SSO_MESSAGES.failed}
+                </p>
+              )}
+              <Button type="submit" disabled={submitting} className="mt-2">
+                {submitting ? "Signing in…" : "Sign in"}
+              </Button>
+            </form>
+          )}
+          {!needsSecondFactor && (providers?.oidc.enabled || providers?.github.enabled) && (
             <div className="mt-4 flex flex-col gap-3">
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
                 <span className="h-px flex-1 bg-border" />

@@ -45,6 +45,7 @@ class UserAdminOut(BaseModel):
     created_at: datetime
     email: str | None
     sso_linked: bool
+    totp_enabled: bool
     # Only used to name the provider below; the issuer itself isn't sent to the browser.
     sso_issuer: str | None = Field(default=None, exclude=True)
 
