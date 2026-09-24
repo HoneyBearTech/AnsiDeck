@@ -12,6 +12,8 @@ jobs:
   backend:
     name: Backend lint + test
     runs-on: ubuntu-latest
+    # Normally ~5 min; cap a hang well below GitHub's 6-hour default.
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: backend
