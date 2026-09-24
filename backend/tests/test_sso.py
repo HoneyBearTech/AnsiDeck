@@ -2,6 +2,7 @@ import json
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+import pyotp
 import pytest
 from fastapi.testclient import TestClient
 from joserfc import jwt
@@ -155,6 +156,27 @@ def test_a_preprovisioned_user_signs_in_and_is_linked(sso) -> None:
     assert len(_audit(admin, "auth.sso_link")) == 1
     login = _audit(admin, "auth.login")[0]
     assert login["actor_username"] == "alice" and login["detail"] == {"method": "sso"}
+
+
+def test_sso_sign_in_skips_the_totp_step(sso) -> None:
+    """The identity provider owns MFA for SSO sign-ins; TOTP guards password logins."""
+    fake, admin = sso
+    _provision(admin, "alice", "alice@example.com")
+    alice = TestClient(app)
+    alice.post("/api/auth/login", json={"username": "alice", "password": PASSWORD})
+    secret = alice.post("/api/auth/totp/setup", json={"current_password": PASSWORD}).json()[
+        "secret"
+    ]
+    enabled = alice.post("/api/auth/totp/enable", json={"code": pyotp.TOTP(secret).now()})
+    assert enabled.status_code == 200
+    password_only = TestClient(app).post(
+        "/api/auth/login", json={"username": "alice", "password": PASSWORD}
+    )
+    assert password_only.json() == {"mfa_required": True}
+
+    browser, response = _sign_in(fake, sub="idp-alice", email="alice@example.com")
+    assert _ok(response)
+    assert browser.get("/api/auth/me").json()["username"] == "alice"
 
 
 def test_later_sign_ins_match_the_bound_subject_not_the_email(sso) -> None:

@@ -54,10 +54,22 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(String(320), default=None)
     sso_issuer: Mapped[str | None] = mapped_column(String(500), default=None)
     sso_subject: Mapped[str | None] = mapped_column(String(255), default=None)
+    # TOTP two-factor login (opt-in, password logins only). Secrets are Fernet-encrypted;
+    # the pending one exists only between setup and the first valid code.
+    totp_secret: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
+    totp_pending_secret: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
+    # Highest time step already accepted, so a code can't be used twice.
+    totp_last_counter: Mapped[int | None] = mapped_column(Integer, default=None)
+    # SHA-256 hex of each unused recovery code.
+    totp_recovery_hashes: Mapped[list[str] | None] = mapped_column(JSON, default=None)
 
     @property
     def sso_linked(self) -> bool:
         return self.sso_subject is not None
+
+    @property
+    def totp_enabled(self) -> bool:
+        return self.totp_secret is not None
 
 
 # Unique (NULLs are distinct in SQLite). init_db() creates the same indexes on upgraded DBs.

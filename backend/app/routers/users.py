@@ -3,7 +3,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, totp
 from app.crypto import hash_password
 from app.db import get_db
 from app.hardening import client_ip
@@ -192,6 +192,36 @@ def unlink_sso(
     audit.record(
         db,
         "user.sso_unlink",
+        actor=actor,
+        target_type="user",
+        target_id=target.id,
+        target_name=target.username,
+        ip=client_ip(request),
+    )
+
+
+@router.delete("/{user_id}/totp", status_code=status.HTTP_204_NO_CONTENT)
+def reset_totp(
+    user_id: int,
+    request: Request,
+    actor: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> None:
+    """Turn off someone's two-factor login (lost authenticator and recovery codes).
+    Their sessions end; they sign in with the password alone and can set it up again."""
+    target = _load(db, user_id)
+    if target.id == actor.id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Turn off your own two-factor login on the Account page"
+        )
+    if not target.totp_enabled and target.totp_pending_secret is None:
+        return
+    totp.clear(target)
+    target.session_version += 1
+    db.commit()
+    audit.record(
+        db,
+        "user.totp_reset",
         actor=actor,
         target_type="user",
         target_id=target.id,

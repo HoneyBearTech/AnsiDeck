@@ -150,5 +150,10 @@ ip_login_throttle = FailureThrottle(max_failures=20, window_seconds=300)
 # a scanner hammer the DB and the audit log rather than about brute force.
 api_key_ip_throttle = FailureThrottle(max_failures=20, window_seconds=300)
 
+# Wrong second factors per user, whatever the IP: only reachable after a correct
+# password, and it caps guessing the 6 digits from many addresses (~3 of 10^6 codes
+# are valid at a time, so 10 per 15 min makes that take years).
+totp_user_throttle = FailureThrottle(max_failures=10, window_seconds=900)
+
 # Failed SSO callbacks, per client IP (bounds audit writes and provider round-trips).
 sso_ip_throttle = FailureThrottle(max_failures=20, window_seconds=300)

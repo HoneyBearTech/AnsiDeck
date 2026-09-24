@@ -315,6 +315,7 @@ export function UsersPage() {
                     {isSelf && <Badge variant="outline">you</Badge>}
                     {!u.is_active && <Badge variant="failed">deactivated</Badge>}
                     {u.sso_linked && <Badge variant="ok">{u.sso_provider ?? "SSO"}</Badge>}
+                    {u.totp_enabled && <Badge variant="ok">2FA</Badge>}
                   </div>
                   <span className="text-xs text-muted-foreground">
                     {u.email ? `${u.email} · ` : ""}
@@ -369,6 +370,23 @@ export function UsersPage() {
                     </Button>
                   ) : (
                     <ResetPasswordDialog user={u} onDone={refresh} />
+                  )}
+                  {!isSelf && u.totp_enabled && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `Turn off two-factor login for ${u.username}? Use this when they lost their authenticator and recovery codes. They are signed out and can set it up again.`,
+                          )
+                        ) {
+                          run(() => api.resetUserTotp(u.id));
+                        }
+                      }}
+                    >
+                      Reset 2FA
+                    </Button>
                   )}
                   {!isSelf && (
                     <Button
