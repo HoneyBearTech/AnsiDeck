@@ -141,6 +141,12 @@ def test_event_structure_is_preserved_and_all_string_fields_scrubbed() -> None:
     assert event["stdout"] == "ok => super-secret-value"  # input not mutated
 
 
+def test_secret_dict_keys_are_redacted_without_dropping_values() -> None:
+    scrub = build_scrubber({"tokentokentoken"})
+    out = scrub({"res": {"tokentokentoken": 1, "[REDACTED]": 2, "other": 3, "[REDACTED]#2": 4}})
+    assert out == {"res": {"[REDACTED]#3": 1, "[REDACTED]": 2, "other": 3, "[REDACTED]#2": 4}}
+
+
 def test_secret_split_across_stdout_lines_is_caught() -> None:
     scrub = build_scrubber({"first-line-secret\nsecond-line-secret"})
     out = scrub({"res": {"stdout_lines": ["first-line-secret", "second-line-secret"]}})

@@ -16,7 +16,10 @@ class VaultError(Exception):
 
 
 def _lib(password: str) -> tuple[VaultLib, VaultSecret]:
-    secret = VaultSecret(password.encode())
+    try:
+        secret = VaultSecret(password.encode())
+    except UnicodeEncodeError as exc:
+        raise VaultError("Vault password is not valid Unicode text") from exc
     return VaultLib(secrets=[("default", secret)]), secret
 
 
@@ -26,6 +29,8 @@ def encrypt_to_vault_envelope(plaintext: str, password: str) -> str:
         return vault.encrypt(plaintext, secret=secret).decode()
     except AnsibleError as exc:
         raise VaultError(str(exc)) from exc
+    except UnicodeEncodeError as exc:
+        raise VaultError("Plaintext is not valid Unicode text") from exc
 
 
 def to_yaml_block(envelope: str, var_name: str | None = None) -> str:
@@ -45,5 +50,7 @@ def decrypt_vault_text(vaulted_text: str, password: str) -> str:
         return vault.decrypt(envelope.encode()).decode()
     except AnsibleError as exc:
         raise VaultError(str(exc)) from exc
+    except UnicodeEncodeError as exc:
+        raise VaultError("Vault text is not valid Unicode text") from exc
     except UnicodeDecodeError as exc:
         raise VaultError("Decrypted content is not valid UTF-8 text") from exc
