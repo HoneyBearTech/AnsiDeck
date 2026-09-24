@@ -23,8 +23,8 @@ Docker with Compose.
 
 2. Edit `.env`. For anything beyond a local try-out, set your own values for:
    - `AUTH_SECRET_KEY`: a long random string that signs session cookies.
-   - `ADMIN_PASSWORD`: the first admin's password. It is only read on the very first start, and there is
-     no self-service password screen yet, so choose a strong one now.
+   - `ADMIN_PASSWORD`: the first admin's password. It is only read on the very first start; change it later
+     under **Account** (click your username in the header).
    - `CREDENTIAL_ENCRYPTION_KEY`: the key that encrypts stored SSH credentials. Generate one with
      `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
 

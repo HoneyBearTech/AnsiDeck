@@ -137,13 +137,34 @@ def change_password(
     current_user: User = Depends(_authenticated),
     db: Session = Depends(get_db),
 ) -> dict[str, bool]:
+    # Guesses here share the login throttle: a stolen session must not become an
+    # unthrottled way to find the password (and keep the account for good).
+    ip = client_ip(request)
+    user_key = (ip, current_user.username.lower()[:150])
+    if user_login_throttle.blocked(user_key) or ip_login_throttle.blocked(ip):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many failed password attempts. Try again in a few minutes.",
+            headers={"Retry-After": "300"},
+        )
     if not verify_password(payload.current_password, current_user.password_hash):
+        user_login_throttle.record_failure(user_key)
+        ip_login_throttle.record_failure(ip)
+        audit.record(
+            db,
+            "auth.password_change",
+            outcome="failure",
+            actor=current_user,
+            ip=ip,
+            detail={"reason": "wrong current password"},
+        )
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Current password is incorrect")
+    user_login_throttle.reset(user_key)
     if payload.new_password.lower() == current_user.username.lower():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Password must not equal your username")
     current_user.password_hash = hash_password(payload.new_password)
     current_user.session_version += 1  # signs out every other session
     db.commit()
     _set_session_cookie(response, current_user)  # ...but keep this one
-    audit.record(db, "auth.password_change", actor=current_user, ip=client_ip(request))
+    audit.record(db, "auth.password_change", actor=current_user, ip=ip)
     return {"ok": True}

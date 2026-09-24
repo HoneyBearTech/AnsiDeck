@@ -4,6 +4,7 @@ import { AppShell } from "@/components/app-shell";
 import { ProtectedRoute } from "@/components/protected-route";
 import { RequirePermission } from "@/components/require-permission";
 import { AuthProvider } from "@/context/auth-context";
+import { AccountPage } from "@/pages/account-page";
 import { AuditPage } from "@/pages/audit-page";
 import { CredentialsPage } from "@/pages/credentials-page";
 import { DashboardPage } from "@/pages/dashboard-page";
@@ -33,6 +34,7 @@ function App() {
           }
         >
           <Route path="/" element={<DashboardPage />} />
+          <Route path="/account" element={<AccountPage />} />
           <Route path="/playbooks" element={<PlaybooksPage />} />
           <Route
             path="/playbooks/new"

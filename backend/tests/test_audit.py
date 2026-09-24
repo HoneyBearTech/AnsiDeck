@@ -129,9 +129,24 @@ def test_password_change_and_run_trigger_are_recorded(admin_client: TestClient, 
     assert "auth.password_change" in [e["action"] for e in events]
 
 
+def test_wrong_current_password_on_change_is_recorded(client: TestClient) -> None:
+    user = make_user_client("pw-changer", "viewer")
+    user.post(
+        "/api/auth/change-password",
+        json={"current_password": "not-my-password", "new_password": "x" * 14},
+    )
+
+    admin = make_user_client("pw-auditor", "admin")
+    failures = _events(admin, action="auth.password_change", outcome="failure")
+    assert [(e["actor_username"], e["detail"]) for e in failures] == [
+        ("pw-changer", {"reason": "wrong current password"})
+    ]
+
+
 def test_audit_rows_never_contain_secrets(admin_client: TestClient) -> None:
     planted = {
         "wrong-password": "planted-wrong-password-abc",
+        "wrong-current-pw": "planted-wrong-current-password",
         "key": "PLANTEDKEYMATERIALLINE0123456789",
         "vault-pw": "planted-vault-password-def",
         "plaintext": "planted-plaintext-ghi",
@@ -140,6 +155,10 @@ def test_audit_rows_never_contain_secrets(admin_client: TestClient) -> None:
     }
     TestClient(admin_client.app).post(
         "/api/auth/login", json={"username": "admin", "password": planted["wrong-password"]}
+    )
+    admin_client.post(
+        "/api/auth/change-password",
+        json={"current_password": planted["wrong-current-pw"], "new_password": "x" * 14},
     )
     admin_client.post("/api/credentials", json={"name": "k", "private_key": _generate_key_pem()})
     vp = admin_client.post(

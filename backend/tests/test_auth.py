@@ -70,3 +70,33 @@ def test_change_password_then_relogin(client: TestClient) -> None:
         "/api/auth/login", json={"username": "admin", "password": "newpassword123"}
     )
     assert new_login.status_code == 200
+
+
+def _change(client: TestClient, current: str, new: str = "newpassword123") -> int:
+    return client.post(
+        "/api/auth/change-password", json={"current_password": current, "new_password": new}
+    ).status_code
+
+
+def test_change_password_guesses_share_the_login_throttle(client: TestClient) -> None:
+    client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+
+    assert [_change(client, f"guess-{i}") for i in range(5)] == [401] * 5
+
+    # Blocked even with the right password, here and at login, and nothing changed.
+    response = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "admin", "new_password": "newpassword123"},
+    )
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "300"
+    relogin = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+    assert relogin.status_code == 429
+
+
+def test_change_password_success_resets_the_throttle(client: TestClient) -> None:
+    client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+
+    assert [_change(client, f"guess-{i}") for i in range(4)] == [401] * 4
+    assert _change(client, "admin") == 200
+    assert [_change(client, f"guess-{i}") for i in range(4)] == [401] * 4

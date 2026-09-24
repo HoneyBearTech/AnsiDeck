@@ -91,9 +91,18 @@ export function AppShell() {
         </div>
         <div className="flex items-center gap-3">
           <ProjectSwitcher />
-          <span className="text-sm text-muted-foreground">
+          <NavLink
+            to="/account"
+            title="Account settings"
+            className={({ isActive }) =>
+              cn(
+                "text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground",
+                isActive && "text-primary",
+              )
+            }
+          >
             {user?.username} · {isAdmin ? "admin" : (activeProject?.role ?? "no project")}
-          </span>
+          </NavLink>
           <Button variant="outline" size="sm" onClick={() => logout()}>
             Log out
           </Button>
