@@ -7,6 +7,9 @@ from sqlalchemy.engine import make_url
 _DEFAULT_AUTH_SECRET_KEY = "change-me-dev-only-insecure-secret"
 _DEFAULT_ADMIN_PASSWORD = "admin"
 _DEFAULT_DB_PASSWORD = "ansideck"
+# The worker has its own copy (app.worker.settings must not import this module).
+DEFAULT_WORKER_TOKEN = "change-me-dev-only-worker-token"
+MIN_WORKER_TOKEN_LENGTH = 32
 
 
 class Settings(BaseSettings):
@@ -61,6 +64,16 @@ class Settings(BaseSettings):
         default=[],
         validation_alias=AliasChoices("SSO_ALLOWED_EMAIL_DOMAINS", "OIDC_ALLOWED_EMAIL_DOMAINS"),
     )
+
+    # Workers reach the API only through the internal API (never published or proxied),
+    # authenticated with this shared token. Compose sets the host to 0.0.0.0 so workers on
+    # the internal network can connect; the default keeps a bare local run private.
+    worker_token: str = DEFAULT_WORKER_TOKEN
+    internal_api_enabled: bool = True
+    internal_api_host: str = "127.0.0.1"
+    internal_api_port: int = 8001
+    # A worker's claim on a run lasts this long past its latest heartbeat.
+    run_lease_seconds: int = 60
 
     # Audit events older than this are pruned at startup; 0 keeps them forever.
     audit_retention_days: int = 365
@@ -144,6 +157,11 @@ class Settings(BaseSettings):
                 insecure.append("ADMIN_PASSWORD")
             if make_url(self.database_url).password == _DEFAULT_DB_PASSWORD:
                 insecure.append("the database password (POSTGRES_PASSWORD / DATABASE_URL)")
+            if (
+                self.worker_token == DEFAULT_WORKER_TOKEN
+                or len(self.worker_token) < MIN_WORKER_TOKEN_LENGTH
+            ):
+                insecure.append(f"WORKER_TOKEN (at least {MIN_WORKER_TOKEN_LENGTH} characters)")
             if insecure:
                 raise ValueError(
                     f"ENVIRONMENT=production but {', '.join(insecure)} still has its insecure "

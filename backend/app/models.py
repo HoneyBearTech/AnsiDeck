@@ -3,6 +3,7 @@ from enum import StrEnum
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -15,6 +16,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,6 +28,16 @@ class RunStatus(StrEnum):
     RUNNING = "running"
     SUCCESS = "success"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+    TIMED_OUT = "timed_out"
+
+
+# A run is "cancelling" while it is still running with cancel_requested_at set.
+FINISHED_STATUSES = frozenset(
+    {RunStatus.SUCCESS, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.TIMED_OUT}
+)
+DEFAULT_RUN_TIMEOUT_SECONDS = 2 * 60 * 60
+MAX_RUN_TIMEOUT_SECONDS = 24 * 60 * 60
 
 
 host_group = Table(
@@ -274,6 +286,52 @@ class Run(Base):
     hosts_failed: Mapped[int | None] = mapped_column(Integer, default=None)
     hosts_unreachable: Mapped[int | None] = mapped_column(Integer, default=None)
 
+    # The playbook as it was when the run was triggered: later edits don't change what a
+    # queued run executes. NULL only for runs from before the job queue.
+    playbook_snapshot: Mapped[str | None] = mapped_column(Text, default=None)
+    playbook_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
+    timeout_seconds: Mapped[int] = mapped_column(
+        Integer,
+        default=DEFAULT_RUN_TIMEOUT_SECONDS,
+        server_default=str(DEFAULT_RUN_TIMEOUT_SECONDS),
+    )
+    # Why it ended the way it did, when that isn't just ansible's own result.
+    status_reason: Mapped[str | None] = mapped_column(String(500), default=None)
+
+    # The claiming worker's lease, renewed by its heartbeats; always set from the DB's clock.
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # SHA-256 of the claim token: every worker call after the claim must present it, so a
+    # worker whose claim was taken away (reaped) can no longer write to the run.
+    claim_token_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    # SHA-256 of the one-time token that fetches the job's secrets, and its expiry.
+    job_token_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    job_token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    cancel_requested_by: Mapped[str | None] = mapped_column(String(150), default=None)
+
+    # Log appends are idempotent and crash-safe: the last event sequence number written and
+    # the log file's committed length (anything past it is an unfinished write, cut off).
+    log_seq: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    log_bytes: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+
+    __table_args__ = (
+        # One running run per inventory; the claim query also enforces this, the index makes
+        # a race impossible rather than unlikely.
+        Index(
+            "ux_runs_running_inventory",
+            "inventory_id",
+            unique=True,
+            postgresql_where=text("status = 'running'"),
+        ),
+        Index("ix_runs_queue", "queued_at", "id", postgresql_where=text("status = 'queued'")),
+        Index("ix_runs_lease", "lease_expires_at", postgresql_where=text("status = 'running'")),
+    )
+
 
 class GalaxyInstall(Base):
     """History/audit record of an ansible-galaxy install. The requirements text
@@ -287,10 +345,14 @@ class GalaxyInstall(Base):
     requirements_snapshot: Mapped[str] = mapped_column(Text)
     upgrade: Mapped[bool] = mapped_column(Boolean, default=False)
     return_code: Mapped[int | None] = mapped_column(Integer, default=None)
+    status_reason: Mapped[str | None] = mapped_column(String(500), default=None)
 
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Installs run in the API process; the lease is renewed while one runs, so an install
+    # whose process died is failed by the reaper instead of blocking runs forever.
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
 
 class AuditEvent(Base):

@@ -14,6 +14,8 @@ from starlette.websockets import WebSocketDisconnect
 
 REDACTED_MARKER = "[REDACTED]"
 
+FINISHED = ("success", "failed", "cancelled", "timed_out")
+
 SUCCESS_PLAYBOOK = """\
 - hosts: all
   connection: local
@@ -129,9 +131,9 @@ def _create_inventory_with_two_hosts(
     return inventory_id, "host-a", "host-b"
 
 
-def _create_credential(client: TestClient) -> int:
+def _create_credential(client: TestClient, name: str = "test-cred") -> int:
     response = client.post(
-        "/api/credentials", json={"name": "test-cred", "private_key": _generate_key_pem()}
+        "/api/credentials", json={"name": name, "private_key": _generate_key_pem()}
     )
     assert response.status_code == 201
     return response.json()["id"]
@@ -166,10 +168,20 @@ def _wait_for_completion(client: TestClient, run_id: int, timeout: float = 15.0)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         run = client.get(f"/api/runs/{run_id}").json()
-        if run["status"] in ("success", "failed"):
+        if run["status"] in FINISHED:
             return run
         time.sleep(0.2)
     raise AssertionError(f"run {run_id} did not finish within {timeout}s")
+
+
+def _wait_for_status(client: TestClient, run_id: int, status: str, timeout: float = 15.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        run = client.get(f"/api/runs/{run_id}").json()
+        if run["status"] == status:
+            return run
+        time.sleep(0.1)
+    raise AssertionError(f"run {run_id} never became {status} (now {run['status']})")
 
 
 def test_runs_require_auth(client: TestClient) -> None:
@@ -251,9 +263,9 @@ def test_run_success(client: TestClient, tmp_path) -> None:
     assert run["return_code"] == 0
     assert (tmp_path / "marker.txt").read_text() == "run marker"
 
-    from app.run_engine import WORKER_ID
-
-    assert run["worker_id"] == WORKER_ID
+    assert run["worker_id"] == "test-worker"
+    assert run["status_reason"] is None
+    assert run["timeout_seconds"] == 7200
     assert run["attempt"] == 1
     lifecycle = [run[k] for k in ("queued_at", "claimed_at", "started_at", "finished_at")]
     assert all(lifecycle)
@@ -504,6 +516,13 @@ def _start_pause_run(client: TestClient, tmp_path, name: str = "pause-ws.yml") -
     return run.json()["id"]
 
 
+def _run_topics() -> set[str]:
+    """Topics someone listens on for a run's log (workers' claims listen on "queue")."""
+    from app.notify import notifier
+
+    return {topic for topic in notifier.topics() if topic.startswith("run:")}
+
+
 def _receive_until_closed(ws) -> tuple[list[str], int]:
     lines = []
     with pytest.raises(WebSocketDisconnect) as closed:
@@ -518,7 +537,6 @@ def test_live_run_websocket_streams_to_the_end_without_holding_a_transaction(
     from sqlalchemy import text
 
     from app.db import get_engine
-    from app.notify import notifier
 
     # A plain TestClient: the run's thread notifies whichever loop the socket lives on.
     _login(client)
@@ -542,7 +560,7 @@ def test_live_run_websocket_streams_to_the_end_without_holding_a_transaction(
     assert [first, *rest] == log
     assert json.loads(log[-1])["event"] == "playbook_on_stats"
     assert _wait_for_completion(client, run_id)["status"] == "success"
-    assert notifier.topics() == set()
+    assert _run_topics() == set()
 
 
 def test_run_websocket_resumes_from_a_line(client: TestClient, tmp_path) -> None:
@@ -563,45 +581,45 @@ def test_run_websocket_resumes_from_a_line(client: TestClient, tmp_path) -> None
 
 
 def test_a_viewer_leaving_mid_run_stops_its_stream(client: TestClient, tmp_path) -> None:
-    from app.notify import notifier, run_topic
+    from app.notify import run_topic
 
     _login(client)
     run_id = _start_pause_run(client, tmp_path)
     with client.websocket_connect(f"/api/runs/{run_id}/ws") as ws:
         assert ws.receive_text()
-        assert notifier.topics() == {run_topic(run_id)}
+        assert _run_topics() == {run_topic(run_id)}
         # Leave inside the block: on exit, the TestClient cancels the app outright.
         ws.send({"type": "websocket.disconnect", "code": 1001})
         deadline = time.monotonic() + 1
-        while notifier.topics() and time.monotonic() < deadline:
+        while _run_topics() and time.monotonic() < deadline:
             time.sleep(0.02)
-        assert notifier.topics() == set()
+        assert _run_topics() == set()
     assert client.get(f"/api/runs/{run_id}").json()["status"] == "running"  # not waited out
     _wait_for_completion(client, run_id)
 
 
-def test_concurrency_guard_blocks_second_run_same_inventory(client: TestClient, tmp_path) -> None:
+def test_a_second_run_on_a_busy_inventory_waits_its_turn(client: TestClient, tmp_path) -> None:
     _login(client)
-    marker_path = str(tmp_path / "marker.txt")
     playbook_id = _create_playbook(client, PAUSE_PLAYBOOK, name="pause.yml")
-    inventory_id, _host_id = _create_inventory_with_host(client, marker_path)
-    credential_id = _create_credential(client)
-
+    inventory_id, _host_id = _create_inventory_with_host(client, str(tmp_path / "marker.txt"))
     payload = {
         "playbook_id": playbook_id,
         "inventory_id": inventory_id,
-        "credential_id": credential_id,
+        "credential_id": _create_credential(client),
     }
     first = client.post("/api/runs", json=payload)
     assert first.status_code == 201
-    first_id = first.json()["id"]
-    assert first.json()["status"] == "queued"
+    _wait_for_status(client, first.json()["id"], "running")
 
     second = client.post("/api/runs", json=payload)
-    assert second.status_code == 409
-    assert str(first_id) in second.json()["detail"]
+    assert second.status_code == 201  # accepted and queued, no longer refused
+    time.sleep(1)  # the worker has free slots, but the inventory is busy
+    assert client.get(f"/api/runs/{second.json()['id']}").json()["status"] == "queued"
 
-    _wait_for_completion(client, first_id)
+    first_run = _wait_for_completion(client, first.json()["id"])
+    second_run = _wait_for_completion(client, second.json()["id"])
+    assert second_run["status"] == "success"
+    assert first_run["finished_at"] <= second_run["claimed_at"]
 
 
 def test_concurrency_guard_allows_run_after_previous_completes(

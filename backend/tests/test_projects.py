@@ -376,9 +376,9 @@ def test_me_lists_project_access(world) -> None:
     assert "users:manage" not in projects["Team A"]["permissions"]  # never project-scoped
 
 
-def test_run_engine_rejects_a_credential_from_another_project(world) -> None:
+def test_building_a_job_rejects_a_credential_from_another_project(world) -> None:
+    from app.jobs import assert_same_project as _assert_same_project
     from app.models import Credential, Run
-    from app.run_engine import _assert_same_project
 
     a, b = world["a"], world["b"]
     db = get_sessionmaker()()

@@ -16,6 +16,7 @@ class InstallOut(BaseModel):
 
     id: int
     status: str
+    status_reason: str | None
     triggered_by: str
     upgrade: bool
     return_code: int | None
