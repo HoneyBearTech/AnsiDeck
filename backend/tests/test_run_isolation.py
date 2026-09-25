@@ -2,7 +2,7 @@ import sys
 
 from fastapi.testclient import TestClient
 
-from app import hardening, run_engine
+from app import hardening, run_executor
 from app.subprocess_env import PASSTHROUGH_ENV, clean_env
 from tests.test_runs import (
     _create_credential,
@@ -115,7 +115,7 @@ def test_run_fails_when_the_worker_dies_without_a_result(
     client: TestClient, tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        run_engine,
+        run_executor,
         "_WORKER_COMMAND",
         [sys.executable, "-c", "import sys; sys.stdin.read(); sys.exit(3)"],
     )

@@ -1,4 +1,3 @@
-import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -31,7 +30,6 @@ from app.routers import (
 from app.routers import (
     audit as audit_router,
 )
-from app.run_engine import set_event_loop
 
 settings = get_settings()
 
@@ -40,7 +38,6 @@ settings = get_settings()
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     disable_process_inspection()
     init_db()
-    set_event_loop(asyncio.get_running_loop())
     session = get_sessionmaker()()
     try:
         refuse_to_start_over_legacy_data(session)

@@ -319,7 +319,7 @@ def test_run_counts_unreachable_hosts_separately(client: TestClient) -> None:
 
 
 def test_host_counts_read_the_play_recap_and_tolerate_junk() -> None:
-    from app.run_engine import host_counts
+    from app.run_executor import host_counts
 
     recap = {
         "processed": {"a": 1, "b": 1, "c": 1, "d": 1},
@@ -489,42 +489,95 @@ def test_run_limit_narrows_target(client: TestClient, tmp_path) -> None:
     assert not (tmp_path / "marker-b.txt").exists()
 
 
-def test_live_run_websocket_does_not_hold_a_db_transaction(client: TestClient, tmp_path) -> None:
+def _start_pause_run(client: TestClient, tmp_path, name: str = "pause-ws.yml") -> int:
+    playbook_id = _create_playbook(client, PAUSE_PLAYBOOK, name=name)
+    inventory_id, _ = _create_inventory_with_host(client, str(tmp_path / "marker.txt"))
+    run = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_id,
+            "credential_id": _create_credential(client),
+        },
+    )
+    assert run.status_code == 201
+    return run.json()["id"]
+
+
+def _receive_until_closed(ws) -> tuple[list[str], int]:
+    lines = []
+    with pytest.raises(WebSocketDisconnect) as closed:
+        while True:
+            lines.append(ws.receive_text())
+    return lines, closed.value.code
+
+
+def test_live_run_websocket_streams_to_the_end_without_holding_a_transaction(
+    client: TestClient, tmp_path
+) -> None:
     from sqlalchemy import text
 
     from app.db import get_engine
-    from app.main import app
+    from app.notify import notifier
 
-    # A context-managed client runs the lifespan, so live events reach this portal's loop.
-    with TestClient(app) as live:
-        _login(live)
-        playbook_id = _create_playbook(live, PAUSE_PLAYBOOK, name="pause-ws.yml")
-        inventory_id, _ = _create_inventory_with_host(live, str(tmp_path / "marker.txt"))
-        run = live.post(
-            "/api/runs",
-            json={
-                "playbook_id": playbook_id,
-                "inventory_id": inventory_id,
-                "credential_id": _create_credential(live),
-            },
-        )
-        assert run.status_code == 201
-        run_id = run.json()["id"]
+    # A plain TestClient: the run's thread notifies whichever loop the socket lives on.
+    _login(client)
+    run_id = _start_pause_run(client, tmp_path)
 
-        with live.websocket_connect(f"/api/runs/{run_id}/ws") as ws:
-            assert ws.receive_text()  # streaming live, mid-pause
-            with get_engine().connect() as conn:
-                idle = conn.execute(
-                    text(
-                        "SELECT query FROM pg_stat_activity WHERE datname = current_database() "
-                        "AND state LIKE 'idle in transaction%' AND pid <> pg_backend_pid()"
-                    )
-                ).scalars()
-                assert list(idle) == []
-            with pytest.raises(WebSocketDisconnect):  # drain until the run ends
-                while True:
-                    ws.receive_text()
-        _wait_for_completion(live, run_id)
+    with client.websocket_connect(f"/api/runs/{run_id}/ws") as ws:
+        first = ws.receive_text()  # streaming live, mid-pause
+        with get_engine().connect() as conn:
+            idle = conn.execute(
+                text(
+                    "SELECT query FROM pg_stat_activity WHERE datname = current_database() "
+                    "AND state LIKE 'idle in transaction%' AND pid <> pg_backend_pid()"
+                )
+            ).scalars()
+            assert list(idle) == []
+        rest, code = _receive_until_closed(ws)
+
+    # Code 1000 means "that was everything": the stream matches the log line for line.
+    assert code == 1000
+    log = (tmp_path / "runs" / f"{run_id}.jsonl").read_text().splitlines()
+    assert [first, *rest] == log
+    assert json.loads(log[-1])["event"] == "playbook_on_stats"
+    assert _wait_for_completion(client, run_id)["status"] == "success"
+    assert notifier.topics() == set()
+
+
+def test_run_websocket_resumes_from_a_line(client: TestClient, tmp_path) -> None:
+    _login(client)
+    run_id = _start_pause_run(client, tmp_path)
+    _wait_for_completion(client, run_id)
+    log = (tmp_path / "runs" / f"{run_id}.jsonl").read_text().splitlines()
+    assert len(log) > 3
+
+    for start in (0, 2, len(log), len(log) + 5):
+        with client.websocket_connect(f"/api/runs/{run_id}/ws?from={start}") as ws:
+            assert _receive_until_closed(ws) == (log[start:], 1000)
+
+    with pytest.raises(WebSocketDisconnect) as rejected:
+        with client.websocket_connect(f"/api/runs/{run_id}/ws?from=-1"):
+            pass
+    assert rejected.value.code == 1008
+
+
+def test_a_viewer_leaving_mid_run_stops_its_stream(client: TestClient, tmp_path) -> None:
+    from app.notify import notifier, run_topic
+
+    _login(client)
+    run_id = _start_pause_run(client, tmp_path)
+    with client.websocket_connect(f"/api/runs/{run_id}/ws") as ws:
+        assert ws.receive_text()
+        assert notifier.topics() == {run_topic(run_id)}
+        # Leave inside the block: on exit, the TestClient cancels the app outright.
+        ws.send({"type": "websocket.disconnect", "code": 1001})
+        deadline = time.monotonic() + 1
+        while notifier.topics() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert notifier.topics() == set()
+    assert client.get(f"/api/runs/{run_id}").json()["status"] == "running"  # not waited out
+    _wait_for_completion(client, run_id)
 
 
 def test_concurrency_guard_blocks_second_run_same_inventory(client: TestClient, tmp_path) -> None:
@@ -872,13 +925,10 @@ def _scrub_run(client: TestClient, tmp_path) -> tuple[int, str]:
 
 
 def test_run_output_is_scrubbed_in_log_stream_and_replay(client: TestClient, tmp_path) -> None:
-    from app.run_engine import get_or_create_stream
-
     _login(client)
     run_id, create_body = _scrub_run(client, tmp_path)
 
     log_text = (tmp_path / "runs" / f"{run_id}.jsonl").read_text()
-    backlog_text = json.dumps(get_or_create_stream(run_id).events)
     with client.websocket_connect(f"/api/runs/{run_id}/ws") as ws:
         replay_text = ""
         try:
@@ -890,7 +940,6 @@ def test_run_output_is_scrubbed_in_log_stream_and_replay(client: TestClient, tmp
 
     for name, text in {
         "jsonl": log_text,
-        "backlog": backlog_text,
         "replay": replay_text,
         "api": api_text,
         "create-response": create_body,

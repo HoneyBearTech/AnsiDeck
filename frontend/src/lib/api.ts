@@ -527,7 +527,8 @@ export const api = {
   }) => request<Run>("/runs", { method: "POST", body: JSON.stringify(payload) }),
 };
 
-export function runWebSocketUrl(runId: number): string {
+/** `from` skips the log lines already received, so a dropped stream resumes where it left off. */
+export function runWebSocketUrl(runId: number, from = 0): string {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${location.host}${API_BASE_URL}/runs/${runId}/ws`;
+  return `${protocol}//${location.host}${API_BASE_URL}/runs/${runId}/ws?from=${from}`;
 }
