@@ -34,7 +34,6 @@ from app.hardening import (  # noqa: E402
 )
 from app.main import app  # noqa: E402
 from app.models import Project, ProjectMember, User  # noqa: E402
-from app.run_engine import _streams  # noqa: E402
 
 
 def reset_engine() -> None:
@@ -82,7 +81,6 @@ def client(tmp_path, monkeypatch) -> Generator[TestClient, None, None]:
     api_key_ip_throttle.clear()
     sso_ip_throttle.clear()
     totp_user_throttle.clear()
-    _streams.clear()  # run ids restart at 1 in every test; don't replay another test's run
     truncate_all()
 
     seed_db = get_sessionmaker()()

@@ -1,16 +1,9 @@
-import asyncio
-import contextlib
 import json
-import logging
 import os
 import shutil
-import signal
 import socket
-import subprocess
-import sys
 import tempfile
 import threading
-from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,108 +20,14 @@ from app.models import (
     RunStatus,
     VaultPassword,
 )
+from app.notify import notifier, run_topic
+from app.run_executor import host_counts, run_in_worker
 from app.scrub import build_scrubber, collect_secrets
 from app.storage import playbook_path, run_log_path
 from app.subprocess_env import clean_env
 
-logger = logging.getLogger(__name__)
-
-DONE = object()
-
-_BACKEND_ROOT = Path(__file__).resolve().parents[1]
-_WORKER_COMMAND = [sys.executable, "-m", "app.run_worker"]
-_WORKER_STOP_GRACE_SECONDS = 10
-
 # Recorded on each run this process executes (4B's workers will each have their own).
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
-
-
-def host_counts(event_data: object) -> dict[str, int]:
-    """Hosts per outcome from a playbook_on_stats event's data (ansible's PLAY RECAP:
-    per-outcome {host: task count} maps; "dark" is unreachable). Malformed input counts
-    as nothing rather than failing the run."""
-    data = event_data if isinstance(event_data, dict) else {}
-
-    def hosts(key: str) -> set[str]:
-        per_host = data.get(key)
-        if not isinstance(per_host, dict):
-            return set()
-        return {h for h, n in per_host.items() if isinstance(n, int) and n > 0}
-
-    everyone = set().union(
-        *(hosts(k) for k in ("processed", "ok", "changed", "failures", "dark", "skipped"))
-    )
-    failed, unreachable = hosts("failures"), hosts("dark")
-    return {
-        "hosts_total": len(everyone),
-        "hosts_ok": len(everyone - failed - unreachable),
-        "hosts_changed": len(hosts("changed")),
-        "hosts_failed": len(failed),
-        "hosts_unreachable": len(unreachable),
-    }
-
-
-class RunStream:
-    def __init__(self) -> None:
-        self.events: list[dict] = []
-        self.subscribers: list[asyncio.Queue] = []
-        self.done = False
-        self._lock = threading.Lock()
-
-    def publish(self, event: dict) -> None:
-        with self._lock:
-            self.events.append(event)
-            subscribers = list(self.subscribers)
-        if not subscribers:
-            return
-        loop = get_event_loop()
-        for queue in subscribers:
-            loop.call_soon_threadsafe(queue.put_nowait, event)
-
-    def mark_done(self) -> None:
-        with self._lock:
-            self.done = True
-            subscribers = list(self.subscribers)
-        if not subscribers:
-            return
-        loop = get_event_loop()
-        for queue in subscribers:
-            loop.call_soon_threadsafe(queue.put_nowait, DONE)
-
-    def subscribe(self) -> tuple[list[dict], asyncio.Queue]:
-        queue: asyncio.Queue = asyncio.Queue()
-        with self._lock:
-            backlog = list(self.events)
-            if self.done:
-                queue.put_nowait(DONE)
-            else:
-                self.subscribers.append(queue)
-        return backlog, queue
-
-
-_streams: dict[int, RunStream] = {}
-_streams_lock = threading.Lock()
-_event_loop: asyncio.AbstractEventLoop | None = None
-
-
-def set_event_loop(loop: asyncio.AbstractEventLoop) -> None:
-    global _event_loop
-    _event_loop = loop
-
-
-def get_event_loop() -> asyncio.AbstractEventLoop:
-    if _event_loop is None:
-        raise RuntimeError("run_engine event loop not set — call set_event_loop() at startup")
-    return _event_loop
-
-
-def get_or_create_stream(run_id: int) -> RunStream:
-    with _streams_lock:
-        stream = _streams.get(run_id)
-        if stream is None:
-            stream = RunStream()
-            _streams[run_id] = stream
-        return stream
 
 
 def _assert_same_project(run: Run, obj, label: str) -> None:
@@ -138,77 +37,12 @@ def _assert_same_project(run: Run, obj, label: str) -> None:
         raise RuntimeError(f"run {run.id}: {label} is not in the run's project")
 
 
-def _stop_worker(proc: subprocess.Popen) -> None:
-    """SIGTERM makes ansible-runner cancel cleanly; SIGKILL only if that doesn't land."""
-    if proc.poll() is not None:
-        return
-    proc.terminate()
-    try:
-        proc.wait(timeout=_WORKER_STOP_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(proc.pid, signal.SIGKILL)
-        proc.wait()
-
-
-def _run_in_worker(
-    job: dict, env: dict[str, str], on_event: Callable[[dict], None]
-) -> tuple[str | None, int | None]:
-    """Runs ansible-runner in a child process started with `env` instead of the app's
-    environment (see app.run_worker). Returns (ansible-runner status, rc); status is
-    None if the worker died without reporting a result."""
-    read_fd, write_fd = os.pipe()
-    try:
-        proc = subprocess.Popen(
-            _WORKER_COMMAND,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            env=env,
-            cwd=_BACKEND_ROOT,
-            pass_fds=(write_fd,),
-            start_new_session=True,
-        )
-    except BaseException:
-        os.close(read_fd)
-        raise
-    finally:
-        os.close(write_fd)
-
-    result: tuple[str | None, int | None] = (None, None)
-    try:
-        with os.fdopen(read_fd, encoding="utf-8") as events:
-            assert proc.stdin is not None
-            # The job (SSH key, vault password) travels over stdin — never argv or env.
-            proc.stdin.write(json.dumps({**job, "event_fd": write_fd}).encode())
-            proc.stdin.close()
-            for line in events:
-                message = json.loads(line)
-                if message["type"] == "event":
-                    on_event(message["event"])
-                elif message["type"] == "result":
-                    result = (message["status"], message["rc"])
-    except BaseException:
-        _stop_worker(proc)
-        raise
-    try:
-        returncode = proc.wait(timeout=_WORKER_STOP_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:
-        _stop_worker(proc)
-        returncode = proc.returncode
-    if result[0] is None:
-        logger.error("run worker exited (code %s) without reporting a result", returncode)
-        return None, returncode or None
-    return result
-
-
 def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
     db = get_sessionmaker()()
-    stream = get_or_create_stream(run_id)
+    topic = run_topic(run_id)
     run = db.get(Run, run_id)
     if run is None:
         db.close()
-        stream.mark_done()
         return
 
     try:
@@ -279,9 +113,9 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
                     event = scrub_event(event)
                     log_file.write(json.dumps(event) + "\n")
                     log_file.flush()
-                    stream.publish(event)
+                    notifier.notify(topic)
 
-                status, return_code = _run_in_worker(
+                status, return_code = run_in_worker(
                     {
                         "private_data_dir": pdd,
                         "playbook": "playbook.yml",
@@ -312,8 +146,8 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
     finally:
         run.finished_at = datetime.now(UTC)
         db.commit()
-        stream.mark_done()
         db.close()
+        notifier.notify(topic)  # the status is final: live log viewers can finish
 
 
 def start_run(run_id: int) -> None:

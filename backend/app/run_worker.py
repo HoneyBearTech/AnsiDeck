@@ -1,7 +1,7 @@
 """Child-process entry point that actually runs ansible-runner (python -m app.run_worker).
 
 ansible-runner seeds the playbook's environment from os.environ with no way to opt out,
-so run_engine spawns this module with an allowlisted environment instead of running
+so run_executor spawns this module with an allowlisted environment instead of running
 ansible-runner in the app process. Deliberately imports nothing from app.* — in
 particular not app.config, which would load the app's secrets.
 

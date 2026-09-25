@@ -1,3 +1,7 @@
+import asyncio
+import contextlib
+from pathlib import Path
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -8,10 +12,11 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.db import get_db
+from app.db import get_db, get_sessionmaker
 from app.dependencies import SESSION_COOKIE_NAME, RateLimited, authenticate_request
 from app.hardening import client_ip
 from app.models import (
@@ -25,6 +30,7 @@ from app.models import (
     User,
     VaultPassword,
 )
+from app.notify import notifier, run_topic
 from app.permissions import (
     Permission,
     Scope,
@@ -32,7 +38,7 @@ from app.permissions import (
     holds_somewhere,
     project_permissions,
 )
-from app.run_engine import DONE, get_or_create_stream, start_run
+from app.run_engine import start_run
 from app.schemas.runs import RunCreate, RunOut
 from app.scoping import get_scoped, readable_project_ids
 from app.storage import run_log_path
@@ -243,8 +249,93 @@ def get_run(
     return _run_out(db, run, user)
 
 
+# How long a live log viewer waits for a notification before re-checking the run itself.
+_STATUS_RECHECK_SECONDS = 2.0
+# Upper bound on what one read of the log pulls into memory (a single line may exceed it).
+_TAIL_READ_BYTES = 1 << 20
+
+
+class _LogTail:
+    """Reads a run's JSONL log incrementally, complete lines only, from a byte offset. The
+    file is the single source of truth for live and finished runs alike; skip_lines lets a
+    reconnecting viewer resume after the lines it already has."""
+
+    def __init__(self, path: Path, skip_lines: int) -> None:
+        self.path = path
+        self.offset = 0
+        self.skip_lines = skip_lines
+
+    def read(self) -> list[str]:
+        lines: list[str] = []
+        size = 0
+        try:
+            with self.path.open("rb") as log:
+                log.seek(self.offset)
+                for raw in log:
+                    if not raw.endswith(b"\n"):
+                        break  # still being written; picked up by the next read
+                    self.offset += len(raw)
+                    line = raw.decode("utf-8").strip()
+                    if not line:
+                        continue
+                    if self.skip_lines:
+                        self.skip_lines -= 1
+                        continue
+                    lines.append(line)
+                    size += len(raw)
+                    if size >= _TAIL_READ_BYTES:
+                        break
+        except FileNotFoundError:  # a queued run has no log yet
+            pass
+        return lines
+
+
+def _run_finished(run_id: int) -> bool:
+    """Its own short-lived session: a stream can last as long as the run, and must not sit
+    "idle in transaction" holding locks (they block TRUNCATE and migrations)."""
+    db = get_sessionmaker()()
+    try:
+        row = db.execute(select(Run.finished_at).where(Run.id == run_id)).first()
+    finally:
+        db.close()
+    return row is None or row.finished_at is not None
+
+
+async def _stream_log(websocket: WebSocket, run_id: int, skip_lines: int, finished: bool) -> None:
+    tail = _LogTail(run_log_path(run_id), skip_lines)
+    # Listen before the first read, so a line written in between still wakes this loop.
+    with notifier.listen(run_topic(run_id)) as listener:
+        while True:
+            lines = tail.read()
+            for line in lines:
+                await websocket.send_text(line)
+            if lines:
+                continue
+            # The engine writes the whole log before it marks the run finished, so once the
+            # run is finished, draining the file once more yields the complete output.
+            if finished or await asyncio.to_thread(_run_finished, run_id):
+                while lines := tail.read():
+                    for line in lines:
+                        await websocket.send_text(line)
+                return
+            await listener.wait(_STATUS_RECHECK_SECONDS)
+
+
+async def _until_disconnect(websocket: WebSocket) -> None:
+    while (await websocket.receive())["type"] != "websocket.disconnect":
+        pass
+
+
 @router.websocket("/{run_id}/ws")
-async def run_ws(websocket: WebSocket, run_id: int, db: Session = Depends(get_db)) -> None:
+async def run_ws(
+    websocket: WebSocket,
+    run_id: int,
+    from_line: int = Query(0, alias="from", ge=0),
+    db: Session = Depends(get_db),
+) -> None:
+    """Streams the run's log, one JSON event per message, then closes with code 1000 once
+    the run has finished and every line was sent. Any other close means the output was
+    cut short: reconnect with ?from=<lines received so far> to resume."""
     # Manually guarded (no Depends on a WebSocket): authenticate the cookie (or an
     # Authorization header, for CI clients) against the DB and require the same read
     # permission as the HTTP routes.
@@ -267,36 +358,27 @@ async def run_ws(websocket: WebSocket, run_id: int, db: Session = Depends(get_db
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    # Streaming can last as long as the run: don't sit "idle in transaction" holding
-    # the pooled connection and its share locks (they block TRUNCATE and migrations).
     finished = run.finished_at is not None
-    db.close()
+    db.close()  # see _run_finished
 
     await websocket.accept()
 
+    streaming = asyncio.create_task(_stream_log(websocket, run_id, from_line, finished))
+    disconnected = asyncio.create_task(_until_disconnect(websocket))
+    client_gone = True
     try:
-        if finished:
-            log_path = run_log_path(run_id)
-            if log_path.exists():
-                for line in log_path.read_text(encoding="utf-8").splitlines():
-                    if line.strip():
-                        await websocket.send_text(line)
-            return
-
-        stream = get_or_create_stream(run_id)
-        backlog, queue = stream.subscribe()
-        for event in backlog:
-            await websocket.send_json(event)
-
-        while True:
-            item = await queue.get()
-            if item is DONE:
-                break
-            await websocket.send_json(item)
+        # A viewer that goes away mid-run is noticed at once, not at the next line.
+        done, _ = await asyncio.wait({streaming, disconnected}, return_when=asyncio.FIRST_COMPLETED)
+        if streaming in done:
+            streaming.result()  # re-raises a streaming failure
+            client_gone = False
     except WebSocketDisconnect:
         pass
     finally:
-        try:
-            await websocket.close()
-        except RuntimeError:
-            pass
+        for task in (streaming, disconnected):
+            task.cancel()
+        await asyncio.gather(streaming, disconnected, return_exceptions=True)
+    if not client_gone:
+        # The viewer may leave just as the stream ends (e.g. a replay racing a page reload).
+        with contextlib.suppress(WebSocketDisconnect, RuntimeError):
+            await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
