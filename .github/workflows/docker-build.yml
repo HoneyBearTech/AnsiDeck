@@ -45,7 +45,8 @@ jobs:
       - name: Smoke test backend runtime image
         if: matrix.service == 'backend' && matrix.target == 'runtime'
         # The app needs Postgres (same pinned image as docker-compose.yml) and applies its
-        # migrations at startup, so this also checks the image ships alembic.ini + migrations/.
+        # migrations at startup, so this also checks the image ships alembic.ini + migrations/
+        # (the database must end at the image's own head revision).
         run: |
           docker network create smoke-net
           docker run -d --name smoke-db --network smoke-net \
@@ -67,7 +68,10 @@ jobs:
           done
           curl -sf http://localhost:8000/api/health || { docker logs smoke; exit 1; }
           docker logs smoke
-          docker exec smoke-db psql -U ansideck -d ansideck -tAc "SELECT version_num FROM alembic_version" | grep -qx 0001
+          head=$(docker exec -w /app smoke alembic heads | cut -d' ' -f1)
+          applied=$(docker exec smoke-db psql -U ansideck -d ansideck -tAc "SELECT version_num FROM alembic_version")
+          echo "image head: $head, database: $applied"
+          [ -n "$head" ] && [ "$head" = "$applied" ]
 
       - name: Smoke test ansible-galaxy prerequisites in backend runtime image
         if: matrix.service == 'backend' && matrix.target == 'runtime'
