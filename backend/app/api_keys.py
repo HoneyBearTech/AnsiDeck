@@ -25,13 +25,6 @@ _LAST_USED_GRANULARITY = timedelta(minutes=1)
 _DUMMY_HASH = hashlib.sha256(b"ansideck-dummy-api-key").hexdigest()
 
 
-def aware(moment: datetime | None) -> datetime | None:
-    """SQLite hands datetimes back naive; everything here is stored as UTC."""
-    if moment is not None and moment.tzinfo is None:
-        return moment.replace(tzinfo=UTC)
-    return moment
-
-
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -58,7 +51,7 @@ def key_status(key: ApiKey, now: datetime | None = None) -> str:
     now = now or datetime.now(UTC)
     if key.revoked_at is not None:
         return "revoked"
-    if aware(key.expires_at) <= now:
+    if key.expires_at <= now:
         return "expired"
     return "active"
 
@@ -98,7 +91,7 @@ def authenticate_api_key(
         return None, state, prefix
 
     principal = principal_for(key)
-    last_used = aware(key.last_used_at)
+    last_used = key.last_used_at
     if last_used is None or now - last_used >= _LAST_USED_GRANULARITY:
         key.last_used_at = now
         key.last_used_ip = ip

@@ -16,6 +16,8 @@ dependencies = [
     "joserfc>=1.7.5",
     "pyotp>=2.9",
     "segno>=1.6",
+    "alembic>=1.16",
+    "psycopg[binary]>=3.2",
 ]
 
 [dependency-groups]

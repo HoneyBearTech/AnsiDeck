@@ -1,12 +1,8 @@
-import sqlite3
-
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app.config import get_settings
-from app.crypto import hash_password
-from app.db import get_engine, get_sessionmaker, init_db
+from app.db import get_sessionmaker
 from app.main import app
 from app.permissions import Permission, Scope
 from tests.conftest import make_user_client
@@ -573,142 +569,6 @@ def test_permission_denials_record_the_project(world) -> None:
 
 
 # ------------------------------------------------------------- migration
-
-
-OLD_SCHEMA = """
-CREATE TABLE users (
-  id INTEGER PRIMARY KEY, username VARCHAR(150) UNIQUE, password_hash VARCHAR(255),
-  role VARCHAR(20) NOT NULL DEFAULT 'viewer', is_active BOOLEAN NOT NULL DEFAULT 1,
-  session_version INTEGER NOT NULL DEFAULT 0, created_by VARCHAR(150),
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE playbooks (
-  id INTEGER PRIMARY KEY, name VARCHAR(255),
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE inventories (
-  id INTEGER PRIMARY KEY, name VARCHAR(255) UNIQUE, description VARCHAR(500),
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE credentials (
-  id INTEGER PRIMARY KEY, name VARCHAR(150) UNIQUE, description VARCHAR(500),
-  encrypted_private_key BLOB, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE vault_passwords (
-  id INTEGER PRIMARY KEY, name VARCHAR(150) UNIQUE, description VARCHAR(500),
-  encrypted_password BLOB, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE runs (
-  id INTEGER PRIMARY KEY, playbook_id INTEGER, playbook_name VARCHAR(255) NOT NULL,
-  inventory_id INTEGER, inventory_name VARCHAR(255) NOT NULL, group_id INTEGER,
-  group_name VARCHAR(255), credential_id INTEGER, credential_name VARCHAR(150) NOT NULL,
-  become BOOLEAN, status VARCHAR(20), triggered_by VARCHAR(150) NOT NULL, return_code INTEGER,
-  started_at DATETIME, finished_at DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE audit_events (
-  id INTEGER PRIMARY KEY, created_at DATETIME, actor_user_id INTEGER,
-  actor_username VARCHAR(150), action VARCHAR(64), target_type VARCHAR(50), target_id INTEGER,
-  target_name VARCHAR(255), outcome VARCHAR(20), ip VARCHAR(64), detail JSON);
-"""
-
-OLD_ROWS = [
-    "INSERT INTO playbooks (id, name) VALUES (1, 'old-playbook')",
-    "INSERT INTO inventories (id, name) VALUES (1, 'old-inv')",
-    "INSERT INTO credentials (id, name, encrypted_private_key) VALUES (1, 'old-cred', x'00')",
-    "INSERT INTO vault_passwords (id, name, encrypted_password) VALUES (1, 'old-vault', x'00')",
-    "INSERT INTO runs (id, playbook_id, playbook_name, inventory_id, inventory_name,"
-    " credential_id, credential_name, become, status, triggered_by)"
-    " VALUES (1, 1, 'old-playbook', 1, 'old-inv', 1, 'old-cred', 0, 'success', 'boss')",
-    "INSERT INTO audit_events (id, action, outcome) VALUES (1, 'auth.login', 'success')",
-]
-
-
-@pytest.fixture
-def old_db(tmp_path, monkeypatch):
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    for cache in (get_settings, get_engine, get_sessionmaker):
-        cache.cache_clear()
-    con = sqlite3.connect(tmp_path / "ansideck.db")
-    con.executescript(OLD_SCHEMA)
-    con.executemany(
-        "INSERT INTO users (id, username, password_hash, role) VALUES (?,?,?,?)",
-        [
-            (1, "boss", hash_password("boss-password-123"), "admin"),
-            (2, "op", hash_password("op-password-12345"), "operator"),
-            (3, "view", hash_password("view-password-123"), "viewer"),
-        ],
-    )
-    for statement in OLD_ROWS:
-        con.execute(statement)
-    con.commit()
-    con.close()
-    yield tmp_path
-    for cache in (get_engine, get_sessionmaker, get_settings):
-        cache.cache_clear()
-
-
-def test_upgrade_creates_default_project_and_backfills_everything(old_db) -> None:
-    init_db()
-    init_db()  # a second boot changes nothing
-
-    con = sqlite3.connect(old_db / "ansideck.db")
-    con.execute("PRAGMA foreign_keys=ON")
-    projects = con.execute("SELECT id, name FROM projects").fetchall()
-    assert [name for _, name in projects] == ["Default"]
-    default_id = projects[0][0]
-
-    for table in ("playbooks", "inventories", "credentials", "vault_passwords", "runs"):
-        ids = {r[0] for r in con.execute(f"SELECT project_id FROM {table}")}
-        assert ids == {default_id}, table
-
-    members = con.execute(
-        "SELECT u.username, m.role FROM project_members m JOIN users u ON u.id=m.user_id ORDER BY 1"
-    ).fetchall()
-    assert members == [("op", "operator"), ("view", "viewer")]  # the global admin needs none
-    assert (
-        con.execute("PRAGMA user_version").scalar()
-        if False
-        else con.execute("PRAGMA user_version").fetchone()[0] == 1
-    )
-    assert con.execute("SELECT project_id FROM audit_events").fetchone() == (None,)
-
-    # the FK really is enforced on the migrated column
-    with pytest.raises(sqlite3.IntegrityError):
-        con.execute("DELETE FROM projects WHERE id = ?", (default_id,))
-    con.close()
-
-
-def test_upgraded_users_keep_working_access(old_db) -> None:
-    init_db()
-    upgraded = TestClient(app)
-    assert (
-        upgraded.post(
-            "/api/auth/login", json={"username": "op", "password": "op-password-12345"}
-        ).status_code
-        == 200
-    )
-    assert [p["name"] for p in upgraded.get("/api/auth/me").json()["projects"]] == ["Default"]
-    assert [p["name"] for p in upgraded.get("/api/playbooks").json()] == ["old-playbook"]
-    assert upgraded.get("/api/users").status_code == 403
-
-    boss = TestClient(app)
-    assert (
-        boss.post(
-            "/api/auth/login", json={"username": "boss", "password": "boss-password-123"}
-        ).status_code
-        == 200
-    )
-    assert [r["id"] for r in boss.get("/api/runs").json()] == [1]
-
-
-def test_backfill_does_not_resurrect_a_deleted_default_project(old_db) -> None:
-    init_db()
-    con = sqlite3.connect(old_db / "ansideck.db")
-    con.execute("PRAGMA foreign_keys=ON")
-    for table in ("playbooks", "inventories", "credentials", "vault_passwords", "runs"):
-        con.execute(f"DELETE FROM {table}")
-    con.execute("DELETE FROM projects")
-    con.commit()
-    con.close()
-
-    init_db()  # next boot must NOT recreate Default
-    con = sqlite3.connect(old_db / "ansideck.db")
-    assert con.execute("SELECT count(*) FROM projects").fetchone()[0] == 0
-    con.close()
 
 
 def test_fresh_install_gets_an_empty_default_project(client: TestClient) -> None:

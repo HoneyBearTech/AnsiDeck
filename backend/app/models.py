@@ -72,7 +72,7 @@ class User(Base):
         return self.totp_secret is not None
 
 
-# Unique (NULLs are distinct in SQLite). init_db() creates the same indexes on upgraded DBs.
+# Unique; NULLs are distinct, so any number of users may have no email / no SSO identity.
 Index("ux_users_email_lower", func.lower(User.email), unique=True)
 Index("ux_users_sso_identity", User.sso_issuer, User.sso_subject, unique=True)
 

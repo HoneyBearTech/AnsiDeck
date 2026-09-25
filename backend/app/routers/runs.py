@@ -267,10 +267,15 @@ async def run_ws(websocket: WebSocket, run_id: int, db: Session = Depends(get_db
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
+    # Streaming can last as long as the run: don't sit "idle in transaction" holding
+    # the pooled connection and its share locks (they block TRUNCATE and migrations).
+    finished = run.finished_at is not None
+    db.close()
+
     await websocket.accept()
 
     try:
-        if run.finished_at is not None:
+        if finished:
             log_path = run_log_path(run_id)
             if log_path.exists():
                 for line in log_path.read_text(encoding="utf-8").splitlines():

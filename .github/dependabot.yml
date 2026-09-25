@@ -24,6 +24,12 @@ updates:
     schedule:
       interval: "weekly"
 
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    assignees: ["HoneyBearTech"]
+    schedule:
+      interval: "weekly"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     assignees: ["HoneyBearTech"]

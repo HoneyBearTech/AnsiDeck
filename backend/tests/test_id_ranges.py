@@ -2,12 +2,14 @@ import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
+from psycopg.errors import InvalidTextRepresentation
+from sqlalchemy.exc import DataError
 from starlette.requests import Request
 
 from app.main import _integer_out_of_range
 from tests.test_projects import _admin
 
-# Beyond SQLite's signed 64-bit INTEGER: it cannot match any row.
+# Beyond Postgres' INTEGER (and any 64-bit) range: it cannot match any row.
 TOO_BIG = 99999999999999999999999999
 
 
@@ -44,12 +46,15 @@ def test_a_huge_id_in_a_query_or_body_is_not_found(admin: TestClient) -> None:
 
 
 def test_the_largest_valid_id_is_still_an_ordinary_lookup(admin: TestClient) -> None:
-    assert admin.get(f"/api/playbooks/{2**63 - 1}").status_code == 404  # no such row
+    assert admin.get(f"/api/playbooks/{2**31 - 1}").status_code == 404  # no such row
+    assert admin.get(f"/api/playbooks/{2**31}").status_code == 404  # beyond INTEGER
+    assert admin.get(f"/api/playbooks/{-(2**31) - 1}").status_code == 404
     assert admin.get("/api/playbooks/0").status_code == 404
     assert admin.get("/api/playbooks").status_code == 200
 
 
-def test_an_unrelated_overflow_error_is_not_swallowed() -> None:
+def test_an_unrelated_data_error_is_not_swallowed() -> None:
     request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
-    with pytest.raises(OverflowError, match="something else"):
-        asyncio.run(_integer_out_of_range(request, OverflowError("something else")))
+    other = DataError("SELECT 1", {}, InvalidTextRepresentation("something else"))
+    with pytest.raises(DataError, match="something else"):
+        asyncio.run(_integer_out_of_range(request, other))

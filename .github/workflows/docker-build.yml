@@ -44,17 +44,30 @@ jobs:
 
       - name: Smoke test backend runtime image
         if: matrix.service == 'backend' && matrix.target == 'runtime'
+        # The app needs Postgres (same pinned image as docker-compose.yml) and applies its
+        # migrations at startup, so this also checks the image ships alembic.ini + migrations/.
         run: |
-          docker run -d --name smoke -p 8000:8000 \
+          docker network create smoke-net
+          docker run -d --name smoke-db --network smoke-net \
+            -e POSTGRES_USER=ansideck -e POSTGRES_PASSWORD=ci-test -e POSTGRES_DB=ansideck \
+            --health-cmd "pg_isready -U ansideck -d ansideck" --health-interval 2s \
+            postgres:18-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+          for i in $(seq 1 30); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' smoke-db)" = healthy ] && break
+            sleep 2
+          done
+          docker run -d --name smoke --network smoke-net -p 8000:8000 \
             -e AUTH_SECRET_KEY=ci-test -e ADMIN_PASSWORD=ci-test \
             -e CREDENTIAL_ENCRYPTION_KEY=8JQKBeSl5G-WvrMG3wRXlVUrowrX3qAkZq0Nycsd9qc= \
+            -e DATABASE_URL=postgresql+psycopg://ansideck:ci-test@smoke-db:5432/ansideck \
             ansideck-backend:runtime
-          for i in $(seq 1 10); do
+          for i in $(seq 1 15); do
             curl -sf http://localhost:8000/api/health && break
             sleep 2
           done
-          curl -sf http://localhost:8000/api/health
+          curl -sf http://localhost:8000/api/health || { docker logs smoke; exit 1; }
           docker logs smoke
+          docker exec smoke-db psql -U ansideck -d ansideck -tAc "SELECT version_num FROM alembic_version" | grep -qx 0001
 
       - name: Smoke test ansible-galaxy prerequisites in backend runtime image
         if: matrix.service == 'backend' && matrix.target == 'runtime'

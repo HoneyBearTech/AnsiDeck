@@ -10,8 +10,8 @@ Self-hosted web UI for running Ansible playbooks against target systems, package
 
 ## Getting started
 
-AnsiDeck is two containers, a FastAPI backend and a React frontend, started with Docker Compose. You need
-Docker with Compose.
+AnsiDeck is a FastAPI backend, a React frontend and a PostgreSQL database, started with Docker Compose. You
+need Docker with Compose.
 
 1. Get the code and create your settings file:
 
@@ -27,15 +27,36 @@ Docker with Compose.
      under **Account** (click your username in the header).
    - `CREDENTIAL_ENCRYPTION_KEY`: the key that encrypts stored SSH credentials. Generate one with
      `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+   - `POSTGRES_PASSWORD`: the database password. It is only read when the `postgres-data` volume is first
+     created; changing it later also needs `ALTER USER` inside Postgres.
 
 3. Start it: `docker compose up --build`.
 4. Open <http://localhost:5173> and sign in as `ADMIN_USERNAME` (default `admin`) with `ADMIN_PASSWORD`.
    The backend's interactive API docs are at <http://localhost:8000/docs>.
 
-The bundled `docker-compose.yml` is the development stack (hot reload; data lives in the `backend-data`
-volume, mounted at `/data`). The `runtime` targets of `backend/Dockerfile` and `frontend/Dockerfile` build the
-production images: both run as a non-root user, the backend listens on port 8000, and the frontend serves the
-UI on port 8080 and proxies `/api` to a host named `backend`.
+The bundled `docker-compose.yml` is the development stack (hot reload). The database lives in the
+`postgres-data` volume; playbook files, run logs and Galaxy content live in the `backend-data` volume, mounted
+at `/data`. The `runtime` targets of `backend/Dockerfile` and `frontend/Dockerfile` build the production
+images: both run as a non-root user, the backend listens on port 8000 and needs `DATABASE_URL` pointing at a
+PostgreSQL 18 database, and the frontend serves the UI on port 8080 and proxies `/api` to a host named
+`backend`. The backend applies database migrations itself at startup.
+
+### Upgrading from SQLite
+
+Versions before the move to PostgreSQL kept everything in `/data/ansideck.db`. The backend will not start
+while that file exists and the new database is empty; it tells you to import it, once:
+
+```sh
+docker compose up -d postgres
+docker compose run --rm backend uv run python -m app.cli import-sqlite /data/ansideck.db --check
+docker compose run --rm backend uv run python -m app.cli import-sqlite /data/ansideck.db
+docker compose up -d
+```
+
+`--check` runs the whole import and then rolls it back, so you can see the row counts and any problems first.
+The import is all-or-nothing, only goes into an empty database, and keeps every id, so the playbook files and
+run logs in `/data` still match. The SQLite file is never changed; keep it as a backup until you are happy with
+the result. (In the production image, which has no `uv`, run `python -m app.cli import-sqlite ...`.)
 
 ## Using AnsiDeck
 
@@ -60,8 +81,12 @@ viewer, assigned per project) and read the **Audit** log.
   WebSocket upgrades (live run output needs them). If the browser's origin differs from the `Host` the backend
   sees, add it to `CORS_ORIGINS`.
 - AnsiDeck is not designed to be exposed directly to the public internet. See [SECURITY.md](SECURITY.md).
-- Back up the data volume, and keep `CREDENTIAL_ENCRYPTION_KEY` backed up separately: losing it makes stored
-  credentials and two-factor secrets unrecoverable, and leaking it exposes every stored key.
+- Back up both the database (for example
+  `docker compose exec -T postgres pg_dump -U ansideck -Fc ansideck > ansideck.dump`, restored with
+  `pg_restore`) and the `/data` volume, and keep `CREDENTIAL_ENCRYPTION_KEY` backed up separately: losing it
+  makes stored credentials and two-factor secrets unrecoverable, and leaking it exposes every stored key.
+- With `ENVIRONMENT=production` the app also refuses the default database password. Keep Postgres off the
+  network: the compose file only publishes it on `127.0.0.1` (for running the tests).
 - Give people the least role they need. Anyone who can run a playbook can run commands on the targets, and
   runs are **not sandboxed** from the application's data directory. Details are in [SECURITY.md](SECURITY.md).
 - Global admins cannot use single sign-on unless you set `SSO_ALLOW_ADMIN=true`, so password login stays your
