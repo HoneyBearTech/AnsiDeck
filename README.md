@@ -29,6 +29,7 @@ need Docker with Compose.
      `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
    - `POSTGRES_PASSWORD`: the database password. It is only read when the `postgres-data` volume is first
      created; changing it later also needs `ALTER USER` inside Postgres.
+   - `WORKER_TOKEN`: a long random string (at least 32 characters) the workers use to reach the backend.
 
 3. Start it: `docker compose up --build`.
 4. Open <http://localhost:5173> and sign in as `ADMIN_USERNAME` (default `admin`) with `ADMIN_PASSWORD`.
@@ -36,10 +37,27 @@ need Docker with Compose.
 
 The bundled `docker-compose.yml` is the development stack (hot reload). The database lives in the
 `postgres-data` volume; playbook files, run logs and Galaxy content live in the `backend-data` volume, mounted
-at `/data`. The `runtime` targets of `backend/Dockerfile` and `frontend/Dockerfile` build the production
-images: both run as a non-root user, the backend listens on port 8000 and needs `DATABASE_URL` pointing at a
-PostgreSQL 18 database, and the frontend serves the UI on port 8080 and proxies `/api` to a host named
-`backend`. The backend applies database migrations itself at startup.
+at `/data`. Playbooks run in the `worker` service, not in the backend: add workers with
+`docker compose up --scale worker=3`, and set how many runs each executes at once with `WORKER_SLOTS`.
+
+The `runtime` targets of `backend/Dockerfile` and `frontend/Dockerfile` build the production images: both run
+as a non-root user, and the frontend serves the UI on port 8080 and proxies `/api` to a host named `backend`.
+The backend image runs both halves of the backend:
+
+- **API** (the default command): port 8000, needs `DATABASE_URL` pointing at a PostgreSQL 18 database and
+  applies migrations itself at startup. Run exactly one API container. Workers talk to it on its internal
+  port 8001; set `INTERNAL_API_HOST=0.0.0.0` and `WORKER_TOKEN`, and never publish or proxy port 8001.
+- **Worker** (command `python -m app.worker`): needs only `ANSIDECK_API_URL` (for example
+  `http://backend:8001`), the same `WORKER_TOKEN`, optionally `WORKER_SLOTS`, and the API's `/data/galaxy`
+  mounted read-only at `GALAXY_DIR` (default `/data/galaxy`). Give it no database URL and no keys: it refuses
+  to start if it sees `DATABASE_URL`, `CREDENTIAL_ENCRYPTION_KEY` or `AUTH_SECRET_KEY`. Put workers on a
+  network that reaches the API but not the database, and run it as the container's PID 1 (no `--init` or
+  wrapper: it reaps processes itself, and hides its environment from playbooks only when nothing else holds
+  it). On `docker stop` a worker lets its runs finish for
+  `WORKER_DRAIN_SECONDS` (30 by default; give the container a longer stop timeout), then stops them.
+
+To upgrade: stop the old backend, start the new API (it migrates the database, and runs that were still
+queued or running are marked failed with a reason), then start the workers.
 
 ### Upgrading from SQLite
 
@@ -69,6 +87,11 @@ Content is grouped into projects, and a `Default` project exists on first start.
    host limit, check or diff mode, and extra variables as JSON. The output streams live, and finished runs stay
    in the run history.
 
+Runs wait in a queue until a worker is free. Runs against the same inventory go one at a time, in the order
+they were started. A run is stopped after 2 hours (`timeout_seconds` when starting it through the API, up to
+24 hours). If a worker disappears mid-run, its run is marked failed ("worker lost") about a minute later.
+While a Galaxy install is waiting or running, no new run starts.
+
 Other pages: **Vault** encrypts and decrypts values with Ansible Vault, **Galaxy** installs roles and
 collections, **Projects** separate content and access, and admins manage **Users** (roles: admin, operator,
 viewer, assigned per project) and read the **Audit** log.
@@ -87,8 +110,11 @@ viewer, assigned per project) and read the **Audit** log.
   makes stored credentials and two-factor secrets unrecoverable, and leaking it exposes every stored key.
 - With `ENVIRONMENT=production` the app also refuses the default database password. Keep Postgres off the
   network: the compose file only publishes it on `127.0.0.1` (for running the tests).
-- Give people the least role they need. Anyone who can run a playbook can run commands on the targets, and
-  runs are **not sandboxed** from the application's data directory. Details are in [SECURITY.md](SECURITY.md).
+- Give people the least role they need. Anyone who can run a playbook can run commands on the targets.
+  Runs execute in worker containers that have no database access and no keys, but they are **not sandboxed**
+  from each other yet: a playbook runs as the worker's own user. Details are in [SECURITY.md](SECURITY.md).
+- With `ENVIRONMENT=production` the backend and the workers refuse the default `WORKER_TOKEN`. Anyone holding
+  it can claim runs and receive their secrets, so treat it like `CREDENTIAL_ENCRYPTION_KEY`.
 - Global admins cannot use single sign-on unless you set `SSO_ALLOW_ADMIN=true`, so password login stays your
   break-glass.
 - Turn on two-factor login under **Account** (authenticator-app codes for password sign-ins; SSO and GitHub
@@ -120,7 +146,8 @@ RUN=$(curl -sf -X POST "$BASE/api/runs" \
   -d '{"playbook_id": 1, "inventory_id": 1, "credential_id": 1, "extra_vars": {"version": "1.4.2"}}' \
   | python3 -c 'import sys, json; print(json.load(sys.stdin)["id"])')
 
-# poll until it finishes: status is "success" or "failed", return_code is the ansible exit code
+# poll until it finishes: status goes queued -> running -> success, failed, cancelled or timed_out
+# (status_reason says why when it wasn't ansible's own result); return_code is the ansible exit code
 curl -sf "$BASE/api/runs/$RUN" -H "Authorization: Bearer $KEY"
 ```
 

@@ -25,6 +25,9 @@ NAMING_CONVENTION = {
 # Held for the duration of a schema upgrade, so several processes (API, workers) starting
 # at once apply migrations one at a time. Any fixed 64-bit number works.
 _MIGRATION_LOCK_KEY = 0x616E_7369_6465_636B  # "ansideck"
+# Claims take it shared, starting a galaxy install takes it exclusive: an install starts only
+# when no run is running, and no run is claimed while an install waits or runs.
+GALAXY_GATE_KEY = 0x616E_7369_6761_6C78  # "ansigalx"
 
 
 class Base(DeclarativeBase):

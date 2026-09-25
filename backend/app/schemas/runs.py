@@ -1,8 +1,9 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.models import DEFAULT_RUN_TIMEOUT_SECONDS, MAX_RUN_TIMEOUT_SECONDS
 from app.scrub import mask_secret_keys
 
 
@@ -17,6 +18,8 @@ class RunCreate(BaseModel):
     diff_mode: bool = False
     limit: str | None = None
     extra_vars: dict[str, Any] | None = None
+    # The run is stopped (status timed_out) once it has run this long.
+    timeout_seconds: int = Field(DEFAULT_RUN_TIMEOUT_SECONDS, ge=1, le=MAX_RUN_TIMEOUT_SECONDS)
 
     @field_validator("limit")
     @classmethod
@@ -43,6 +46,10 @@ class RunOut(BaseModel):
     limit: str | None
     extra_vars: dict[str, Any] | None
     status: str
+    status_reason: str | None
+    timeout_seconds: int
+    cancel_requested_at: datetime | None
+    cancel_requested_by: str | None
     triggered_by: str
     return_code: int | None
     queued_at: datetime

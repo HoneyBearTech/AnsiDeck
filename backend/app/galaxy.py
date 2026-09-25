@@ -2,7 +2,10 @@
 
 ansible-galaxy runs as a subprocess — never import ansible.cli here (it crashes
 with a blocking-IO error outside a real terminal). Installed content lives in a
-persistent shared dir and is exposed to runs via galaxy_env().
+persistent shared dir, which workers mount read-only; the API process is its only writer.
+
+Installs wait their turn like runs do: a new install is queued, no new run is claimed from then
+on, and the install starts once the running runs have finished (try_start_install()).
 """
 
 import json
@@ -12,15 +15,16 @@ import signal
 import subprocess
 import sys
 import threading
-from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import yaml
+from sqlalchemy import func, select, text, update
 
 from app.config import get_settings
-from app.db import get_sessionmaker
-from app.models import GalaxyInstall, RunStatus
+from app.db import GALAXY_GATE_KEY, get_sessionmaker
+from app.models import GalaxyInstall, Run, RunStatus
+from app.notify import notifier
 from app.storage import (
     galaxy_collections_dir,
     galaxy_install_log_path,
@@ -36,8 +40,6 @@ _FQCN = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
 _GALAXY_ROLE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]*\.[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 _LOCAL_ROLE_DIRNAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 _VERSION = re.compile(r"^[A-Za-z0-9._+~<>=!*][A-Za-z0-9._+~<>=!,*/ -]{0,199}$")
-
-_install_lock = threading.Lock()
 
 
 class RequirementsError(ValueError):
@@ -260,50 +262,102 @@ def _run_command(cmd: list[str], env: dict[str, str], log) -> int:
         timer.cancel()
 
 
+def _renew_install_lease(install_id: int, stop: threading.Event) -> None:
+    lease = get_settings().run_lease_seconds
+    while not stop.wait(lease / 4):
+        db = get_sessionmaker()()
+        try:
+            db.execute(
+                update(GalaxyInstall)
+                .where(
+                    GalaxyInstall.id == install_id,
+                    GalaxyInstall.status == RunStatus.RUNNING.value,
+                )
+                .values(lease_expires_at=func.now() + func.make_interval(0, 0, 0, 0, 0, 0, lease))
+            )
+            db.commit()
+        except Exception:  # noqa: BLE001 - a missed renewal only shortens the lease
+            db.rollback()
+        finally:
+            db.close()
+
+
 def run_install(install_id: int) -> None:
+    """Runs an install that try_start_install() has already marked running."""
     db = get_sessionmaker()()
     install = db.get(GalaxyInstall, install_id)
     if install is None:
         db.close()
         return
 
+    stop_renewing = threading.Event()
+    threading.Thread(
+        target=_renew_install_lease, args=(install_id, stop_renewing), daemon=True
+    ).start()
     try:
-        with _install_lock:
-            install.status = RunStatus.RUNNING.value
-            install.started_at = datetime.now(UTC)
-            db.commit()
-
-            return_code = 0
-            with galaxy_install_log_path(install_id).open("w", encoding="utf-8") as log:
+        return_code = 0
+        with galaxy_install_log_path(install_id).open("w", encoding="utf-8") as log:
+            try:
+                requirements = validate_requirements(install.requirements_snapshot)
+                scratch = galaxy_install_log_path(install_id).with_suffix(".requirements.yml")
+                scratch.write_text(install.requirements_snapshot)
                 try:
-                    requirements = validate_requirements(install.requirements_snapshot)
-                    scratch = galaxy_install_log_path(install_id).with_suffix(".requirements.yml")
-                    scratch.write_text(install.requirements_snapshot)
-                    try:
-                        env = _install_env()
-                        for cmd in _install_commands(requirements, scratch, install.upgrade):
-                            rc = _run_command(cmd, env, log)
-                            if rc != 0 and return_code == 0:
-                                return_code = rc
-                    finally:
-                        scratch.unlink(missing_ok=True)
-                except Exception as exc:  # noqa: BLE001 - surface any failure in the log
-                    log.write(f"\n[install error: {exc}]\n")
-                    return_code = return_code or 1
+                    env = _install_env()
+                    for cmd in _install_commands(requirements, scratch, install.upgrade):
+                        rc = _run_command(cmd, env, log)
+                        if rc != 0 and return_code == 0:
+                            return_code = rc
+                finally:
+                    scratch.unlink(missing_ok=True)
+            except Exception as exc:  # noqa: BLE001 - surface any failure in the log
+                log.write(f"\n[install error: {exc}]\n")
+                return_code = return_code or 1
 
-            install.return_code = return_code
-            install.status = RunStatus.SUCCESS.value if return_code == 0 else RunStatus.FAILED.value
+        install.return_code = return_code
+        install.status = RunStatus.SUCCESS.value if return_code == 0 else RunStatus.FAILED.value
     except Exception:
         install.status = RunStatus.FAILED.value
         raise
     finally:
-        install.finished_at = datetime.now(UTC)
+        stop_renewing.set()
+        install.finished_at = func.now()
+        install.lease_expires_at = None
         db.commit()
         db.close()
+        notifier.notify("queue")  # runs may be claimed again
+        try_start_install()  # the next queued install, if any
 
 
-def start_install(install_id: int) -> None:
+def try_start_install() -> int | None:
+    """Starts the oldest queued install if none is running and no run is running; returns its
+    id. Called when an install is queued, after each run ends, and by the reaper."""
+    db = get_sessionmaker()()
+    try:
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": GALAXY_GATE_KEY})
+        running = GalaxyInstall.status == RunStatus.RUNNING.value
+        if db.scalar(select(GalaxyInstall.id).where(running).limit(1)) is not None:
+            return None
+        install = db.scalars(
+            select(GalaxyInstall)
+            .where(GalaxyInstall.status == RunStatus.QUEUED.value)
+            .order_by(GalaxyInstall.id)
+            .limit(1)
+        ).first()
+        if install is None:
+            return None
+        if db.scalar(select(Run.id).where(Run.status == RunStatus.RUNNING.value).limit(1)):
+            return None  # waits for the running runs; no new ones are claimed meanwhile
+        lease = get_settings().run_lease_seconds
+        install.status = RunStatus.RUNNING.value
+        install.started_at = func.now()
+        install.lease_expires_at = func.now() + func.make_interval(0, 0, 0, 0, 0, 0, lease)
+        db.commit()
+        install_id = install.id
+    finally:
+        db.rollback()
+        db.close()
     threading.Thread(target=run_install, args=(install_id,), daemon=True).start()
+    return install_id
 
 
 def list_installed_collections() -> list[dict[str, str | None]]:

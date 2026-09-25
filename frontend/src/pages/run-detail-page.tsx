@@ -11,6 +11,8 @@ const STATUS_VARIANT: Record<Run["status"], BadgeProps["variant"]> = {
   failed: "failed",
   running: "changed",
   queued: "skipped",
+  cancelled: "skipped",
+  timed_out: "failed",
 };
 
 // From ansible's PLAY RECAP; zero counts are left out.
@@ -20,6 +22,17 @@ const HOST_OUTCOMES: { key: keyof Run; label: string; variant: BadgeProps["varia
   { key: "hosts_failed", label: "failed", variant: "failed" },
   { key: "hosts_unreachable", label: "unreachable", variant: "failed" },
 ];
+
+// What the badge alone doesn't say: that the run waits for a worker, is being cancelled, or why it
+// ended the way it did (worker lost, timed out, ...).
+function StatusNote({ run }: { run: Run }) {
+  let note: string | null = run.status_reason;
+  if (run.status === "queued") note = "Waiting for a worker…";
+  else if (run.status === "running" && run.cancel_requested_at) note = "Cancelling…";
+  if (!note) return null;
+  const bad = run.status === "failed" || run.status === "timed_out";
+  return <p className={bad ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>{note}</p>;
+}
 
 function seconds(from: string | null, to: string | null): string | null {
   if (!from || !to) return null;
@@ -98,8 +111,9 @@ export function RunDetailPage() {
             {run.diff_mode && " · diff"}
             {run.limit && ` · limit: ${run.limit}`}
           </p>
+          <StatusNote run={run} />
         </div>
-        <Badge variant={STATUS_VARIANT[run.status]}>{run.status}</Badge>
+        <Badge variant={STATUS_VARIANT[run.status]}>{run.status.replace("_", " ")}</Badge>
       </div>
 
       <RunSummary run={run} />
@@ -114,8 +128,7 @@ export function RunDetailPage() {
               {JSON.stringify(run.extra_vars, null, 2)}
             </pre>
             <p className="mt-2 text-xs text-muted-foreground">
-              Values whose names look secret (password, token, key, …) are masked here and in
-              the run output.
+              Values whose names look secret (password, token, key, …) are masked here and in the run output.
             </p>
           </CardContent>
         </Card>

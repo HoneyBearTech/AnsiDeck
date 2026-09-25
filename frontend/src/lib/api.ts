@@ -209,6 +209,7 @@ export interface VaultEncryptResult {
 export interface GalaxyInstall {
   id: number;
   status: "queued" | "running" | "success" | "failed";
+  status_reason: string | null;
   triggered_by: string;
   upgrade: boolean;
   return_code: number | null;
@@ -245,7 +246,12 @@ export interface Run {
   diff_mode: boolean;
   limit: string | null;
   extra_vars: Record<string, unknown> | null;
-  status: "queued" | "running" | "success" | "failed";
+  status: "queued" | "running" | "success" | "failed" | "cancelled" | "timed_out";
+  // Why it ended the way it did when that wasn't ansible's own result (worker lost, timed out, ...).
+  status_reason: string | null;
+  timeout_seconds: number;
+  cancel_requested_at: string | null;
+  cancel_requested_by: string | null;
   triggered_by: string;
   return_code: number | null;
   queued_at: string;

@@ -33,6 +33,8 @@ WORKDIR /app
 COPY --from=build /app /app
 ENV PATH="/app/.venv/bin:$PATH"
 USER appuser
-EXPOSE 8000
+# 8000: the API. 8001: the internal worker API (workers only; never publish it).
+# The same image runs a worker with the command: python -m app.worker
+EXPOSE 8000 8001
 HEALTHCHECK --interval=30s --timeout=3s CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
 CMD ["fastapi", "run", "app/main.py", "--host", "0.0.0.0", "--port", "8000"]
