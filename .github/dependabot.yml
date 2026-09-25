@@ -35,3 +35,8 @@ updates:
     assignees: ["HoneyBearTech"]
     schedule:
       interval: "weekly"
+    groups:
+      # init, autobuild, analyze and upload-sarif must share one version: analyze refuses
+      # a configuration written by a different init.
+      codeql-action:
+        patterns: ["github/codeql-action*"]
