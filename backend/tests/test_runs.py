@@ -4,9 +4,11 @@ import tempfile
 import textwrap
 import time
 
+import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 REDACTED_MARKER = "[REDACTED]"
 
@@ -416,6 +418,44 @@ def test_run_limit_narrows_target(client: TestClient, tmp_path) -> None:
     assert run["status"] == "success"
     assert (tmp_path / "marker-a.txt").exists()
     assert not (tmp_path / "marker-b.txt").exists()
+
+
+def test_live_run_websocket_does_not_hold_a_db_transaction(client: TestClient, tmp_path) -> None:
+    from sqlalchemy import text
+
+    from app.db import get_engine
+    from app.main import app
+
+    # A context-managed client runs the lifespan, so live events reach this portal's loop.
+    with TestClient(app) as live:
+        _login(live)
+        playbook_id = _create_playbook(live, PAUSE_PLAYBOOK, name="pause-ws.yml")
+        inventory_id, _ = _create_inventory_with_host(live, str(tmp_path / "marker.txt"))
+        run = live.post(
+            "/api/runs",
+            json={
+                "playbook_id": playbook_id,
+                "inventory_id": inventory_id,
+                "credential_id": _create_credential(live),
+            },
+        )
+        assert run.status_code == 201
+        run_id = run.json()["id"]
+
+        with live.websocket_connect(f"/api/runs/{run_id}/ws") as ws:
+            assert ws.receive_text()  # streaming live, mid-pause
+            with get_engine().connect() as conn:
+                idle = conn.execute(
+                    text(
+                        "SELECT query FROM pg_stat_activity WHERE datname = current_database() "
+                        "AND state LIKE 'idle in transaction%' AND pid <> pg_backend_pid()"
+                    )
+                ).scalars()
+                assert list(idle) == []
+            with pytest.raises(WebSocketDisconnect):  # drain until the run ends
+                while True:
+                    ws.receive_text()
+        _wait_for_completion(live, run_id)
 
 
 def test_concurrency_guard_blocks_second_run_same_inventory(client: TestClient, tmp_path) -> None:

@@ -24,7 +24,8 @@ docker compose up --build
 Or run the pieces on their own:
 
 ```sh
-# backend (Python, FastAPI, managed with uv)
+# backend (Python, FastAPI, managed with uv); it needs the compose Postgres, on 127.0.0.1:5433
+docker compose up -d postgres
 cd backend
 uv sync --all-groups
 uv run fastapi dev app/main.py
@@ -37,7 +38,13 @@ npm run dev
 
 ## Before you open a pull request
 
-Run the same checks CI runs and make sure they pass:
+Run the same checks CI runs and make sure they pass. The backend tests need Postgres:
+`docker compose up -d postgres` is enough. They create and drop their own `ansideck_test` database there; set
+`TEST_DATABASE_URL` to use another server (its database name must end in `_test`).
+
+Schema changes go through Alembic: edit `app/models.py`, then generate a migration with
+`uv run alembic revision --autogenerate -m "..."`, review it, and commit it with the model change. A test fails
+if the models and the migrations disagree.
 
 ```sh
 # backend/

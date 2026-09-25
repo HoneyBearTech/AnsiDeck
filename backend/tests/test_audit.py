@@ -1,13 +1,11 @@
 import json
-import sqlite3
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
 from app import audit
 from app.config import get_settings
-from app.crypto import hash_password
-from app.db import get_engine, get_sessionmaker, init_db
+from app.db import get_sessionmaker
 from app.models import AuditEvent
 from tests.conftest import make_user_client
 from tests.test_credentials import _generate_key_pem
@@ -268,47 +266,6 @@ def test_audit_failure_never_breaks_the_request(client: TestClient, monkeypatch)
     assert response.status_code == 200
 
 
-def test_upgrade_from_pre_rbac_database(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    get_settings.cache_clear()
-    get_engine.cache_clear()
-    get_sessionmaker.cache_clear()
-    try:
-        con = sqlite3.connect(tmp_path / "ansideck.db")
-        con.executescript(
-            "CREATE TABLE users (id INTEGER PRIMARY KEY, username VARCHAR(150) UNIQUE,"
-            " password_hash VARCHAR(255), created_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
-        )
-        con.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-            ("legacy", hash_password("legacy-password-123")),
-        )
-        con.commit()
-        con.close()
-
-        init_db()
-        init_db()  # idempotent on a second boot
-
-        con = sqlite3.connect(tmp_path / "ansideck.db")
-        row = con.execute(
-            "SELECT username, role, is_active, session_version, created_by FROM users"
-        ).fetchall()
-        con.close()
-        assert row == [("legacy", "admin", 1, 0, None)]  # the sole legacy user stays an admin
-
-        upgraded = TestClient(__import__("app.main", fromlist=["app"]).app)
-        response = upgraded.post(
-            "/api/auth/login", json={"username": "legacy", "password": "legacy-password-123"}
-        )
-        assert response.status_code == 200
-        assert response.json()["role"] == "admin"
-        assert upgraded.get("/api/users").status_code == 200
-    finally:
-        get_engine.cache_clear()
-        get_sessionmaker.cache_clear()
-        get_settings.cache_clear()
-
-
 def test_pre_rbac_session_cookies_are_rejected(client: TestClient) -> None:
     from itsdangerous import URLSafeTimedSerializer
 
@@ -328,11 +285,17 @@ def test_production_refuses_insecure_defaults(monkeypatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.delenv("AUTH_SECRET_KEY", raising=False)
     monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
-    with pytest.raises(ValidationError, match="AUTH_SECRET_KEY, ADMIN_PASSWORD"):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with pytest.raises(
+        ValidationError, match="AUTH_SECRET_KEY, ADMIN_PASSWORD, the database password"
+    ):
         Settings(_env_file=None)
 
     monkeypatch.setenv("AUTH_SECRET_KEY", "a-real-secret-value")
     monkeypatch.setenv("ADMIN_PASSWORD", "a-real-admin-password")
+    with pytest.raises(ValidationError, match="database password"):
+        Settings(_env_file=None)
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://ansideck:s3cret-db@db/ansideck")
     assert Settings(_env_file=None).environment == "production"
 
     monkeypatch.setenv("ENVIRONMENT", "development")

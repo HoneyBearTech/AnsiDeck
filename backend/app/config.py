@@ -2,9 +2,11 @@ from functools import lru_cache
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 _DEFAULT_AUTH_SECRET_KEY = "change-me-dev-only-insecure-secret"
 _DEFAULT_ADMIN_PASSWORD = "admin"
+_DEFAULT_DB_PASSWORD = "ansideck"
 
 
 class Settings(BaseSettings):
@@ -22,6 +24,12 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
 
     data_dir: str = "/data"
+
+    # Postgres (psycopg 3). The default matches the dev compose `postgres` service as seen
+    # from the host (its port is published on 127.0.0.1:5433); compose passes its own URL.
+    database_url: str = (
+        f"postgresql+psycopg://ansideck:{_DEFAULT_DB_PASSWORD}@localhost:5433/ansideck"
+    )
 
     # PUBLIC_URL is the browser-visible base URL of this app; the SSO redirect URIs are
     # built from it, never from the request's Host.
@@ -134,6 +142,8 @@ class Settings(BaseSettings):
                 insecure.append("AUTH_SECRET_KEY")
             if self.admin_password == _DEFAULT_ADMIN_PASSWORD:
                 insecure.append("ADMIN_PASSWORD")
+            if make_url(self.database_url).password == _DEFAULT_DB_PASSWORD:
+                insecure.append("the database password (POSTGRES_PASSWORD / DATABASE_URL)")
             if insecure:
                 raise ValueError(
                     f"ENVIRONMENT=production but {', '.join(insecure)} still has its insecure "

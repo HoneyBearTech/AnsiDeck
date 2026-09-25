@@ -5,9 +5,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from psycopg.errors import NumericValueOutOfRange
+from sqlalchemy.exc import DataError
 
 from app import audit
-from app.bootstrap import seed_admin_user
+from app.bootstrap import refuse_to_start_over_legacy_data, seed_fresh_install
 from app.config import get_settings
 from app.db import get_sessionmaker, init_db
 from app.hardening import OriginCheckMiddleware, disable_process_inspection
@@ -41,7 +43,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     set_event_loop(asyncio.get_running_loop())
     session = get_sessionmaker()()
     try:
-        seed_admin_user(session)
+        refuse_to_start_over_legacy_data(session)
+        seed_fresh_install(session)
         audit.prune(session, settings.audit_retention_days)
     finally:
         session.close()
@@ -51,11 +54,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(title="AnsiDeck API", version="0.1.0", lifespan=lifespan)
 
 
-@app.exception_handler(OverflowError)
-async def _integer_out_of_range(request: Request, exc: OverflowError) -> JSONResponse:
-    """An id beyond SQLite's 64-bit INTEGER range cannot match any row, so answer it like any
-    other missing resource instead of a 500. Any other OverflowError is a real bug: re-raise."""
-    if "SQLite INTEGER" not in str(exc):
+@app.exception_handler(DataError)
+async def _integer_out_of_range(request: Request, exc: DataError) -> JSONResponse:
+    """An id beyond Postgres' INTEGER range cannot match any row, so answer it like any other
+    missing resource instead of a 500. Any other DataError is a real bug: re-raise."""
+    if not isinstance(exc.orig, NumericValueOutOfRange):
         raise exc
     return JSONResponse({"detail": "Not found"}, status_code=404)
 

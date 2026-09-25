@@ -214,6 +214,20 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
             )
         )
 
+        flags = []
+        if run.become:
+            flags.append("--become")
+        if run.check_mode:
+            flags.append("--check")
+        if run.diff_mode:
+            flags.append("--diff")
+        if vault_password_plain is not None:
+            flags.append("--ask-vault-pass")
+        limit, extravars = run.limit, run.extra_vars or {}
+        # End the read transaction before the playbook runs: an "idle in transaction"
+        # connection for the whole run would pin its locks (blocking migrations/DDL).
+        db.commit()
+
         pdd = private_data_dir or tempfile.mkdtemp(prefix=f"ansideck-run-{run_id}-")
         try:
             project_dir = Path(pdd) / "project"
@@ -233,16 +247,6 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
                     log_file.flush()
                     stream.publish(event)
 
-                flags = []
-                if run.become:
-                    flags.append("--become")
-                if run.check_mode:
-                    flags.append("--check")
-                if run.diff_mode:
-                    flags.append("--diff")
-                if vault_password_plain is not None:
-                    flags.append("--ask-vault-pass")
-
                 status, return_code = _run_in_worker(
                     {
                         "private_data_dir": pdd,
@@ -250,8 +254,8 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
                         "inventory": str(inventory_path),
                         "ssh_key": private_key_pem,
                         "cmdline": " ".join(flags) or None,
-                        "limit": run.limit,
-                        "extravars": run.extra_vars or {},
+                        "limit": limit,
+                        "extravars": extravars,
                         "passwords": (
                             {r"Vault password:\s*?$": vault_password_plain}
                             if vault_password_plain is not None

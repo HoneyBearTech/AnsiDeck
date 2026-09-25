@@ -14,6 +14,25 @@ jobs:
     runs-on: ubuntu-latest
     # Normally ~5 min; cap a hang well below GitHub's 6-hour default.
     timeout-minutes: 20
+    # The tests need a real Postgres (same pinned image as docker-compose.yml; bump both
+    # together). The fixtures create and drop their own ansideck_test database in it.
+    services:
+      postgres:
+        image: postgres:18-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+        env:
+          POSTGRES_USER: ansideck
+          POSTGRES_PASSWORD: ansideck
+          POSTGRES_DB: ansideck
+          POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ansideck -d ansideck"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://ansideck:ansideck@localhost:5432/ansideck_test
     defaults:
       run:
         working-directory: backend

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.api_keys import aware, hash_token, key_status, new_token
+from app.api_keys import hash_token, key_status, new_token
 from app.db import get_db
 from app.hardening import client_ip
 from app.models import ApiKey, User
@@ -27,11 +27,11 @@ def _out(key: ApiKey, **extra) -> dict:
         "preset": key.preset,
         "prefix": key.prefix,
         "created_by": key.created_by,
-        "created_at": aware(key.created_at),
-        "expires_at": aware(key.expires_at),
-        "last_used_at": aware(key.last_used_at),
+        "created_at": key.created_at,
+        "expires_at": key.expires_at,
+        "last_used_at": key.last_used_at,
         "last_used_ip": key.last_used_ip,
-        "revoked_at": aware(key.revoked_at),
+        "revoked_at": key.revoked_at,
         "status": key_status(key),
         **extra,
     }
@@ -98,7 +98,7 @@ def create_api_key(
         detail={
             "preset": key.preset,
             "prefix": key.prefix,
-            "expires_at": aware(key.expires_at).isoformat(),
+            "expires_at": key.expires_at.isoformat(),
         },
     )
     return _out(key, token=token)
