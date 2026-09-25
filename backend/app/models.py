@@ -254,9 +254,25 @@ class Run(Base):
     triggered_by: Mapped[str] = mapped_column(String(150))
     return_code: Mapped[int | None] = mapped_column(Integer, default=None)
 
+    # Lifecycle: queued (entered the queue; a retry re-queues) -> claimed (an executor
+    # picked it up) -> started (ansible launched) -> finished. created_at never changes.
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Which executor ran it ("host:pid") and which try this is.
+    worker_id: Mapped[str | None] = mapped_column(String(255), default=None)
+    attempt: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+
+    # Hosts per outcome, from ansible's final PLAY RECAP; NULL if the playbook never got
+    # that far. A host counts as failed/unreachable/changed if any of its tasks was;
+    # ok = hosts with no failed or unreachable task.
+    hosts_total: Mapped[int | None] = mapped_column(Integer, default=None)
+    hosts_ok: Mapped[int | None] = mapped_column(Integer, default=None)
+    hosts_changed: Mapped[int | None] = mapped_column(Integer, default=None)
+    hosts_failed: Mapped[int | None] = mapped_column(Integer, default=None)
+    hosts_unreachable: Mapped[int | None] = mapped_column(Integer, default=None)
 
 
 class GalaxyInstall(Base):
@@ -282,6 +298,9 @@ class AuditEvent(Base):
     trail survives deleting users or resources. Never store secrets or bodies."""
 
     __tablename__ = "audit_events"
+    # (action, created_at) serves the action-prefix filter and per-action time series;
+    # created_at alone serves retention and time-range queries.
+    __table_args__ = (Index("ix_audit_events_action_created_at", "action", "created_at"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -290,7 +309,7 @@ class AuditEvent(Base):
     actor_user_id: Mapped[int | None] = mapped_column(Integer, default=None)
     actor_username: Mapped[str | None] = mapped_column(String(150), default=None)
     project_id: Mapped[int | None] = mapped_column(Integer, default=None)
-    action: Mapped[str] = mapped_column(String(64), index=True)
+    action: Mapped[str] = mapped_column(String(64))
     target_type: Mapped[str | None] = mapped_column(String(50), default=None)
     target_id: Mapped[int | None] = mapped_column(Integer, default=None)
     target_name: Mapped[str | None] = mapped_column(String(255), default=None)

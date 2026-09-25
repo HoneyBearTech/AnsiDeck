@@ -45,9 +45,18 @@ class RunOut(BaseModel):
     status: str
     triggered_by: str
     return_code: int | None
+    queued_at: datetime
+    claimed_at: datetime | None
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime
+    worker_id: str | None
+    attempt: int
+    hosts_total: int | None
+    hosts_ok: int | None
+    hosts_changed: int | None
+    hosts_failed: int | None
+    hosts_unreachable: int | None
 
     @field_validator("extra_vars")
     @classmethod

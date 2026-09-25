@@ -1,5 +1,6 @@
 import json
 import re
+import threading
 import types
 
 import pyotp
@@ -337,3 +338,49 @@ def test_secrets_and_codes_never_reach_the_audit_log(client: TestClient, clock) 
     dump = json.dumps(_audit_rows()).lower()
     for planted in [secret, *codes, codes[1].replace("-", ""), "plantedwrongcode"]:
         assert planted.lower() not in dump
+
+
+# --- concurrency ------------------------------------------------------------------------
+
+
+def _race_second_factor(clock, *, recovery: bool) -> int:
+    """This test plays the first of two concurrent sign-ins: it takes the user row lock,
+    uses the code and holds its transaction open while a real second sign-in with the same
+    code runs. Returns the second one's status once the first commits."""
+    admin = TestClient(app)
+    assert _login(admin).status_code == 200
+    secret, recovery_codes = _enable(admin, clock)
+    code = recovery_codes[0] if recovery else _code(secret, clock)
+
+    second = TestClient(app)
+    assert _login(second).json() == {"mfa_required": True}  # password step, before the lock
+
+    db = get_sessionmaker()()
+    try:
+        user = db.query(User).filter(User.username == "admin").with_for_update().one()
+        used = totp.use_second_factor(
+            user, code=None if recovery else code, recovery_code=code if recovery else None
+        )
+        assert used is not None
+        db.flush()  # the first sign-in has used the code but not committed yet
+
+        result: dict[str, int] = {}
+        body = {"recovery_code": code} if recovery else {"code": code}
+        racer = threading.Thread(
+            target=lambda: result.update(status=_mfa(second, **body).status_code)
+        )
+        racer.start()
+        racer.join(0.5)  # it has to wait for the row lock
+        db.commit()
+    finally:
+        db.close()
+    racer.join(10)
+    return result["status"]
+
+
+def test_two_sign_ins_racing_with_the_same_code_let_only_one_in(client, clock) -> None:
+    assert _race_second_factor(clock, recovery=False) == 401
+
+
+def test_two_sign_ins_racing_with_the_same_recovery_code_let_only_one_in(client, clock) -> None:
+    assert _race_second_factor(clock, recovery=True) == 401

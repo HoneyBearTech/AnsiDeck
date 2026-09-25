@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
-from app import cli
+from app import cli, sqlite_import
 from app.bootstrap import PendingSqliteImport, refuse_to_start_over_legacy_data, seed_fresh_install
 from app.config import get_settings
 from app.crypto import hash_password
@@ -119,6 +119,10 @@ def test_import_backfills_the_default_project_and_copies_everything(empty) -> No
     assert _all(AuditEvent)[0].project_id is None
     boss = next(u for u in _all(User) if u.username == "boss")
     assert boss.created_at == datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)  # stored UTC, kept
+    # The later migrations ran on the imported rows (0002's backfill).
+    (run,) = _all(Run)
+    assert (run.queued_at, run.claimed_at) == (run.created_at, run.started_at)
+    assert run.attempt == 1 and run.worker_id is None and run.hosts_total is None
 
 
 def test_imported_users_keep_working_access_and_ids_continue(empty) -> None:
@@ -258,6 +262,7 @@ def test_startup_refuses_an_empty_database_next_to_old_data(empty) -> None:
         with pytest.raises(PendingSqliteImport), TestClient(app):  # the real lifespan
             pass
         assert _all(User) == []  # no admin was seeded over it
+        db.rollback()  # like the refused app, hold no transaction during the import
         import_sqlite(empty / "ansideck.db", log=lambda _: None)
         refuse_to_start_over_legacy_data(db)  # data is in: the old file no longer matters
     finally:
@@ -271,3 +276,28 @@ def test_a_deleted_default_project_is_not_recreated(client: TestClient) -> None:
     seed_fresh_install(db)  # every later startup
     db.close()
     assert _all(Project) == []
+
+
+def test_it_gives_up_while_something_else_holds_the_tables(empty, monkeypatch) -> None:
+    monkeypatch.setattr(sqlite_import, "LOCK_TIMEOUT", "500ms")
+    legacy = _legacy_db(empty)
+    busy = get_sessionmaker()()
+    try:
+        busy.execute(select(User)).all()  # an open transaction, like a running backend's
+        with pytest.raises(ImportFailed, match="Stop the backend"):
+            import_sqlite(legacy, log=lambda _: None)
+    finally:
+        busy.close()
+    assert import_sqlite(legacy, log=lambda _: None)["users"] == 3  # nothing was left behind
+
+
+def test_the_schema_rebuild_leaves_other_applications_tables_alone(empty) -> None:
+    with get_engine().begin() as conn:
+        conn.execute(text("CREATE TABLE someone_elses (id integer)"))  # empty, not ours
+    try:
+        import_sqlite(_legacy_db(empty), log=lambda _: None)
+        with get_engine().connect() as conn:
+            assert conn.execute(text("SELECT to_regclass('someone_elses')")).scalar()
+    finally:
+        with get_engine().begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS someone_elses"))

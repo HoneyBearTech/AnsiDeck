@@ -13,6 +13,46 @@ const STATUS_VARIANT: Record<Run["status"], BadgeProps["variant"]> = {
   queued: "skipped",
 };
 
+// From ansible's PLAY RECAP; zero counts are left out.
+const HOST_OUTCOMES: { key: keyof Run; label: string; variant: BadgeProps["variant"] }[] = [
+  { key: "hosts_ok", label: "ok", variant: "ok" },
+  { key: "hosts_changed", label: "changed", variant: "changed" },
+  { key: "hosts_failed", label: "failed", variant: "failed" },
+  { key: "hosts_unreachable", label: "unreachable", variant: "failed" },
+];
+
+function seconds(from: string | null, to: string | null): string | null {
+  if (!from || !to) return null;
+  const s = (new Date(to).getTime() - new Date(from).getTime()) / 1000;
+  return s < 60 ? `${s.toFixed(1)} s` : `${Math.floor(s / 60)} min ${Math.floor(s % 60)} s`;
+}
+
+function RunSummary({ run }: { run: Run }) {
+  const waited = seconds(run.queued_at, run.started_at);
+  const ran = seconds(run.started_at, run.finished_at);
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
+      {run.hosts_total !== null && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span>
+            {run.hosts_total} {run.hosts_total === 1 ? "host" : "hosts"}
+          </span>
+          {HOST_OUTCOMES.map(({ key, label, variant }) =>
+            run[key] ? (
+              <Badge key={key} variant={variant}>
+                {run[key] as number} {label}
+              </Badge>
+            ) : null,
+          )}
+        </div>
+      )}
+      {waited && <span>waited {waited}</span>}
+      {ran && <span>ran {ran}</span>}
+      {run.return_code !== null && <span>exit code {run.return_code}</span>}
+    </div>
+  );
+}
+
 export function RunDetailPage() {
   const params = useParams<{ id: string }>();
   const runId = Number(params.id);
@@ -61,6 +101,8 @@ export function RunDetailPage() {
         </div>
         <Badge variant={STATUS_VARIANT[run.status]}>{run.status}</Badge>
       </div>
+
+      <RunSummary run={run} />
 
       {run.extra_vars && Object.keys(run.extra_vars).length > 0 && (
         <Card>

@@ -5,7 +5,7 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import MetaData, create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
@@ -56,10 +56,16 @@ def alembic_config() -> Config:
     return Config(str(ALEMBIC_INI))
 
 
+def upgrade_schema(connection: Connection, revision: str = "head") -> None:
+    """Applies migrations up to `revision` inside the connection's open transaction, under
+    the migration lock (held until that transaction ends)."""
+    connection.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _MIGRATION_LOCK_KEY})
+    config = alembic_config()
+    config.attributes["connection"] = connection
+    command.upgrade(config, revision)
+
+
 def init_db() -> None:
     """Brings the schema to the latest Alembic revision (a no-op when it already is)."""
     with get_engine().begin() as connection:
-        connection.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _MIGRATION_LOCK_KEY})
-        config = alembic_config()
-        config.attributes["connection"] = connection
-        command.upgrade(config, "head")
+        upgrade_schema(connection)

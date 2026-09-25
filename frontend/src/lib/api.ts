@@ -248,9 +248,18 @@ export interface Run {
   status: "queued" | "running" | "success" | "failed";
   triggered_by: string;
   return_code: number | null;
+  queued_at: string;
+  claimed_at: string | null;
   started_at: string | null;
   finished_at: string | null;
   created_at: string;
+  worker_id: string | null;
+  attempt: number;
+  hosts_total: number | null;
+  hosts_ok: number | null;
+  hosts_changed: number | null;
+  hosts_failed: number | null;
+  hosts_unreachable: number | null;
 }
 
 export const api = {

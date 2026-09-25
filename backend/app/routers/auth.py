@@ -130,6 +130,10 @@ def _check_second_factor(
             "Too many wrong codes. Try again in 15 minutes.",
             headers={"Retry-After": "900"},
         )
+    # Lock the row and re-read it, so two requests racing with the same fresh code (or
+    # recovery code) are serialised and the second sees the first one's use of it. The
+    # lock ends with this request's commit (success) or the failure audit's commit.
+    db.refresh(user, with_for_update=True)
     method = totp.use_second_factor(user, code=code, recovery_code=recovery_code)
     if method is None:
         _record_login_failure(ip, user.username)
