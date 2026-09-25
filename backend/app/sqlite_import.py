@@ -5,6 +5,10 @@ brought to the last SQLite schema with the migrations AnsiDeck used before Alemb
 here verbatim, their only remaining use), and then every table is copied into an *empty*
 Postgres database in one transaction, so an import either fully succeeds or leaves
 Postgres untouched.
+
+The copy lands in the schema SQLite last had (Alembic revision SQLITE_ERA_REVISION), and
+the later migrations then run on the imported rows in the same transaction, so their
+backfills apply exactly as they did on installs that were already on Postgres.
 """
 
 import sqlite3
@@ -13,11 +17,15 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+from psycopg.errors import LockNotAvailable
 from sqlalchemy import (
     JSON,
+    Column,
+    Connection,
     DateTime,
     Engine,
     Integer,
+    MetaData,
     String,
     create_engine,
     func,
@@ -26,10 +34,17 @@ from sqlalchemy import (
     select,
     text,
 )
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.sql.schema import Table
 
 import app.models  # noqa: F401  (registers every table on Base.metadata)
-from app.db import DEFAULT_PROJECT_NAME, Base, get_engine, init_db
+from app.db import DEFAULT_PROJECT_NAME, Base, get_engine, upgrade_schema
+
+# The Alembic revision whose schema matches the last SQLite one (the Postgres baseline).
+SQLITE_ERA_REVISION = "0001"
+# The import rebuilds the (empty) schema, which waits for every other open transaction on
+# those tables; with the backend still running that would never end, so give up instead.
+LOCK_TIMEOUT = "10s"
 
 
 class ImportFailed(Exception):
@@ -165,7 +180,9 @@ def _fill_missing(table: Table, row: dict, now: datetime) -> list[str]:
     for column in table.columns:
         if row.get(column.name) is not None or column.nullable or column.primary_key:
             continue
-        default = column.default
+        # Reflected tables carry no Python-side defaults; the model's still apply.
+        model_column = _model_column(table.name, column.name)
+        default = model_column.default if model_column is not None else None
         if isinstance(column.type, DateTime):
             row[column.name] = row.get("created_at") or now
         elif default is not None and default.is_scalar:
@@ -204,32 +221,63 @@ def _problems(table: Table, row: dict, known_ids: dict[str, set], fixes: list[st
     return found
 
 
+def _model_column(table: str, column: str) -> Column | None:
+    model = Base.metadata.tables.get(table)
+    return model.c.get(column) if model is not None else None
+
+
 def _read_rows(source: Engine, table: Table) -> list[dict]:
+    """The source rows for a target table. The legacy upgrade gave the SQLite copy every
+    column of the SQLite-era schema; read them with the model's types, which know how
+    SQLite stored JSON, booleans and timestamps."""
+    columns = []
+    for column in table.columns:
+        model_column = _model_column(table.name, column.name)
+        typed_by = model_column if model_column is not None else column
+        columns.append(Column(column.name, typed_by.type))
     try:
         with source.connect() as conn:
-            return [dict(r._mapping) for r in conn.execute(select(table))]
+            query = select(Table(table.name, MetaData(), *columns))
+            return [dict(r._mapping) for r in conn.execute(query)]
     except ValueError as exc:  # e.g. a JSON column holding text that isn't JSON
         raise ImportFailed(f"{table.name}: a value can't be read ({exc})") from exc
+
+
+def _reset_to_sqlite_era_schema(dst: Connection) -> list[Table]:
+    """Refuses a target that holds data; otherwise rebuilds it at SQLITE_ERA_REVISION
+    (it is empty, so nothing is lost) and returns its tables, parents first."""
+    # Only AnsiDeck's own tables: the database may be shared with something else.
+    ours = {*Base.metadata.tables, "alembic_version"}
+    existing = MetaData()
+    existing.reflect(dst, only=lambda name, _: name in ours)
+    non_empty = [
+        t.name
+        for t in existing.sorted_tables
+        if t.name != "alembic_version" and dst.execute(select(func.count()).select_from(t)).scalar()
+    ]
+    if non_empty:
+        raise ImportFailed(
+            "The Postgres database already has data (in "
+            + ", ".join(non_empty)
+            + "). The import only goes into an empty database."
+        )
+    existing.drop_all(dst)
+    upgrade_schema(dst, SQLITE_ERA_REVISION)
+    target = MetaData()
+    target.reflect(dst, only=lambda name, _: name in ours)
+    return [t for t in target.sorted_tables if t.name != "alembic_version"]
 
 
 def _copy(
     source: Engine, target: Engine, check: bool, log: Callable[[str], None]
 ) -> dict[str, int]:
-    tables = Base.metadata.sorted_tables  # parents before children
     now = datetime.now(UTC)
     counts: dict[str, int] = {}
     fixes: list[str] = []
     try:
         with target.begin() as dst:
-            non_empty = [
-                t.name for t in tables if dst.execute(select(func.count()).select_from(t)).scalar()
-            ]
-            if non_empty:
-                raise ImportFailed(
-                    "The Postgres database already has data (in "
-                    + ", ".join(non_empty)
-                    + "). The import only goes into an empty database."
-                )
+            dst.execute(text(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'"))
+            tables = _reset_to_sqlite_era_schema(dst)
             known_ids: dict[str, set] = {}
             for table in tables:
                 rows = _read_rows(source, table)
@@ -268,12 +316,20 @@ def _copy(
                     raise ImportFailed(
                         f"{table.name}: read {counts[table.name]} rows but {copied} arrived"
                     )
+            upgrade_schema(dst)  # the later migrations, on the imported rows
             for fix in fixes:
                 log(f"fixed: {fix}")
             if check:
                 raise _CheckOnly
     except _CheckOnly:
         pass
+    except OperationalError as exc:
+        if not isinstance(exc.orig, LockNotAvailable):
+            raise
+        raise ImportFailed(
+            "The database is in use (another connection holds its tables). Stop the backend "
+            "and anything else connected to it, then run the import again."
+        ) from exc
     return counts
 
 
@@ -284,7 +340,6 @@ def import_sqlite(
     check=True everything runs and is then rolled back. Returns rows per table."""
     if not path.is_file():
         raise ImportFailed(f"{path} does not exist")
-    init_db()  # the target schema at the latest revision
     with tempfile.TemporaryDirectory() as tmp:
         copy = Path(tmp) / "legacy.db"
         try:

@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -37,6 +38,34 @@ DONE = object()
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 _WORKER_COMMAND = [sys.executable, "-m", "app.run_worker"]
 _WORKER_STOP_GRACE_SECONDS = 10
+
+# Recorded on each run this process executes (4B's workers will each have their own).
+WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
+
+
+def host_counts(event_data: object) -> dict[str, int]:
+    """Hosts per outcome from a playbook_on_stats event's data (ansible's PLAY RECAP:
+    per-outcome {host: task count} maps; "dark" is unreachable). Malformed input counts
+    as nothing rather than failing the run."""
+    data = event_data if isinstance(event_data, dict) else {}
+
+    def hosts(key: str) -> set[str]:
+        per_host = data.get(key)
+        if not isinstance(per_host, dict):
+            return set()
+        return {h for h, n in per_host.items() if isinstance(n, int) and n > 0}
+
+    everyone = set().union(
+        *(hosts(k) for k in ("processed", "ok", "changed", "failures", "dark", "skipped"))
+    )
+    failed, unreachable = hosts("failures"), hosts("dark")
+    return {
+        "hosts_total": len(everyone),
+        "hosts_ok": len(everyone - failed - unreachable),
+        "hosts_changed": len(hosts("changed")),
+        "hosts_failed": len(failed),
+        "hosts_unreachable": len(unreachable),
+    }
 
 
 class RunStream:
@@ -184,7 +213,8 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
 
     try:
         run.status = RunStatus.RUNNING.value
-        run.started_at = datetime.now(UTC)
+        run.claimed_at = datetime.now(UTC)
+        run.worker_id = WORKER_ID
         db.commit()
 
         _assert_same_project(run, db.get(Playbook, run.playbook_id), "playbook")
@@ -224,10 +254,12 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
         if vault_password_plain is not None:
             flags.append("--ask-vault-pass")
         limit, extravars = run.limit, run.extra_vars or {}
+        run.started_at = datetime.now(UTC)  # everything is loaded; ansible launches next
         # End the read transaction before the playbook runs: an "idle in transaction"
         # connection for the whole run would pin its locks (blocking migrations/DDL).
         db.commit()
 
+        recap: dict[str, int] = {}
         pdd = private_data_dir or tempfile.mkdtemp(prefix=f"ansideck-run-{run_id}-")
         try:
             project_dir = Path(pdd) / "project"
@@ -242,6 +274,8 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
             with run_log_path(run_id).open("w", encoding="utf-8") as log_file:
 
                 def on_event(event: dict) -> None:
+                    if event.get("event") == "playbook_on_stats":
+                        recap.update(host_counts(event.get("event_data")))
                     event = scrub_event(event)
                     log_file.write(json.dumps(event) + "\n")
                     log_file.flush()
@@ -270,6 +304,8 @@ def _execute_run(run_id: int, private_data_dir: str | None = None) -> None:
 
         run.status = RunStatus.SUCCESS.value if status == "successful" else RunStatus.FAILED.value
         run.return_code = return_code
+        for column, count in recap.items():
+            setattr(run, column, count)
     except Exception:
         run.status = RunStatus.FAILED.value
         raise

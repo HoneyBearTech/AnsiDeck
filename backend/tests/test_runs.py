@@ -1,8 +1,10 @@
 import glob
 import json
+import sys
 import tempfile
 import textwrap
 import time
+from datetime import datetime
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -249,6 +251,17 @@ def test_run_success(client: TestClient, tmp_path) -> None:
     assert run["return_code"] == 0
     assert (tmp_path / "marker.txt").read_text() == "run marker"
 
+    from app.run_engine import WORKER_ID
+
+    assert run["worker_id"] == WORKER_ID
+    assert run["attempt"] == 1
+    lifecycle = [run[k] for k in ("queued_at", "claimed_at", "started_at", "finished_at")]
+    assert all(lifecycle)
+    assert [datetime.fromisoformat(t) for t in lifecycle] == sorted(
+        datetime.fromisoformat(t) for t in lifecycle
+    )
+    assert _host_counts(run) == {"total": 1, "ok": 1, "changed": 1, "failed": 0, "unreachable": 0}
+
 
 def test_run_failure(client: TestClient, tmp_path) -> None:
     _login(client)
@@ -270,6 +283,62 @@ def test_run_failure(client: TestClient, tmp_path) -> None:
     run = _wait_for_completion(client, run_id)
     assert run["status"] == "failed"
     assert run["return_code"] != 0
+    assert _host_counts(run) == {"total": 1, "ok": 0, "changed": 0, "failed": 1, "unreachable": 0}
+
+
+def _host_counts(run: dict) -> dict:
+    return {k: run[f"hosts_{k}"] for k in ("total", "ok", "changed", "failed", "unreachable")}
+
+
+def test_run_counts_unreachable_hosts_separately(client: TestClient) -> None:
+    _login(client)
+    playbook_id = _create_playbook(
+        client, "- hosts: all\n  gather_facts: false\n  tasks:\n    - ansible.builtin.ping:\n"
+    )
+    inventory_id = client.post("/api/inventories", json={"name": "mixed"}).json()["id"]
+    for hostname, host_vars in (
+        ("here", {"ansible_connection": "local", "ansible_python_interpreter": sys.executable}),
+        ("nowhere", {"ansible_host": "127.0.0.1", "ansible_port": 1}),  # nothing listens
+    ):
+        response = client.post(
+            f"/api/inventories/{inventory_id}/hosts", json={"hostname": hostname, "vars": host_vars}
+        )
+        assert response.status_code == 201, response.text
+    run_id = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_id,
+            "credential_id": _create_credential(client),
+        },
+    ).json()["id"]
+
+    run = _wait_for_completion(client, run_id, timeout=60)
+    assert run["status"] == "failed"
+    assert _host_counts(run) == {"total": 2, "ok": 1, "changed": 0, "failed": 0, "unreachable": 1}
+
+
+def test_host_counts_read_the_play_recap_and_tolerate_junk() -> None:
+    from app.run_engine import host_counts
+
+    recap = {
+        "processed": {"a": 1, "b": 1, "c": 1, "d": 1},
+        "ok": {"a": 3, "b": 1, "c": 0},
+        "changed": {"a": 2, "b": 0},
+        "failures": {"b": 1},
+        "dark": {"c": 1, "b": 1},
+        "skipped": {"d": 2},
+    }
+    assert host_counts(recap) == {
+        "hosts_total": 4,
+        "hosts_ok": 2,  # a, and d (only skipped tasks)
+        "hosts_changed": 1,
+        "hosts_failed": 1,
+        "hosts_unreachable": 2,
+    }
+    nothing = dict.fromkeys(host_counts({}), 0)
+    for junk in (None, "x", [], {"failures": "x", "dark": {"h": "1"}, "ok": {"h": None}}):
+        assert host_counts(junk) == nothing
 
 
 def test_run_cleans_up_private_data_dir(client: TestClient, tmp_path) -> None:
