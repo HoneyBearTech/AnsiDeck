@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit
@@ -11,7 +12,7 @@ from app.galaxy import (
     validate_requirements,
 )
 from app.hardening import client_ip
-from app.models import GalaxyInstall, RunStatus, User
+from app.models import GalaxyInstall, Run, RunStatus, User
 from app.permissions import Permission, Scope, guard
 from app.schemas.galaxy import (
     InstallCreate,
@@ -28,10 +29,19 @@ router = APIRouter(dependencies=[Depends(_guard)])
 _ACTIVE_STATUSES = (RunStatus.QUEUED.value, RunStatus.RUNNING.value)
 
 
-def _to_detail(install: GalaxyInstall) -> InstallDetail:
+def _to_out(db: Session, install: GalaxyInstall) -> InstallOut:
+    out = InstallOut.model_validate(install)
+    if install.status == RunStatus.QUEUED.value:
+        out.waiting_for_runs = db.scalar(
+            select(func.count()).where(Run.status == RunStatus.RUNNING.value)
+        )
+    return out
+
+
+def _to_detail(db: Session, install: GalaxyInstall) -> InstallDetail:
     log_path = galaxy_install_log_path(install.id)
     return InstallDetail(
-        **InstallOut.model_validate(install).model_dump(),
+        **_to_out(db, install).model_dump(),
         requirements_snapshot=install.requirements_snapshot,
         log=log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else "",
     )
@@ -71,8 +81,9 @@ def get_installed() -> InstalledOut:
 
 
 @router.get("/installs", response_model=list[InstallOut])
-def list_installs(db: Session = Depends(get_db)) -> list[GalaxyInstall]:
-    return db.query(GalaxyInstall).order_by(GalaxyInstall.id.desc()).all()
+def list_installs(db: Session = Depends(get_db)) -> list[InstallOut]:
+    installs = db.query(GalaxyInstall).order_by(GalaxyInstall.id.desc()).all()
+    return [_to_out(db, install) for install in installs]
 
 
 @router.get("/installs/{install_id}", response_model=InstallDetail)
@@ -80,7 +91,7 @@ def get_install(install_id: int, db: Session = Depends(get_db)) -> InstallDetail
     install = db.get(GalaxyInstall, install_id)
     if install is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Install not found")
-    return _to_detail(install)
+    return _to_detail(db, install)
 
 
 @router.post("/installs", response_model=InstallDetail, status_code=status.HTTP_201_CREATED)
@@ -127,4 +138,4 @@ def create_install(
     # Starts now if no run is running; otherwise once they finish (no new run starts meanwhile).
     try_start_install()
     db.refresh(install)
-    return _to_detail(install)
+    return _to_detail(db, install)

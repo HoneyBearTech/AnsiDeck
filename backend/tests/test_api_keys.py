@@ -223,6 +223,33 @@ def test_a_key_cannot_use_become(world) -> None:
     assert "become" in response.json()["detail"]
 
 
+def test_a_key_may_cancel_only_the_runs_it_triggered(world) -> None:
+    admin, a, b = world["admin"], world["a"], world["b"]
+    admin.worker.stop()  # new runs stay queued, so there is something to cancel
+    key = _key_client(_create_key(admin, a["project"], name="ci")["token"])
+    own = key.post("/api/runs", json=_run_body(a)).json()["id"]
+    other_key = _key_client(_create_key(admin, a["project"], name="other")["token"])
+    read_only = _key_client(
+        _create_key(admin, a["project"], name="ro", preset="read-only")["token"]
+    )
+
+    # Someone else's run (a user's, another key's), or a key without runs:trigger.
+    denied = key.post(f"/api/runs/{a['run']}/cancel")
+    assert denied.status_code == 403
+    assert "only cancel runs it triggered" in denied.json()["detail"]
+    assert other_key.post(f"/api/runs/{own}/cancel").status_code == 403
+    assert read_only.post(f"/api/runs/{own}/cancel").status_code == 403
+    assert key.post(f"/api/runs/{b['run']}/cancel").status_code == 404
+    audited = admin.get("/api/audit", params={"action": "permission.denied"}).json()["items"]
+    reasons = [e["detail"].get("reason") for e in audited if e["actor_username"] == "apikey:ci"]
+    assert reasons == ["api keys may only cancel their own runs"]
+
+    cancelled = key.post(f"/api/runs/{own}/cancel")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    assert cancelled.json()["cancel_requested_by"] == "apikey:ci"
+
+
 def test_a_key_cannot_reach_any_other_endpoint(world) -> None:
     a = world["a"]
     key = _key_client(_create_key(world["admin"], a["project"], name="probe")["token"])
@@ -259,7 +286,12 @@ def test_a_key_is_refused_on_every_served_operation_except_the_run_routes(world)
     serves (OpenAPI), so a route added later can't quietly become key-accessible."""
     a = world["a"]
     key = _key_client(_create_key(world["admin"], a["project"], name="sweep")["token"])
-    allowed = {("GET", "/api/runs"), ("POST", "/api/runs"), ("GET", "/api/runs/{run_id}")}
+    allowed = {
+        ("GET", "/api/runs"),
+        ("POST", "/api/runs"),
+        ("GET", "/api/runs/{run_id}"),
+        ("POST", "/api/runs/{run_id}/cancel"),
+    }
     probed = 0
     for path, operations in app.openapi()["paths"].items():
         for method in operations:
@@ -281,6 +313,7 @@ def test_only_the_run_routes_are_enabled_for_api_keys() -> None:
         ("GET", "/api/runs"),
         ("POST", "/api/runs"),
         ("GET", "/api/runs/{run_id}"),
+        ("POST", "/api/runs/{run_id}/cancel"),
     }
 
 

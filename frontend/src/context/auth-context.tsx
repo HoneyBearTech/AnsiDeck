@@ -3,7 +3,13 @@ import * as React from "react";
 import { api, setApiActiveProject, type ProjectAccess, type User } from "@/lib/api";
 
 // Permissions that never depend on a project (mirrors the backend's GLOBAL_ONLY).
-const GLOBAL_PERMISSIONS = new Set(["users:manage", "audit:read", "galaxy:manage", "projects:manage"]);
+const GLOBAL_PERMISSIONS = new Set([
+  "users:manage",
+  "audit:read",
+  "workers:read",
+  "galaxy:manage",
+  "projects:manage",
+]);
 const STORAGE_KEY = "ansideck.activeProject";
 
 interface AuthContextValue {

@@ -87,6 +87,7 @@ export function AppShell() {
             <NavItem to="/projects" label="Projects" visible={canSeeProjects} />
             <NavItem to="/users" label="Users" permission="users:manage" />
             <NavItem to="/audit" label="Audit" permission="audit:read" />
+            <NavItem to="/workers" label="Workers" permission="workers:read" />
           </nav>
         </div>
         <div className="flex items-center gap-3">

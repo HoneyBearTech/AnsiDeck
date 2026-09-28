@@ -20,6 +20,7 @@ import { RunTriggerPage } from "@/pages/run-trigger-page";
 import { RunsPage } from "@/pages/runs-page";
 import { UsersPage } from "@/pages/users-page";
 import { VaultPage } from "@/pages/vault-page";
+import { WorkersPage } from "@/pages/workers-page";
 
 function App() {
   return (
@@ -77,6 +78,14 @@ function App() {
             element={
               <RequirePermission permission="audit:read">
                 <AuditPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/workers"
+            element={
+              <RequirePermission permission="workers:read">
+                <WorkersPage />
               </RequirePermission>
             }
           />

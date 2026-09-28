@@ -216,6 +216,8 @@ export interface GalaxyInstall {
   started_at: string | null;
   finished_at: string | null;
   created_at: string;
+  // A queued install starts once the runs running now have finished; null unless queued.
+  waiting_for_runs: number | null;
 }
 
 export interface GalaxyInstallDetail extends GalaxyInstall {
@@ -266,6 +268,17 @@ export interface Run {
   hosts_changed: number | null;
   hosts_failed: number | null;
   hosts_unreachable: number | null;
+  // Why a queued run hasn't started (getRun only; null otherwise).
+  waiting_reason: string | null;
+}
+
+export interface WorkerInfo {
+  id: string;
+  slots: number;
+  running: number;
+  online: boolean;
+  first_seen_at: string;
+  last_seen_at: string;
 }
 
 export const api = {
@@ -530,7 +543,11 @@ export const api = {
     diff_mode: boolean;
     limit: string | null;
     extra_vars: Record<string, unknown> | null;
+    timeout_seconds?: number;
   }) => request<Run>("/runs", { method: "POST", body: JSON.stringify(payload) }),
+  cancelRun: (id: number) => request<Run>(`/runs/${id}/cancel`, { method: "POST" }),
+
+  listWorkers: () => request<WorkerInfo[]>("/workers"),
 };
 
 /** `from` skips the log lines already received, so a dropped stream resumes where it left off. */

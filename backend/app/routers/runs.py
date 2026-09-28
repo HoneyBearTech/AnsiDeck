@@ -13,7 +13,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit
@@ -21,11 +21,13 @@ from app.db import get_db, get_sessionmaker
 from app.dependencies import SESSION_COOKIE_NAME, RateLimited, authenticate_request
 from app.hardening import client_ip
 from app.models import (
+    FINISHED_STATUSES,
     Credential,
     Inventory,
     InventoryGroup,
     Playbook,
     Run,
+    RunStatus,
     User,
     VaultPassword,
 )
@@ -37,7 +39,7 @@ from app.permissions import (
     holds_somewhere,
     project_permissions,
 )
-from app.queue import QUEUE_TOPIC
+from app.queue import QUEUE_TOPIC, fail_run, wait_reason
 from app.schemas.runs import RunCreate, RunOut
 from app.scoping import get_scoped, readable_project_ids
 from app.storage import playbook_path, run_log_path
@@ -192,6 +194,7 @@ def create_run(
         limit=payload.limit,
         extra_vars=payload.extra_vars,
         triggered_by=current_user.username,
+        triggered_by_api_key_id=getattr(current_user, "_api_key_id", None),
         timeout_seconds=payload.timeout_seconds,
         playbook_snapshot=playbook_text.decode("utf-8"),
         playbook_sha256=hashlib.sha256(playbook_text).hexdigest(),
@@ -228,7 +231,79 @@ def get_run(
     db: Session = Depends(get_db),
 ) -> RunOut:
     run = get_scoped(db, user, request, Run, run_id, Permission.CONTENT_READ, "Run not found")
-    return _run_out(db, run, user)
+    out = _run_out(db, run, user)
+    if run.status == RunStatus.QUEUED.value:
+        out.waiting_reason = wait_reason(db, run)
+    return out
+
+
+@router.post("/{run_id}/cancel", response_model=RunOut)
+def cancel_run(
+    run_id: int,
+    request: Request,
+    current_user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> RunOut:
+    """A queued run is cancelled at once. A running one is marked, and its worker stops it
+    (it learns within a heartbeat); the reaper ends it if the worker never confirms."""
+    run = get_scoped(
+        db, current_user, request, Run, run_id, Permission.RUNS_TRIGGER, "Run not found"
+    )
+    key_id = getattr(current_user, "_api_key_id", None)
+    if key_id is not None and run.triggered_by_api_key_id != key_id:
+        audit.record(
+            db,
+            "permission.denied",
+            outcome="denied",
+            actor=current_user,
+            target_type="run",
+            target_id=run_id,
+            ip=client_ip(request),
+            project_id=run.project_id,
+            detail={"reason": "api keys may only cancel their own runs"},
+        )
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "An API key may only cancel runs it triggered"
+        )
+
+    # Re-read under the row lock: a worker may have claimed or finished it meanwhile.
+    run = db.scalars(
+        select(Run)
+        .where(Run.id == run_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).one()
+    if run.status in FINISHED_STATUSES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Run #{run_id} has already finished ({run.status})"
+        )
+    if run.cancel_requested_at is not None:  # already asked: nothing more to do
+        return _run_out(db, run, current_user)
+
+    was_queued = run.status == RunStatus.QUEUED.value
+    run.cancel_requested_at = func.now()
+    run.cancel_requested_by = current_user.username
+    if was_queued:
+        fail_run(
+            run, RunStatus.CANCELLED, f"cancelled by {current_user.username} before it started"
+        )
+    db.commit()
+    db.refresh(run)
+
+    audit.record(
+        db,
+        "run.cancel",
+        actor=current_user,
+        target_type="run",
+        target_id=run_id,
+        ip=client_ip(request),
+        project_id=run.project_id,
+        detail={"was": "queued" if was_queued else "running"},
+    )
+    if was_queued:
+        notifier.notify(run_topic(run_id))  # its viewers see the end of the log
+        notifier.notify(QUEUE_TOPIC)  # the next run on its inventory may start now
+    return _run_out(db, run, current_user)
 
 
 # How long a live log viewer waits for a notification before re-checking the run itself.

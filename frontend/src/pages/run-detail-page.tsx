@@ -2,9 +2,11 @@ import * as React from "react";
 import { useParams } from "react-router-dom";
 
 import { Badge, type BadgeProps } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LiveLogViewer } from "@/components/live-log-viewer";
-import { api, type Run } from "@/lib/api";
+import { useAuth } from "@/context/auth-context";
+import { api, ApiError, type Run } from "@/lib/api";
 
 const STATUS_VARIANT: Record<Run["status"], BadgeProps["variant"]> = {
   success: "ok",
@@ -23,11 +25,11 @@ const HOST_OUTCOMES: { key: keyof Run; label: string; variant: BadgeProps["varia
   { key: "hosts_unreachable", label: "unreachable", variant: "failed" },
 ];
 
-// What the badge alone doesn't say: that the run waits for a worker, is being cancelled, or why it
-// ended the way it did (worker lost, timed out, ...).
+// What the badge alone doesn't say: what a queued run waits for (a worker, the run ahead of it on the
+// inventory, ...), that it is being cancelled, or why it ended the way it did (worker lost, timed out, ...).
 function StatusNote({ run }: { run: Run }) {
   let note: string | null = run.status_reason;
-  if (run.status === "queued") note = "Waiting for a worker…";
+  if (run.status === "queued") note = run.waiting_reason ?? "Waiting for a worker…";
   else if (run.status === "running" && run.cancel_requested_at) note = "Cancelling…";
   if (!note) return null;
   const bad = run.status === "failed" || run.status === "timed_out";
@@ -62,6 +64,45 @@ function RunSummary({ run }: { run: Run }) {
       {waited && <span>waited {waited}</span>}
       {ran && <span>ran {ran}</span>}
       {run.return_code !== null && <span>exit code {run.return_code}</span>}
+    </div>
+  );
+}
+
+function CancelButton({ run, onCancelled }: { run: Run; onCancelled: (run: Run) => void }) {
+  const { canInProject } = useAuth();
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const active = run.status === "queued" || run.status === "running";
+  if (!active || !canInProject(run.project_id, "runs:trigger")) return null;
+
+  async function handleCancel() {
+    const what =
+      run.status === "queued"
+        ? "It hasn't started yet and won't run."
+        : "Ansible is stopped where it is; tasks already done on the hosts are not undone.";
+    if (!window.confirm(`Cancel run #${run.id}? ${what}`)) return;
+    setError(null);
+    setBusy(true);
+    try {
+      onCancelled(await api.cancelRun(run.id));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <Button
+        variant="destructive"
+        size="sm"
+        onClick={handleCancel}
+        disabled={busy || !!run.cancel_requested_at}
+      >
+        {busy || run.cancel_requested_at ? "Cancelling…" : "Cancel run"}
+      </Button>
+      {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );
 }
@@ -113,7 +154,10 @@ export function RunDetailPage() {
           </p>
           <StatusNote run={run} />
         </div>
-        <Badge variant={STATUS_VARIANT[run.status]}>{run.status.replace("_", " ")}</Badge>
+        <div className="flex items-center gap-3">
+          <CancelButton run={run} onCancelled={setRun} />
+          <Badge variant={STATUS_VARIANT[run.status]}>{run.status.replace("_", " ")}</Badge>
+        </div>
       </div>
 
       <RunSummary run={run} />

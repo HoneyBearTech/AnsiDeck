@@ -87,14 +87,19 @@ Content is grouped into projects, and a `Default` project exists on first start.
    host limit, check or diff mode, and extra variables as JSON. The output streams live, and finished runs stay
    in the run history.
 
-Runs wait in a queue until a worker is free. Runs against the same inventory go one at a time, in the order
-they were started. A run is stopped after 2 hours (`timeout_seconds` when starting it through the API, up to
-24 hours). If a worker disappears mid-run, its run is marked failed ("worker lost") about a minute later.
-While a Galaxy install is waiting or running, no new run starts.
+Runs wait in a queue until a worker is free; a queued run's page says what it is waiting for (a free
+worker, the run ahead of it on the same inventory, a Galaxy install, or no worker being online). Runs against
+the same inventory go one at a time, in the order they were started. A run is stopped after 2 hours (the
+**Timeout** field, or `timeout_seconds` through the API; up to 24 hours). Anyone who may start runs in a
+project can **Cancel** a queued or running run there: a queued run never starts, a running one is stopped
+within seconds (what it already changed on the hosts stays changed). If a worker disappears mid-run, its run
+is marked failed ("worker lost") about a minute later. While a Galaxy install is waiting or running, no new
+run starts.
 
 Other pages: **Vault** encrypts and decrypts values with Ansible Vault, **Galaxy** installs roles and
 collections, **Projects** separate content and access, and admins manage **Users** (roles: admin, operator,
-viewer, assigned per project) and read the **Audit** log.
+viewer, assigned per project), read the **Audit** log, and see which **Workers** are online and how busy
+they are.
 
 ## Running it securely
 
@@ -149,9 +154,13 @@ RUN=$(curl -sf -X POST "$BASE/api/runs" \
 # poll until it finishes: status goes queued -> running -> success, failed, cancelled or timed_out
 # (status_reason says why when it wasn't ansible's own result); return_code is the ansible exit code
 curl -sf "$BASE/api/runs/$RUN" -H "Authorization: Bearer $KEY"
+
+# cancel it (a trigger key may cancel only the runs it started itself)
+curl -sf -X POST "$BASE/api/runs/$RUN/cancel" -H "Authorization: Bearer $KEY"
 ```
 
-A key can only use the run endpoints (`GET/POST /api/runs`, `GET /api/runs/{id}`, and the run log WebSocket
+A key can only use the run endpoints (`GET/POST /api/runs`, `GET /api/runs/{id}`,
+`POST /api/runs/{id}/cancel`, and the run log WebSocket
 `/api/runs/{id}/ws` with the same header); everything else answers `403`. Extra vars you send are not
 readable back through a key. Keys are access control, not isolation: a `trigger` key can run any playbook in
 its project, so scope keys per project and rotate them.

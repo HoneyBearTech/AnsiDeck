@@ -112,6 +112,7 @@ def _idor_calls(b: dict) -> list[tuple[str, str, dict | None]]:
         ("DELETE", f"/api/credentials/{b['credential']}", None),
         ("DELETE", f"/api/vault-passwords/{b['vault']}", None),
         ("GET", f"/api/runs/{run}", None),
+        ("POST", f"/api/runs/{run}/cancel", None),
         (
             "POST",
             "/api/vault/encrypt",
@@ -213,6 +214,7 @@ def test_every_project_scoped_route_with_an_id_is_covered_by_the_idor_matrix() -
         ("DELETE", "/api/credentials/{credential_id}"),
         ("DELETE", "/api/vault-passwords/{vault_password_id}"),
         ("GET", "/api/runs/{run_id}"),
+        ("POST", "/api/runs/{run_id}/cancel"),
     }
     # project + member routes are exercised by the projects API tests below
     covered |= {
