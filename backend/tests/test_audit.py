@@ -286,8 +286,10 @@ def test_production_refuses_insecure_defaults(monkeypatch) -> None:
     monkeypatch.delenv("AUTH_SECRET_KEY", raising=False)
     monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("WORKER_TOKEN", raising=False)
     with pytest.raises(
-        ValidationError, match="AUTH_SECRET_KEY, ADMIN_PASSWORD, the database password"
+        ValidationError,
+        match="AUTH_SECRET_KEY, ADMIN_PASSWORD, the database password .*, WORKER_TOKEN",
     ):
         Settings(_env_file=None)
 
@@ -296,6 +298,10 @@ def test_production_refuses_insecure_defaults(monkeypatch) -> None:
     with pytest.raises(ValidationError, match="database password"):
         Settings(_env_file=None)
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://ansideck:s3cret-db@db/ansideck")
+    monkeypatch.setenv("WORKER_TOKEN", "too-short")
+    with pytest.raises(ValidationError, match="WORKER_TOKEN \\(at least 32 characters\\)"):
+        Settings(_env_file=None)
+    monkeypatch.setenv("WORKER_TOKEN", "w" * 32)
     assert Settings(_env_file=None).environment == "production"
 
     monkeypatch.setenv("ENVIRONMENT", "development")

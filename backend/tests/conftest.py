@@ -17,12 +17,14 @@ if not (make_url(TEST_DATABASE_URL).database or "").endswith("_test"):
         f"TEST_DATABASE_URL must name a database ending in _test: {TEST_DATABASE_URL}"
     )
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL  # wins over any .env
+# Tests drive the internal worker API in-process (internal_client()), not on a port.
+os.environ["INTERNAL_API_ENABLED"] = "false"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.bootstrap import seed_fresh_install  # noqa: E402
-from app.config import get_settings  # noqa: E402
+from app.config import DEFAULT_WORKER_TOKEN, get_settings  # noqa: E402
 from app.crypto import hash_password  # noqa: E402
 from app.db import Base, get_engine, get_sessionmaker, init_db  # noqa: E402
 from app.hardening import (  # noqa: E402
@@ -32,8 +34,11 @@ from app.hardening import (  # noqa: E402
     totp_user_throttle,
     user_login_throttle,
 )
+from app.internal_api import internal_app, worker_ip_throttle  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Project, ProjectMember, User  # noqa: E402
+from app.worker.client import ApiClient  # noqa: E402
+from app.worker.runner import Worker  # noqa: E402
 
 
 def reset_engine() -> None:
@@ -71,8 +76,45 @@ def truncate_all() -> None:
         conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
 
 
+def internal_client(token: str = DEFAULT_WORKER_TOKEN) -> TestClient:
+    """What a worker sees: the internal API, with the worker token."""
+    return TestClient(
+        internal_app,
+        base_url="http://internal",
+        raise_server_exceptions=False,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+class _NoTimeout:
+    """A TestClient calls the app directly; it has no use for (and warns about) timeouts."""
+
+    def __init__(self, http: TestClient) -> None:
+        self.http = http
+
+    def post(self, path: str, *, json: dict, headers: dict, timeout: float):  # noqa: ARG002
+        return self.http.post(path, json=json, headers=headers)
+
+
+def start_worker(galaxy_dir, **options) -> Worker:
+    """A real worker (real claims, real ansible subprocesses, real scrubbing) in this process,
+    reaching the API through internal_client()."""
+    settings = {
+        "worker_id": "test-worker",
+        "slots": 4,
+        "claim_wait_seconds": 0.5,
+        "heartbeat_seconds": 0.5,
+        **options,
+    }
+    worker = Worker(ApiClient(_NoTimeout(internal_client())), galaxy_dir=galaxy_dir, **settings)
+    worker.start()
+    return worker
+
+
 @pytest.fixture
-def client(tmp_path, monkeypatch) -> Generator[TestClient, None, None]:
+def client(request, tmp_path, monkeypatch) -> Generator[TestClient, None, None]:
+    """The public API on a fresh database, with a worker running queued runs (unless the test
+    is marked no_worker). The worker is stopped before the next test truncates the tables."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     get_settings.cache_clear()
 
@@ -81,14 +123,22 @@ def client(tmp_path, monkeypatch) -> Generator[TestClient, None, None]:
     api_key_ip_throttle.clear()
     sso_ip_throttle.clear()
     totp_user_throttle.clear()
+    worker_ip_throttle.clear()
     truncate_all()
 
     seed_db = get_sessionmaker()()
     seed_fresh_install(seed_db)
     seed_db.close()
 
-    yield TestClient(app)
+    worker = None
+    if request.node.get_closest_marker("no_worker") is None:
+        worker = start_worker(tmp_path / "galaxy")
+    public = TestClient(app)
+    public.worker = worker  # for tests that stop it mid-run
+    yield public
 
+    if worker is not None:
+        worker.stop()
     get_settings.cache_clear()
 
 

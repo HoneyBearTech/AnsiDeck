@@ -195,7 +195,13 @@ export function GalaxyPage() {
             {installError && <p className="text-sm text-destructive">{installError}</p>}
             <div>
               <Button onClick={handleInstall} disabled={!confirmed || starting || dirty || currentActive}>
-                {starting ? "Starting…" : currentActive ? "Installing…" : "Install"}
+                {starting
+                  ? "Starting…"
+                  : current?.status === "queued"
+                    ? "Queued…"
+                    : currentActive
+                      ? "Installing…"
+                      : "Install"}
               </Button>
               {dirty && <span className="ml-3 text-xs text-muted-foreground">Save your changes first.</span>}
             </div>
@@ -205,9 +211,15 @@ export function GalaxyPage() {
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">Install #{current.id}</span>
                   <Badge variant={STATUS_VARIANT[current.status]}>{current.status}</Badge>
+                  {current.status_reason && (
+                    <span className="text-xs text-destructive">{current.status_reason}</span>
+                  )}
                 </div>
                 <pre className="max-h-96 overflow-auto rounded-md bg-muted p-3 font-mono text-xs whitespace-pre-wrap">
-                  {current.log || "Waiting for output…"}
+                  {current.log ||
+                    (current.status === "queued"
+                      ? "Waiting for running playbook runs to finish (no new run starts meanwhile)…"
+                      : "Waiting for output…")}
                 </pre>
               </div>
             )}

@@ -12,6 +12,7 @@ services:
     # Loopback only: for running the backend tests from the host. Never expose it further.
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    networks: [db]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ansideck -d ansideck"]
       interval: 5s
@@ -26,6 +27,9 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://ansideck:${POSTGRES_PASSWORD:-ansideck}@postgres:5432/ansideck}
+      # The internal worker API (never published): reachable from the workers network only.
+      - INTERNAL_API_HOST=0.0.0.0
+      - WORKER_TOKEN=${WORKER_TOKEN:-change-me-dev-only-worker-token}
     volumes:
       - ./backend:/app
       - backend-venv:/app/.venv
@@ -38,8 +42,44 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    networks: [default, db, workers]
     depends_on:
       postgres:
+        condition: service_healthy
+
+  # Runs playbooks. Scale with `docker compose up --scale worker=N`. It gets an explicit
+  # environment only (never the .env file: no database URL, no keys) and is on the workers
+  # network only, so it can reach the backend's internal API but not Postgres.
+  worker:
+    build:
+      context: ./backend
+      target: dev
+    # The worker itself is PID 1 (no init, no `uv run` wrapper): it hides its memory and
+    # environment from playbooks and reaps orphans itself. A wrapper process would hold the
+    # container's environment, WORKER_TOKEN included, where a playbook could read it.
+    command: ["/app/.venv/bin/python", "-m", "app.worker"]
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PATH=/app/.venv/bin:/usr/local/bin:/usr/bin:/bin
+      - ANSIDECK_API_URL=http://backend:8001
+      - WORKER_TOKEN=${WORKER_TOKEN:-change-me-dev-only-worker-token}
+      - WORKER_SLOTS=${WORKER_SLOTS:-2}
+      - GALAXY_DIR=/galaxy
+    volumes:
+      - ./backend:/app:ro
+      - backend-venv:/app/.venv:ro
+      # Installed roles/collections, read-only: only the backend installs.
+      - type: volume
+        source: backend-data
+        target: /galaxy
+        read_only: true
+        volume:
+          subpath: galaxy
+    # Lets running runs finish (WORKER_DRAIN_SECONDS, 30 s) before they are stopped.
+    stop_grace_period: 60s
+    networks: [workers]
+    depends_on:
+      backend:
         condition: service_healthy
 
   frontend:
@@ -59,6 +99,10 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+
+networks:
+  db:
+  workers:
 
 volumes:
   postgres-data:

@@ -7,11 +7,11 @@ from app.galaxy import (
     RequirementsError,
     list_installed_collections,
     list_installed_roles,
-    start_install,
+    try_start_install,
     validate_requirements,
 )
 from app.hardening import client_ip
-from app.models import GalaxyInstall, Run, RunStatus, User
+from app.models import GalaxyInstall, RunStatus, User
 from app.permissions import Permission, Scope, guard
 from app.schemas.galaxy import (
     InstallCreate,
@@ -106,16 +106,8 @@ def create_install(
     )
     if active_install is not None:
         raise HTTPException(
-            status.HTTP_409_CONFLICT, f"Install #{active_install.id} is already in progress"
+            status.HTTP_409_CONFLICT, f"Install #{active_install.id} is already queued or running"
         )
-    active_run = db.query(Run).filter(Run.status.in_(_ACTIVE_STATUSES)).first()
-    if active_run is not None:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Run #{active_run.id} is active; wait for it to finish before installing "
-            "(installs change the roles/collections runs load)",
-        )
-
     install = GalaxyInstall(
         requirements_snapshot=text, upgrade=payload.upgrade, triggered_by=current_user.username
     )
@@ -132,5 +124,7 @@ def create_install(
         ip=client_ip(request),
         detail={"upgrade": payload.upgrade},
     )
-    start_install(install.id)
+    # Starts now if no run is running; otherwise once they finish (no new run starts meanwhile).
+    try_start_install()
+    db.refresh(install)
     return _to_detail(install)

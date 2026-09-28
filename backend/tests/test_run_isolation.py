@@ -2,7 +2,7 @@ import sys
 
 from fastapi.testclient import TestClient
 
-from app import hardening, run_executor
+from app import process_hardening, run_executor
 from app.subprocess_env import PASSTHROUGH_ENV, clean_env
 from tests.test_runs import (
     _create_credential,
@@ -49,8 +49,8 @@ def test_disable_process_inspection_calls_prctl_on_linux(monkeypatch) -> None:
             return 0
 
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(hardening.ctypes, "CDLL", lambda *a, **k: FakeLibc())
-    assert hardening.disable_process_inspection() is True
+    monkeypatch.setattr(process_hardening.ctypes, "CDLL", lambda *a, **k: FakeLibc())
+    assert process_hardening.disable_process_inspection() is True
     assert calls == [(4, 0, 0, 0, 0)]  # PR_SET_DUMPABLE, 0
 
 
@@ -60,8 +60,8 @@ def test_disable_process_inspection_reports_failure(monkeypatch) -> None:
             return -1
 
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(hardening.ctypes, "CDLL", lambda *a, **k: FailingLibc())
-    assert hardening.disable_process_inspection() is False
+    monkeypatch.setattr(process_hardening.ctypes, "CDLL", lambda *a, **k: FailingLibc())
+    assert process_hardening.disable_process_inspection() is False
 
 
 def test_disable_process_inspection_is_a_noop_off_linux(monkeypatch) -> None:
@@ -70,14 +70,15 @@ def test_disable_process_inspection_is_a_noop_off_linux(monkeypatch) -> None:
     def boom(*a, **k):
         raise AssertionError("must not touch libc off Linux")
 
-    monkeypatch.setattr(hardening.ctypes, "CDLL", boom)
-    assert hardening.disable_process_inspection() is False
+    monkeypatch.setattr(process_hardening.ctypes, "CDLL", boom)
+    assert process_hardening.disable_process_inspection() is False
 
 
 def test_run_does_not_inherit_app_secrets(client: TestClient, tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AUTH_SECRET_KEY", "sentinel-auth-secret-key")
     monkeypatch.setenv("ADMIN_PASSWORD", "sentinel-admin-password")
     monkeypatch.setenv("ANSIDECK_TEST_ARBITRARY_SECRET", "sentinel-arbitrary-secret")
+    monkeypatch.setenv("WORKER_TOKEN", "sentinel-worker-token-0123456789abcdef")
     _login(client)
     marker = tmp_path / "env.txt"
     playbook_id = _create_playbook(client, ENV_DUMP_PLAYBOOK)
@@ -102,9 +103,15 @@ def test_run_does_not_inherit_app_secrets(client: TestClient, tmp_path, monkeypa
         "AUTH_SECRET_KEY",
         "ADMIN_PASSWORD",
         "ANSIDECK_TEST_ARBITRARY_SECRET",
+        "WORKER_TOKEN",
     ):
         assert name not in names
-    for value in ("sentinel-auth-secret-key", "sentinel-admin-password", "sentinel-arbitrary"):
+    for value in (
+        "sentinel-auth-secret-key",
+        "sentinel-admin-password",
+        "sentinel-arbitrary",
+        "sentinel-worker-token",
+    ):
         assert value not in seen
     # The allowlist still gets through, and runs still see the shared galaxy paths.
     assert "PATH" in names

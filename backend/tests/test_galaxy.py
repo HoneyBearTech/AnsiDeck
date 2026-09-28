@@ -17,12 +17,16 @@ from app.galaxy import (
     validate_requirements,
 )
 from app.models import GalaxyInstall
+from app.notify import notifier
+from app.queue import QUEUE_TOPIC
 from tests.test_runs import (
     PAUSE_PLAYBOOK,
+    SUCCESS_PLAYBOOK,
     _create_credential,
     _create_inventory_with_host,
     _create_playbook,
     _wait_for_completion,
+    _wait_for_status,
 )
 
 MODULE_SOURCE = """\
@@ -307,64 +311,72 @@ def test_install_failure_is_reported_cleanly(
     assert client.get("/api/galaxy/installed").json()["collections"] == []
 
 
-def test_install_blocked_while_run_is_active(client: TestClient, tmp_path: Path) -> None:
-    _login(client)
-    playbook_id = _create_playbook(client, PAUSE_PLAYBOOK, name="pause-galaxy.yml")
-    inventory_id, _host_id = _create_inventory_with_host(client, str(tmp_path / "m.txt"))
-    credential_id = _create_credential(client)
-    client.put(
-        "/api/galaxy/requirements", json={"content": "collections:\n  - community.general\n"}
-    )
-
+def _start_run(client: TestClient, playbook: str, marker: Path, name: str) -> int:
+    playbook_id = _create_playbook(client, playbook, name=f"{name}.yml")
+    inventory_id, _host_id = _create_inventory_with_host(client, str(marker), name=name)
     run = client.post(
         "/api/runs",
         json={
             "playbook_id": playbook_id,
             "inventory_id": inventory_id,
-            "credential_id": credential_id,
+            "credential_id": _create_credential(client, name=f"{name}-cred"),
         },
     )
     assert run.status_code == 201
-
-    blocked = client.post("/api/galaxy/installs", json={})
-    assert blocked.status_code == 409
-    assert str(run.json()["id"]) in blocked.json()["detail"]
-
-    _wait_for_completion(client, run.json()["id"])
+    return run.json()["id"]
 
 
-def test_run_and_second_install_blocked_while_install_is_active(
+def test_an_install_waits_for_running_runs_and_holds_back_new_ones(
+    client: TestClient, tmp_path: Path, local_sources: dict[str, Path]
+) -> None:
+    _login(client)
+    client.put("/api/galaxy/requirements", json={"content": _requirements_for(local_sources)})
+    first = _start_run(client, PAUSE_PLAYBOOK, tmp_path / "a.txt", "galaxy-a")
+    _wait_for_status(client, first, "running")
+
+    install = client.post("/api/galaxy/installs", json={})
+    assert install.status_code == 201
+    assert install.json()["status"] == "queued"  # a run is running: the install waits
+    # A new run waits for the install, even though its own inventory is free.
+    second = _start_run(client, SUCCESS_PLAYBOOK, tmp_path / "b.txt", "galaxy-b")
+    time.sleep(1)
+    assert client.get(f"/api/runs/{second}").json()["status"] == "queued"
+
+    done = _wait_for_install(client, install.json()["id"])
+    assert done["status"] == "success", done["log"]
+    first_run = _wait_for_completion(client, first)
+    second_run = _wait_for_completion(client, second)
+    assert first_run["finished_at"] <= done["started_at"]
+    assert done["finished_at"] <= second_run["claimed_at"]
+    assert second_run["status"] == "success"
+
+
+def test_while_an_install_is_active_runs_wait_and_a_second_install_is_refused(
     client: TestClient, tmp_path: Path
 ) -> None:
     _login(client)
-    playbook_id = _create_playbook(client, PAUSE_PLAYBOOK, name="pause-galaxy2.yml")
-    inventory_id, _host_id = _create_inventory_with_host(client, str(tmp_path / "m.txt"))
-    credential_id = _create_credential(client)
     client.put(
         "/api/galaxy/requirements", json={"content": "collections:\n  - community.general\n"}
     )
-
     db = get_sessionmaker()()
     active = GalaxyInstall(status="running", triggered_by="admin", requirements_snapshot="x")
     db.add(active)
     db.commit()
     active_id = active.id
-    db.close()
-
-    run = client.post(
-        "/api/runs",
-        json={
-            "playbook_id": playbook_id,
-            "inventory_id": inventory_id,
-            "credential_id": credential_id,
-        },
-    )
-    assert run.status_code == 409
-    assert str(active_id) in run.json()["detail"]
 
     second = client.post("/api/galaxy/installs", json={})
     assert second.status_code == 409
     assert str(active_id) in second.json()["detail"]
+
+    run_id = _start_run(client, SUCCESS_PLAYBOOK, tmp_path / "m.txt", "galaxy-wait")
+    time.sleep(1.5)
+    assert client.get(f"/api/runs/{run_id}").json()["status"] == "queued"
+
+    active.status = "success"
+    db.commit()
+    db.close()
+    notifier.notify(QUEUE_TOPIC)
+    assert _wait_for_completion(client, run_id)["status"] == "success"
 
 
 def test_get_missing_install_returns_404(client: TestClient) -> None:

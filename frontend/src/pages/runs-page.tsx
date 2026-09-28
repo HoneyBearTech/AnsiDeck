@@ -12,6 +12,8 @@ const STATUS_VARIANT: Record<Run["status"], BadgeProps["variant"]> = {
   failed: "failed",
   running: "changed",
   queued: "skipped",
+  cancelled: "skipped",
+  timed_out: "failed",
 };
 
 export function RunsPage() {
@@ -57,7 +59,7 @@ export function RunsPage() {
                     {run.diff_mode && " · diff"}
                   </span>
                 </div>
-                <Badge variant={STATUS_VARIANT[run.status]}>{run.status}</Badge>
+                <Badge variant={STATUS_VARIANT[run.status]}>{run.status.replace("_", " ")}</Badge>
               </CardContent>
             </Card>
           </Link>

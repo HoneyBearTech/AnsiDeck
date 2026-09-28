@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import hashlib
 from pathlib import Path
 
 from fastapi import (
@@ -21,12 +22,10 @@ from app.dependencies import SESSION_COOKIE_NAME, RateLimited, authenticate_requ
 from app.hardening import client_ip
 from app.models import (
     Credential,
-    GalaxyInstall,
     Inventory,
     InventoryGroup,
     Playbook,
     Run,
-    RunStatus,
     User,
     VaultPassword,
 )
@@ -38,14 +37,14 @@ from app.permissions import (
     holds_somewhere,
     project_permissions,
 )
-from app.run_engine import start_run
+from app.queue import QUEUE_TOPIC
 from app.schemas.runs import RunCreate, RunOut
 from app.scoping import get_scoped, readable_project_ids
-from app.storage import run_log_path
+from app.storage import playbook_path, run_log_path
 
 router = APIRouter()
 
-_ACTIVE_STATUSES = (RunStatus.QUEUED.value, RunStatus.RUNNING.value)
+MAX_PLAYBOOK_SNAPSHOT_BYTES = 1024 * 1024
 
 
 # The only routes an API key may reach (a test pins this set).
@@ -167,32 +166,12 @@ def create_run(
         )
         _require_same_project(vault_password, project_id, "Vault password")
 
-    # Coarse guard: block a second run against the same inventory while one
-    # is already active, rather than resolving exact host-set overlap. Zero
-    # false negatives (any real host collision is necessarily within the
-    # same inventory); the one false-positive case (two disjoint groups in
-    # the same inventory) is an acceptable trade for a single-user tool —
-    # a real job queue is Phase 4's job, not this guard's.
-    conflicting = (
-        db.query(Run)
-        .filter(Run.inventory_id == payload.inventory_id, Run.status.in_(_ACTIVE_STATUSES))
-        .first()
-    )
-    if conflicting is not None:
+    # The run executes the playbook as it is now, whatever happens to it while queued.
+    playbook_text = playbook_path(playbook.id).read_bytes()
+    if len(playbook_text) > MAX_PLAYBOOK_SNAPSHOT_BYTES:
         raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Inventory '{inventory.name}' already has an active run "
-            f"(#{conflicting.id}, status={conflicting.status})",
-        )
-
-    active_install = (
-        db.query(GalaxyInstall).filter(GalaxyInstall.status.in_(_ACTIVE_STATUSES)).first()
-    )
-    if active_install is not None:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"A role/collection install (#{active_install.id}) is in progress; "
-            "wait for it to finish before starting a run",
+            status.HTTP_400_BAD_REQUEST,
+            f"The playbook is too large to run (over {MAX_PLAYBOOK_SNAPSHOT_BYTES // 1024} KiB)",
         )
 
     run = Run(
@@ -213,6 +192,9 @@ def create_run(
         limit=payload.limit,
         extra_vars=payload.extra_vars,
         triggered_by=current_user.username,
+        timeout_seconds=payload.timeout_seconds,
+        playbook_snapshot=playbook_text.decode("utf-8"),
+        playbook_sha256=hashlib.sha256(playbook_text).hexdigest(),
     )
     db.add(run)
     db.commit()
@@ -234,7 +216,7 @@ def create_run(
             "check_mode": payload.check_mode,
         },
     )
-    start_run(run.id)
+    notifier.notify(QUEUE_TOPIC)  # wake the workers waiting for a claim
     return _run_out(db, run, current_user)
 
 
@@ -311,8 +293,8 @@ async def _stream_log(websocket: WebSocket, run_id: int, skip_lines: int, finish
                 await websocket.send_text(line)
             if lines:
                 continue
-            # The engine writes the whole log before it marks the run finished, so once the
-            # run is finished, draining the file once more yields the complete output.
+            # A run is only marked finished once every line is in the log (the API refuses a
+            # worker's result until then), so one more drain yields the complete output.
             if finished or await asyncio.to_thread(_run_finished, run_id):
                 while lines := tail.read():
                     for line in lines:

@@ -59,6 +59,7 @@ jobs:
           done
           docker run -d --name smoke --network smoke-net -p 8000:8000 \
             -e AUTH_SECRET_KEY=ci-test -e ADMIN_PASSWORD=ci-test \
+            -e INTERNAL_API_HOST=0.0.0.0 -e WORKER_TOKEN=ci-test-worker-token-0123456789abcdef \
             -e CREDENTIAL_ENCRYPTION_KEY=8JQKBeSl5G-WvrMG3wRXlVUrowrX3qAkZq0Nycsd9qc= \
             -e DATABASE_URL=postgresql+psycopg://ansideck:ci-test@smoke-db:5432/ansideck \
             ansideck-backend:runtime
@@ -79,6 +80,31 @@ jobs:
           docker exec smoke ansible-galaxy --version
           docker exec smoke git --version
           docker exec smoke sh -c 'mkdir -p /data/galaxy/collections && touch /data/galaxy/collections/.write-test'
+
+      - name: Smoke test a worker from the backend runtime image
+        if: matrix.service == 'backend' && matrix.target == 'runtime'
+        # A worker reaches only the API's internal port, gets no database URL or keys, is
+        # non-dumpable (playbooks run as its user), and runs a real playbook to success.
+        run: |
+          docker run -d --name smoke-worker --network smoke-net \
+            -e ANSIDECK_API_URL=http://smoke:8001 \
+            -e WORKER_TOKEN=ci-test-worker-token-0123456789abcdef \
+            ansideck-backend:runtime python -m app.worker
+          for i in $(seq 1 15); do
+            docker logs smoke-worker 2>&1 | grep -q " ready: " && break
+            sleep 2
+          done
+          docker logs smoke-worker 2>&1 | grep -q " ready: " || { docker logs smoke-worker; exit 1; }
+          if docker exec smoke-worker cat /proc/1/environ > /dev/null; then
+            echo "the worker's environment is readable by its own user"; exit 1
+          fi
+          if docker exec smoke-worker env | grep -E 'DATABASE_URL|CREDENTIAL_ENCRYPTION_KEY|AUTH_SECRET_KEY'; then
+            echo "the worker has the API's secrets"; exit 1
+          fi
+          ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/smoke_key"
+          python3 backend/scripts/smoke_run.py http://localhost:8000 ci-test "$RUNNER_TEMP/smoke_key" \
+            || { docker logs smoke-worker; docker logs smoke; exit 1; }
+          docker logs smoke-worker
 
       - name: Smoke test frontend runtime image
         if: matrix.service == 'frontend' && matrix.target == 'runtime'
