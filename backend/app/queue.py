@@ -14,19 +14,22 @@ import secrets
 from dataclasses import dataclass
 
 from psycopg.errors import UniqueViolation
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, tuple_
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import GALAXY_GATE_KEY
 from app.jobs import unrunnable_reason
-from app.models import GalaxyInstall, Run, RunStatus
+from app.models import GalaxyInstall, Run, RunStatus, Worker
 from app.notify import notifier, run_topic
 from app.run_log import append_status_line
 
 QUEUE_TOPIC = "queue"
 JOB_TOKEN_SECONDS = 60
+# Workers report in with every heartbeat (5 s) and every claim long poll (25 s at most).
+WORKER_ONLINE_SECONDS = 30
 _CLAIM_ATTEMPTS = 20
 _ACTIVE = (RunStatus.QUEUED.value, RunStatus.RUNNING.value)
 
@@ -89,6 +92,57 @@ def fail_run(run: Run, status: RunStatus, reason: str) -> None:
     run.claim_token_hash = None
     run.job_token_hash = None
     append_status_line(run, f"AnsiDeck: {reason}")
+
+
+def record_worker(db: Session, worker_id: str, slots: int) -> None:
+    """Marks the worker as seen now (the caller commits)."""
+    stmt = insert(Worker).values(id=worker_id[:255], slots=slots)
+    db.execute(
+        stmt.on_conflict_do_update(
+            index_elements=[Worker.id],
+            set_={"slots": stmt.excluded.slots, "last_seen_at": func.now()},
+        )
+    )
+
+
+def online_slots(db: Session) -> int:
+    """How many runs the workers seen lately can run at once (0: no worker is online)."""
+    since = func.now() - func.make_interval(0, 0, 0, 0, 0, 0, WORKER_ONLINE_SECONDS)
+    return db.scalar(
+        select(func.coalesce(func.sum(Worker.slots), 0)).where(Worker.last_seen_at > since)
+    )
+
+
+def wait_reason(db: Session, run: Run) -> str:
+    """Why a queued run hasn't started yet, in the claim rules' order."""
+    if install_pending(db):
+        return "Waiting for a galaxy install to finish"
+    if run.inventory_id is not None:
+        # The run right ahead of it on the same inventory: the last earlier queued one, or else
+        # the one running there now.
+        ahead = db.scalar(
+            select(Run.id)
+            .where(
+                Run.inventory_id == run.inventory_id,
+                Run.status == RunStatus.QUEUED.value,
+                tuple_(Run.queued_at, Run.id) < tuple_(run.queued_at, run.id),
+            )
+            .order_by(Run.queued_at.desc(), Run.id.desc())
+            .limit(1)
+        ) or db.scalar(
+            select(Run.id).where(
+                Run.inventory_id == run.inventory_id, Run.status == RunStatus.RUNNING.value
+            )
+        )
+        if ahead is not None:
+            return f"Waiting behind run #{ahead} (same inventory)"
+    slots = online_slots(db)
+    if slots == 0:
+        return "No worker is online: start one to run queued runs"
+    running = db.scalar(select(func.count()).where(Run.status == RunStatus.RUNNING.value))
+    if running >= slots:
+        return "Waiting for a free worker (all are busy)"
+    return "Waiting for a worker…"
 
 
 def claim_next(db: Session, worker_id: str) -> Claim | None:

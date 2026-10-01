@@ -21,6 +21,9 @@ import {
 
 const ALL_HOSTS = "__all__";
 const NO_VAULT = "__none__";
+// Mirrors the API: 2 h by default, at most 24 h.
+const DEFAULT_TIMEOUT_MINUTES = 120;
+const MAX_TIMEOUT_MINUTES = 24 * 60;
 
 export function RunTriggerPage() {
   const navigate = useNavigate();
@@ -42,6 +45,7 @@ export function RunTriggerPage() {
   const [checkMode, setCheckMode] = React.useState(false);
   const [diffMode, setDiffMode] = React.useState(false);
   const [limit, setLimit] = React.useState("");
+  const [timeoutMinutes, setTimeoutMinutes] = React.useState(String(DEFAULT_TIMEOUT_MINUTES));
   const [extraVarsText, setExtraVarsText] = React.useState("{}");
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
@@ -93,6 +97,12 @@ export function RunTriggerPage() {
       return;
     }
 
+    const minutes = Number(timeoutMinutes);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_TIMEOUT_MINUTES) {
+      setError(`Timeout must be a whole number of minutes from 1 to ${MAX_TIMEOUT_MINUTES}`);
+      return;
+    }
+
     setSubmitting(true);
     try {
       const run = await api.createRun({
@@ -106,6 +116,7 @@ export function RunTriggerPage() {
         diff_mode: diffMode,
         limit: limit.trim() || null,
         extra_vars: extraVars,
+        timeout_seconds: minutes * 60,
       });
       navigate(`/runs/${run.id}`);
     } catch (err) {
@@ -214,6 +225,24 @@ export function RunTriggerPage() {
           value={limit}
           onChange={(e) => setLimit(e.target.value)}
         />
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="run-timeout">Timeout (minutes)</Label>
+        <Input
+          id="run-timeout"
+          type="number"
+          min={1}
+          max={MAX_TIMEOUT_MINUTES}
+          step={1}
+          className="w-40"
+          value={timeoutMinutes}
+          onChange={(e) => setTimeoutMinutes(e.target.value)}
+        />
+        <p className="text-xs text-muted-foreground">
+          The run is stopped (timed out) after running this long. Time spent queued doesn't count. At most 24
+          hours.
+        </p>
       </div>
 
       <div className="flex flex-col gap-2">

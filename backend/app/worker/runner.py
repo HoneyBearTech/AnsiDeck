@@ -239,7 +239,11 @@ class Worker:
             try:
                 response = self.client.post(
                     "/internal/claim",
-                    {"worker_id": self.worker_id, "wait_seconds": self.claim_wait_seconds},
+                    {
+                        "worker_id": self.worker_id,
+                        "slots": self.slots,
+                        "wait_seconds": self.claim_wait_seconds,
+                    },
                     timeout=self.claim_wait_seconds + 15,
                 )
             except ApiUnavailable as exc:
@@ -425,9 +429,8 @@ class Worker:
                 logger.exception("heartbeat failed")
 
     def beat(self) -> None:
+        # Sent even with no runs: it also tells the API this worker is online.
         tasks = self._snapshot()
-        if not tasks:
-            return
         now = time.monotonic()
         for task in tasks:
             if task.deadline is not None and now > task.deadline:
@@ -438,6 +441,7 @@ class Worker:
                 "/internal/heartbeat",
                 {
                     "worker_id": self.worker_id,
+                    "slots": self.slots,
                     "runs": [{"run_id": t.run_id, "claim_token": t.claim_token} for t in tasks],
                 },
                 timeout=max(self.heartbeat_seconds, 2.0),

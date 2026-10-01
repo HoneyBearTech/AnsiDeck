@@ -33,6 +33,11 @@ function isActive(install: { status: GalaxyInstall["status"] } | null): boolean 
   return install?.status === "queued" || install?.status === "running";
 }
 
+function waitingForRuns(count: number | null): string {
+  const runs = !count ? "running playbook runs" : count === 1 ? "1 running run" : `${count} running runs`;
+  return `Waiting for ${runs} to finish (no new run starts meanwhile)…`;
+}
+
 function ItemList({ title, items }: { title: string; items: GalaxyItem[] }) {
   return (
     <div className="flex flex-col gap-2">
@@ -218,7 +223,7 @@ export function GalaxyPage() {
                 <pre className="max-h-96 overflow-auto rounded-md bg-muted p-3 font-mono text-xs whitespace-pre-wrap">
                   {current.log ||
                     (current.status === "queued"
-                      ? "Waiting for running playbook runs to finish (no new run starts meanwhile)…"
+                      ? waitingForRuns(current.waiting_for_runs)
                       : "Waiting for output…")}
                 </pre>
               </div>

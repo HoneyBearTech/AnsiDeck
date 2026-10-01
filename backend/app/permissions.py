@@ -45,6 +45,7 @@ class Permission(StrEnum):
     USERS_MANAGE = "users:manage"
     PROJECTS_MANAGE = "projects:manage"  # create / rename / delete projects
     AUDIT_READ = "audit:read"
+    WORKERS_READ = "workers:read"  # worker processes (host names, pids, slots, last seen)
 
 
 # Permissions that exist only at the global level; a project admin never gets them.
@@ -52,6 +53,7 @@ GLOBAL_ONLY = frozenset(
     {
         Permission.USERS_MANAGE,
         Permission.AUDIT_READ,
+        Permission.WORKERS_READ,
         Permission.GALAXY_MANAGE,
         Permission.PROJECTS_MANAGE,
     }

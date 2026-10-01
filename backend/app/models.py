@@ -264,6 +264,11 @@ class Run(Base):
     extra_vars: Mapped[dict | None] = mapped_column(JSON, default=None)
     status: Mapped[str] = mapped_column(String(20), default=RunStatus.QUEUED.value)
     triggered_by: Mapped[str] = mapped_column(String(150))
+    # The API key that triggered it, if one did: a key may cancel only its own runs, checked by
+    # id rather than by matching the "apikey:<name>" display string in triggered_by.
+    triggered_by_api_key_id: Mapped[int | None] = mapped_column(
+        ForeignKey("api_keys.id", ondelete="SET NULL"), default=None
+    )
     return_code: Mapped[int | None] = mapped_column(Integer, default=None)
 
     # Lifecycle: queued (entered the queue; a retry re-queues) -> claimed (an executor
@@ -330,6 +335,23 @@ class Run(Base):
         ),
         Index("ix_runs_queue", "queued_at", "id", postgresql_where=text("status = 'queued'")),
         Index("ix_runs_lease", "lease_expires_at", postgresql_where=text("status = 'running'")),
+    )
+
+
+class Worker(Base):
+    """A worker process as it last reported in (every claim and heartbeat). Only feeds the
+    admin Workers page and the "why is my run still queued" hints; claiming never reads it.
+    Rows not seen for a day are pruned by the reaper."""
+
+    __tablename__ = "workers"
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)  # "host:pid"
+    slots: Mapped[int] = mapped_column(Integer)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 

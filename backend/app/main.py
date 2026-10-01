@@ -33,6 +33,7 @@ from app.routers import (
     users,
     vault,
     vault_passwords,
+    workers,
 )
 from app.routers import (
     audit as audit_router,
@@ -134,3 +135,4 @@ app.include_router(runs.router, prefix="/api/runs", tags=["runs"])
 app.include_router(api_keys.router, prefix="/api/projects/{project_id}/api-keys", tags=["api-keys"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(audit_router.router, prefix="/api/audit", tags=["audit"])
+app.include_router(workers.router, prefix="/api/workers", tags=["workers"])

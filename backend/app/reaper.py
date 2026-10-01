@@ -7,14 +7,14 @@ and installs whose API process died. Runs every few seconds in the API (reap_onc
 import logging
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app import audit
 from app.db import get_sessionmaker
 from app.galaxy import try_start_install
 from app.jobs import UNRUNNABLE, unrunnable_reason
-from app.models import GalaxyInstall, Run, RunStatus
+from app.models import GalaxyInstall, Run, RunStatus, Worker
 from app.notify import notifier, run_topic
 from app.queue import QUEUE_TOPIC, fail_run
 from app.run_executor import format_duration
@@ -25,6 +25,8 @@ INTERVAL_SECONDS = 5.0
 # Workers enforce timeouts and cancels themselves; these are the backstops' extra patience.
 TIMEOUT_GRACE_SECONDS = 120
 CANCEL_GRACE_SECONDS = 90
+# Workers not seen for this long drop off the Workers page.
+WORKER_RETENTION_SECONDS = 24 * 60 * 60
 _BATCH = 100
 
 
@@ -98,6 +100,10 @@ def reap_once() -> list[int]:
             install.status_reason = "interrupted: the API process running it went away"
             install.finished_at = func.now()
             install.lease_expires_at = None
+        db.commit()
+
+        retention = func.make_interval(0, 0, 0, 0, 0, 0, WORKER_RETENTION_SECONDS)
+        db.execute(delete(Worker).where(Worker.last_seen_at < func.now() - retention))
         db.commit()
 
         for run_id, action, project_id, worker_id in ended:

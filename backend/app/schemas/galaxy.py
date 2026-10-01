@@ -23,6 +23,8 @@ class InstallOut(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime
+    # A queued install starts once the runs running now have finished; None unless queued.
+    waiting_for_runs: int | None = None
 
 
 class InstallDetail(InstallOut):

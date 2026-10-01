@@ -64,6 +64,8 @@ class RunOut(BaseModel):
     hosts_changed: int | None
     hosts_failed: int | None
     hosts_unreachable: int | None
+    # Why a queued run hasn't started (only on GET /runs/{id}; None otherwise).
+    waiting_reason: str | None = None
 
     @field_validator("extra_vars")
     @classmethod

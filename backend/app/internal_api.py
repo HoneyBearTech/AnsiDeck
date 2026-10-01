@@ -26,7 +26,7 @@ from app.hardening import FailureThrottle
 from app.jobs import build_job
 from app.models import Run, RunStatus
 from app.notify import notifier, run_topic
-from app.queue import QUEUE_TOPIC, Claim, claim_next, fail_run, hash_token
+from app.queue import QUEUE_TOPIC, Claim, claim_next, fail_run, hash_token, record_worker
 from app.run_log import append_events
 
 logger = logging.getLogger(__name__)
@@ -113,6 +113,7 @@ router = APIRouter(prefix="/internal")
 
 class ClaimIn(BaseModel):
     worker_id: str = Field(min_length=1, max_length=255)
+    slots: int = Field(1, ge=1, le=256)
     wait_seconds: float = Field(MAX_CLAIM_WAIT_SECONDS, ge=0, le=MAX_CLAIM_WAIT_SECONDS)
 
 
@@ -138,6 +139,7 @@ class HeartbeatRun(BaseModel):
 
 class HeartbeatIn(BaseModel):
     worker_id: str = Field(min_length=1, max_length=255)
+    slots: int = Field(1, ge=1, le=256)
     runs: list[HeartbeatRun] = Field(max_length=256)
 
 
@@ -162,9 +164,19 @@ def _claim_once(worker_id: str) -> Claim | None:
         db.close()
 
 
+def _seen(worker_id: str, slots: int) -> None:
+    db = get_sessionmaker()()
+    try:
+        record_worker(db, worker_id, slots)
+        db.commit()
+    finally:
+        db.close()
+
+
 @router.post("/claim", response_model=ClaimOut, responses={204: {"description": "Nothing to run"}})
 async def claim(body: ClaimIn) -> ClaimOut | Response:
     """Long poll: returns as soon as a run can be claimed, or 204 after wait_seconds."""
+    await asyncio.to_thread(_seen, body.worker_id, body.slots)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + body.wait_seconds
     with notifier.listen(QUEUE_TOPIC) as listener:
@@ -270,6 +282,7 @@ def heartbeat(body: HeartbeatIn, db: Session = Depends(get_db)) -> dict[str, lis
     """Renews the lease of each run the worker still owns: "ok", "cancel" (stop it), or "gone"
     (the claim ended; stop without reporting)."""
     lease = get_settings().run_lease_seconds
+    record_worker(db, body.worker_id, body.slots)
     answers: list[dict] = []
     for item in body.runs:
         row = db.execute(
