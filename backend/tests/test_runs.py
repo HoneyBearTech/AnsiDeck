@@ -544,14 +544,23 @@ def test_live_run_websocket_streams_to_the_end_without_holding_a_transaction(
 
     with client.websocket_connect(f"/api/runs/{run_id}/ws") as ws:
         first = ws.receive_text()  # streaming live, mid-pause
+        # Poll: the stream's short finished-check can be caught for an instant between its
+        # SELECT and its ROLLBACK. A transaction held by the stream would last the whole pause.
+        deadline = time.monotonic() + 1
         with get_engine().connect() as conn:
-            idle = conn.execute(
-                text(
-                    "SELECT query FROM pg_stat_activity WHERE datname = current_database() "
-                    "AND state LIKE 'idle in transaction%' AND pid <> pg_backend_pid()"
-                )
-            ).scalars()
-            assert list(idle) == []
+            while True:
+                idle = conn.execute(
+                    text(
+                        "SELECT query FROM pg_stat_activity WHERE datname = current_database() "
+                        "AND state LIKE 'idle in transaction%' AND pid <> pg_backend_pid()"
+                    )
+                ).scalars()
+                idle = list(idle)
+                conn.rollback()  # a fresh snapshot of pg_stat_activity for the next poll
+                if not idle or time.monotonic() > deadline:
+                    break
+                time.sleep(0.05)
+            assert idle == []
         rest, code = _receive_until_closed(ws)
 
     # Code 1000 means "that was everything": the stream matches the log line for line.
