@@ -86,6 +86,7 @@ class EventOut(BaseModel):
     label: str
     description: str
     project: bool  # available to project channels (global channels get every event)
+    group: str  # Runs, Operations, Security
 
 
 class CatalogOut(BaseModel):

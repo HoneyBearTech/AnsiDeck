@@ -8,7 +8,16 @@ import json
 import time
 from dataclasses import dataclass, field
 
-from app.notifications import RUN_FAILED, RUN_RECOVERED
+from app.notifications import (
+    ADMIN_CHANGE,
+    LOGIN_ATTACK,
+    QUEUE_STUCK,
+    RESOLVED,
+    RUN_FAILED,
+    RUN_RECOVERED,
+    WORKER_OFFLINE,
+    WORKER_UNISOLATED,
+)
 
 TEST = "test"
 _RED, _GREEN, _BLUE = 0xE5484D, 0x30A46C, 0x3E63DD
@@ -42,6 +51,103 @@ def _hosts(hosts: dict | None) -> str | None:
     return f"{', '.join(parts) or 'none finished'} (of {hosts['total']})"
 
 
+def _link(public_url: str, path: str) -> str | None:
+    return f"{public_url}{path}" if public_url else None
+
+
+def _ops(event: str, payload: dict, public_url: str) -> Message:
+    resolved = payload.get("state") == RESOLVED
+    worker = _clip(payload.get("worker", "?"), 150)
+    if event == WORKER_OFFLINE:
+        if resolved:
+            return Message(
+                f"Worker {worker} is back online",
+                "It is reporting in again and can take runs.",
+                _GREEN,
+                url=_link(public_url, "/workers"),
+            )
+        facts = [("Last seen", _clip(payload.get("last_seen_at") or "?", 40))]
+        if payload.get("slots"):
+            facts.append(("Slots", str(payload["slots"])))
+        return Message(
+            f"Worker {worker} is offline",
+            "It stopped reporting in; its running runs are failed as worker lost, and queued "
+            "runs wait for another worker.",
+            _RED,
+            facts=facts,
+            url=_link(public_url, "/workers"),
+        )
+    if event == WORKER_UNISOLATED:
+        return Message(
+            f"Worker {worker} runs playbooks without isolation",
+            "Its playbooks run as the worker's own user and can read other runs' files. Run it "
+            "as root with only the SETUID, SETGID, CHOWN and KILL capabilities "
+            "(docker-compose.yml).",
+            _RED,
+            url=_link(public_url, "/workers"),
+        )
+    if resolved:
+        return Message(
+            "Queue moving again",
+            "No run is waiting too long for a worker any more.",
+            _GREEN,
+            url=_link(public_url, "/runs"),
+        )
+    waiting = payload.get("waiting", "?")
+    return Message(
+        f"Queue stuck: {waiting} run{'' if waiting == 1 else 's'} waiting over "
+        f"{payload.get('minutes', '?')} min",
+        _clip(payload.get("reason") or "", 300),
+        _RED,
+        facts=[
+            (
+                "Oldest",
+                f"run #{payload.get('oldest_run_id', '?')}, "
+                f"queued {_clip(payload.get('queued_at') or '?', 40)}",
+            )
+        ],
+        url=_link(public_url, "/runs"),
+    )
+
+
+def _security(event: str, payload: dict, public_url: str) -> Message:
+    ip = _clip(payload.get("ip") or "?", 64)
+    if event == LOGIN_ATTACK:
+        if payload.get("kind") == "second_factor":
+            return Message(
+                f"Repeated wrong 2FA codes for {_clip(payload.get('user') or '?', 150)} from {ip}",
+                "Someone who knows this user's password is guessing two-factor codes; sign-ins "
+                "are blocked for a while. Consider changing the password.",
+                _RED,
+                url=_link(public_url, "/audit"),
+            )
+        if payload.get("kind") == "worker_token":
+            return Message(
+                f"Wrong worker token from {ip}",
+                "Something called the internal worker API with an invalid WORKER_TOKEN.",
+                _RED,
+                url=_link(public_url, "/audit"),
+            )
+        return Message(
+            f"Login attack from {ip}",
+            "Repeated failed sign-ins locked this address or user out for a few minutes.",
+            _RED,
+            facts=[("User name tried", _clip(payload.get("user") or "?", 150))],
+            url=_link(public_url, "/audit"),
+        )
+    user = _clip(payload.get("user") or "?", 150)
+    facts = [("By", _clip(payload.get("by") or "?", 150))]
+    if payload.get("ip"):
+        facts.append(("From", ip))
+    return Message(
+        f"Admin change: {user} {_clip(payload.get('change', '?'), 100)}",
+        "Check the audit log if you didn't expect this.",
+        _RED,
+        facts=facts,
+        url=_link(public_url, "/audit"),
+    )
+
+
 def build(event: str, payload: dict, public_url: str = "") -> Message:
     if event == TEST:
         return Message(
@@ -49,6 +155,10 @@ def build(event: str, payload: dict, public_url: str = "") -> Message:
             summary=f"This channel works (sent by {_clip(payload.get('sent_by', '?'), 150)}).",
             color=_BLUE,
         )
+    if event in (WORKER_OFFLINE, WORKER_UNISOLATED, QUEUE_STUCK):
+        return _ops(event, payload, public_url)
+    if event in (LOGIN_ATTACK, ADMIN_CHANGE):
+        return _security(event, payload, public_url)
     run_id = payload.get("run_id")
     target = _clip(payload.get("inventory", "?"), 150)
     if payload.get("group"):
