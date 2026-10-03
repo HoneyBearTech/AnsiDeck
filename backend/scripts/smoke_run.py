@@ -10,6 +10,8 @@ import sys
 import time
 import urllib.request
 
+# The worker must be isolated: the run executes as its slot's own user (uid 20000 + slot),
+# and a module task (unlike debug) needs that user's home for ansible's temp files.
 PLAYBOOK = """\
 - hosts: all
   connection: local
@@ -18,6 +20,13 @@ PLAYBOOK = """\
     - name: say hello
       ansible.builtin.debug:
         msg: hello from a worker
+    - name: who runs this
+      ansible.builtin.command: id -u
+      register: uid
+      changed_when: false
+    - name: a slot user, not the worker's own
+      ansible.builtin.assert:
+        that: uid.stdout | int >= 20000
 """
 
 

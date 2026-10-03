@@ -347,6 +347,8 @@ class Worker(Base):
 
     id: Mapped[str] = mapped_column(String(255), primary_key=True)  # "host:pid"
     slots: Mapped[int] = mapped_column(Integer)
+    # Whether its runs execute as per-slot users (app.run_isolation); None: not reported.
+    isolated: Mapped[bool | None] = mapped_column(Boolean, default=None)
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

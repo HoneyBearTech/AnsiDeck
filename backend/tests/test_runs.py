@@ -1,7 +1,6 @@
 import glob
 import json
 import sys
-import tempfile
 import textwrap
 import time
 from datetime import datetime
@@ -371,7 +370,7 @@ def test_run_cleans_up_private_data_dir(client: TestClient, tmp_path) -> None:
     run_id = create_response.json()["id"]
     _wait_for_completion(client, run_id)
 
-    leftover = glob.glob(f"{tempfile.gettempdir()}/ansideck-run-{run_id}-*")
+    leftover = glob.glob(f"/tmp/ansideck-run-{run_id}-*")  # app.run_worker.prepare()
     assert leftover == []
 
 

@@ -4,6 +4,8 @@ import socket
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.run_isolation import MAX_SLOTS
+
 # Same values as app.config, which this module must not import.
 DEFAULT_WORKER_TOKEN = "change-me-dev-only-worker-token"
 MIN_WORKER_TOKEN_LENGTH = 32
@@ -18,7 +20,7 @@ class WorkerSettings(BaseSettings):
     ansideck_api_url: str = "http://backend:8001"
     worker_token: str = DEFAULT_WORKER_TOKEN
     worker_id: str = Field(default_factory=lambda: f"{socket.gethostname()}:{os.getpid()}")
-    worker_slots: int = Field(1, ge=1, le=64)
+    worker_slots: int = Field(1, ge=1, le=MAX_SLOTS)  # one run user per slot
     # Read-only for the worker; the API installs into it.
     galaxy_dir: str = "/data/galaxy"
     # On SIGTERM, how long running runs may finish before they are stopped.

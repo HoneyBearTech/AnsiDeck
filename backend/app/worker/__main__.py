@@ -6,6 +6,7 @@ import logging
 import os
 import signal
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -14,8 +15,8 @@ import httpx
 from pydantic import ValidationError
 
 from app.process_hardening import disable_process_inspection
+from app.run_isolation import check_available, prepare_homes
 from app.worker.client import ApiClient, ApiUnavailable
-from app.worker.runner import Worker
 from app.worker.settings import WorkerSettings
 
 logger = logging.getLogger("app.worker")
@@ -42,6 +43,27 @@ def load_settings() -> WorkerSettings:
     for name in [n for n in os.environ if n.upper() == "WORKER_TOKEN"]:
         del os.environ[name]
     return settings
+
+
+def check_isolation(settings: WorkerSettings) -> bool:
+    """Whether runs will be isolated (app.run_isolation). In production a worker that can't
+    isolate them refuses to start; elsewhere (tests, macOS) it runs them as itself, loudly."""
+    reason = check_available(settings.worker_slots)
+    if reason is None:
+        prepare_homes(settings.worker_slots)
+        return True
+    if settings.environment.lower() == "production":
+        sys.exit(
+            f"Refusing to start: playbook runs can't be isolated ({reason}). Run the worker "
+            "as root with only the SETUID, SETGID, CHOWN and KILL capabilities, as "
+            "docker-compose.yml does."
+        )
+    logger.warning(
+        "runs are NOT isolated (%s): every playbook runs as the worker's own user and can "
+        "read other runs' files. Acceptable in development only.",
+        reason,
+    )
+    return False
 
 
 def wait_for_api(client: ApiClient, timeout: float = _API_WAIT_SECONDS) -> None:
@@ -87,6 +109,7 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)  # not every heartbeat and poll
     disable_process_inspection()
     settings = load_settings()
+    isolated = check_isolation(settings)
 
     http = httpx.Client(
         base_url=settings.ansideck_api_url,
@@ -95,11 +118,18 @@ def main() -> None:
     client = ApiClient(http)
     wait_for_api(client)
 
+    # Importing ansible (app.scrub reads vault values with it) creates its local temp dir in
+    # $HOME, which in the worker container is on the read-only root filesystem.
+    if "ANSIBLE_HOME" not in os.environ:
+        os.environ["ANSIBLE_HOME"] = tempfile.mkdtemp(prefix="ansideck-worker-")
+    from app.worker.runner import Worker
+
     worker = Worker(
         client,
         worker_id=settings.worker_id,
         slots=settings.worker_slots,
         galaxy_dir=settings.galaxy_dir,
+        isolated=isolated,
     )
     if os.getpid() == 1:
         threading.Thread(target=reap_orphans, args=(worker.active_pids,), daemon=True).start()
@@ -109,9 +139,10 @@ def main() -> None:
         signal.signal(signum, lambda *_: stop.set())
     worker.start()
     logger.info(
-        "worker %s ready: %s slot(s), API %s",
+        "worker %s ready: %s slot(s), runs %s, API %s",
         settings.worker_id,
         settings.worker_slots,
+        "isolated" if isolated else "NOT isolated",
         settings.ansideck_api_url,
     )
     while not stop.wait(1):
