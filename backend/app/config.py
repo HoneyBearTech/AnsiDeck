@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -78,6 +79,19 @@ class Settings(BaseSettings):
     # Audit events older than this are pruned at startup; 0 keeps them forever.
     audit_retention_days: int = 365
 
+    # Notifications (app.notifications). Webhooks to loopback, private, link-local and other
+    # non-public addresses are refused unless their host name, address or CIDR is listed here
+    # (comma-separated), e.g. "ntfy.lan,192.168.1.0/24" for a self-hosted service.
+    notify_allowed_private_hosts: str = ""
+    # Email notifications go through this one SMTP server; email channels hold recipients
+    # only. Unset: no email channels.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_tls: Literal["starttls", "tls", "none"] = "starttls"
+
     # Test-only escape hatch: lets requirements.yml reference local tarballs/dirs
     # so tests can install offline. Must stay False in any real deployment —
     # local sources let a user read arbitrary paths inside the container.
@@ -96,6 +110,28 @@ class Settings(BaseSettings):
     @classmethod
     def _strip_trailing_slash(cls, v: str) -> str:
         return v.strip().rstrip("/")
+
+    @property
+    def notify_allowlist(self) -> list[str]:
+        return [e.strip() for e in self.notify_allowed_private_hosts.split(",") if e.strip()]
+
+    @model_validator(mode="after")
+    def _validate_smtp(self) -> "Settings":
+        if not self.smtp_host:
+            return self
+        if not self.smtp_from:
+            raise ValueError("SMTP_HOST is set, so SMTP_FROM (the sender address) is required.")
+        local = self.smtp_host in ("localhost", "127.0.0.1", "::1")
+        if (
+            self.environment.lower() == "production"
+            and self.smtp_tls == "none"
+            and not (local or self.smtp_host in self.notify_allowlist)
+        ):
+            raise ValueError(
+                "ENVIRONMENT=production refuses SMTP_TLS=none to a remote server (the password "
+                "and messages would cross the network in clear text)."
+            )
+        return self
 
     @property
     def oidc_enabled(self) -> bool:

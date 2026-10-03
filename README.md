@@ -135,6 +135,32 @@ they are.
 - The audit log records sign-ins, run activity and permission denials, and is kept for
   `AUDIT_RETENTION_DAYS` (365 by default).
 
+## Notifications
+
+The **Notifications** page sends events to Discord, Slack, Microsoft Teams (a Workflows
+webhook), a generic webhook, email, Pushbullet or Pushover. Each channel picks its events:
+
+- **Run failed**: a run failed, timed out, or lost its worker. The message names the failed
+  tasks and their hosts.
+- **Run recovered**: a playbook succeeded on an inventory after its previous run there failed.
+
+Project admins manage their project's channels. Global admins manage global channels, which
+get run events from every project. Use **Send test** to check a channel, and its **History**
+to see what was sent; failed deliveries are retried for up to about 1 h 45 min.
+
+- Messages carry names, statuses and counts, never secrets or task output. Webhook URLs and
+  push tokens are stored encrypted and never shown again after you save them.
+- Webhooks can't point at private addresses (localhost, `10.x`, `192.168.x`, the compose
+  network) unless you list the host or network in `NOTIFY_ALLOWED_PRIVATE_HOSTS`, for example
+  a self-hosted service on your LAN. Requests don't use a proxy and don't follow redirects.
+- Email uses one SMTP server set in `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
+  `SMTP_PASSWORD`, `SMTP_FROM` and `SMTP_TLS` (see `.env.example`); email channels only hold
+  the recipients.
+- A generic webhook gets JSON (`event`, `title`, `summary`, `url`, `data`) and, with a
+  signing secret, an `X-AnsiDeck-Signature: sha256=<HMAC of "<X-AnsiDeck-Timestamp>.<body>">`
+  header.
+- Links to runs need `PUBLIC_URL`.
+
 ## Triggering runs from CI
 
 A project admin can create an API key under **Projects → API keys**. Keys belong to one project, are shown

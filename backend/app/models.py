@@ -402,3 +402,62 @@ class AuditEvent(Base):
     outcome: Mapped[str] = mapped_column(String(20))
     ip: Mapped[str | None] = mapped_column(String(64), default=None)
     detail: Mapped[dict | None] = mapped_column(JSON, default=None)
+
+
+class NotificationChannel(Base):
+    """Where notifications go (app.notifications). Global when project_id is NULL (global
+    admins; ops/security events, and run events of every project), else a project's own (its
+    admins; that project's run events). Its URL, signing secret and
+    recipients are one encrypted JSON blob: a webhook URL is itself a credential."""
+
+    __tablename__ = "notification_channels"
+    __table_args__ = (UniqueConstraint("project_id", "name", postgresql_nulls_not_distinct=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, default=None
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    kind: Mapped[str] = mapped_column(String(20))
+    config_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
+    events: Mapped[list[str]] = mapped_column(JSON, default=list)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str] = mapped_column(String(150))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class NotificationDelivery(Base):
+    """One event for one channel: an outbox row, written in the same transaction as what it
+    reports and sent (with retries) by app.notifications.dispatch. The payload is metadata
+    only, never secrets or run output."""
+
+    __tablename__ = "notification_deliveries"
+    __table_args__ = (
+        UniqueConstraint("channel_id", "dedup_key"),
+        Index(
+            "ix_notification_deliveries_due",
+            "next_attempt_at",
+            postgresql_where=text("status IN ('pending', 'sending')"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    channel_id: Mapped[int] = mapped_column(
+        ForeignKey("notification_channels.id", ondelete="CASCADE"), index=True
+    )
+    event: Mapped[str] = mapped_column(String(50))
+    payload: Mapped[dict] = mapped_column(JSON)
+    # At most one delivery per channel and key (events that must not repeat, e.g. 4D-2's).
+    dedup_key: Mapped[str | None] = mapped_column(String(200), default=None)
+    status: Mapped[str] = mapped_column(String(10), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_status_code: Mapped[int | None] = mapped_column(Integer, default=None)
+    last_error: Mapped[str | None] = mapped_column(String(300), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

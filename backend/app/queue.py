@@ -17,12 +17,13 @@ from psycopg.errors import UniqueViolation
 from sqlalchemy import func, select, text, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.config import get_settings
 from app.db import GALAXY_GATE_KEY
 from app.jobs import unrunnable_reason
 from app.models import GalaxyInstall, Run, RunStatus, Worker
+from app.notifications.events import run_finished
 from app.notify import notifier, run_topic
 from app.run_log import append_status_line
 
@@ -92,6 +93,8 @@ def fail_run(run: Run, status: RunStatus, reason: str) -> None:
     run.claim_token_hash = None
     run.job_token_hash = None
     append_status_line(run, f"AnsiDeck: {reason}")
+    if (session := object_session(run)) is not None:
+        run_finished(session, run)
 
 
 def record_worker(db: Session, worker_id: str, slots: int, isolated: bool | None = None) -> None:

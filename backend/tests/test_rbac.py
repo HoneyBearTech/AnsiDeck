@@ -52,6 +52,16 @@ MATRIX = [
     ("GET", "/api/projects/1/api-keys", ADMIN),
     ("POST", "/api/projects/1/api-keys", ADMIN),
     ("DELETE", "/api/projects/1/api-keys/999", ADMIN),
+    ("GET", "/api/notifications/catalog", ADMIN),
+    ("GET", "/api/notifications/channels", ADMIN),
+    ("POST", "/api/notifications/channels", ADMIN),
+    ("PATCH", "/api/notifications/channels/999", ADMIN),
+    ("DELETE", "/api/notifications/channels/999", ADMIN),
+    ("POST", "/api/notifications/channels/999/test", ADMIN),
+    ("GET", "/api/notifications/channels/999/deliveries", ADMIN),
+    ("GET", "/api/projects/1/notifications/channels", ADMIN),
+    ("POST", "/api/projects/1/notifications/channels", ADMIN),
+    ("DELETE", "/api/projects/1/notifications/channels/999", ADMIN),
 ]
 
 
