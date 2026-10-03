@@ -2,7 +2,7 @@
 executes them. It never touches the database or the encryption key: the API hands it each
 job's secrets once, and it scrubs output with them before sending it back.
 
-Only app.worker.*, app.run_executor, app.scrub (with app.vault), app.subprocess_env and
-app.process_hardening may be imported here (a test enforces it): in particular never
-app.config, which would load the API's settings and secrets.
+Only app.worker.*, app.run_executor, app.run_isolation, app.scrub (with app.vault),
+app.subprocess_env and app.process_hardening may be imported here (a test enforces it): in
+particular never app.config, which would load the API's settings and secrets.
 """

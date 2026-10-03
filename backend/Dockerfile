@@ -8,6 +8,14 @@ RUN mkdir -p /data
 RUN apt-get update \
     && apt-get install -y --no-install-recommends openssh-client git \
     && rm -rf /var/lib/apt/lists/*
+# One user per worker slot (app.run_isolation): the worker runs each slot's playbooks as
+# ansideck-run<n>, uid/gid 20000+n, with no capabilities. ssh and ansible refuse to run as a
+# uid without a passwd entry. The worker creates the homes (on its /tmp tmpfs) at startup.
+RUN for n in $(seq 0 63); do \
+      groupadd --gid $((20000 + n)) "ansideck-run$n" \
+      && useradd --uid $((20000 + n)) --gid $((20000 + n)) --no-create-home \
+         --home-dir "/tmp/ansideck-home/run$n" --shell /usr/sbin/nologin "ansideck-run$n"; \
+    done
 
 FROM base AS deps
 COPY pyproject.toml uv.lock ./
@@ -26,6 +34,14 @@ FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b
 RUN apt-get update \
     && apt-get install -y --no-install-recommends openssh-client git \
     && rm -rf /var/lib/apt/lists/*
+# One user per worker slot (app.run_isolation): the worker runs each slot's playbooks as
+# ansideck-run<n>, uid/gid 20000+n, with no capabilities. ssh and ansible refuse to run as a
+# uid without a passwd entry. The worker creates the homes (on its /tmp tmpfs) at startup.
+RUN for n in $(seq 0 63); do \
+      groupadd --gid $((20000 + n)) "ansideck-run$n" \
+      && useradd --uid $((20000 + n)) --gid $((20000 + n)) --no-create-home \
+         --home-dir "/tmp/ansideck-home/run$n" --shell /usr/sbin/nologin "ansideck-run$n"; \
+    done
 RUN useradd --create-home --uid 1000 appuser \
     && mkdir -p /data \
     && chown appuser:appuser /data
@@ -34,7 +50,9 @@ COPY --from=build /app /app
 ENV PATH="/app/.venv/bin:$PATH"
 USER appuser
 # 8000: the API. 8001: the internal worker API (workers only; never publish it).
-# The same image runs a worker with the command: python -m app.worker
+# The same image runs a worker with the command: python -m app.worker, as root with only
+# the SETUID, SETGID, CHOWN and KILL capabilities (see docker-compose.yml): it runs
+# each slot's playbooks as that slot's own user, and refuses to start in production without.
 EXPOSE 8000 8001
 HEALTHCHECK --interval=30s --timeout=3s CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
 CMD ["fastapi", "run", "app/main.py", "--host", "0.0.0.0", "--port", "8000"]

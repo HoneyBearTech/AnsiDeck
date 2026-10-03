@@ -35,6 +35,7 @@ export function WorkersPage() {
   const online = workers?.filter((w) => w.online) ?? [];
   const slots = online.reduce((sum, w) => sum + w.slots, 0);
   const busy = online.reduce((sum, w) => sum + w.running, 0);
+  const unisolated = online.filter((w) => w.isolated === false);
 
   return (
     <div className="flex flex-col gap-6">
@@ -64,6 +65,20 @@ export function WorkersPage() {
           </p>
         ))}
 
+      {unisolated.length > 0 && (
+        <div className="rounded-md bg-status-changed/10 p-4">
+          <p className="text-sm font-medium text-status-changed">
+            {unisolated.length === 1 ? "A worker runs" : `${unisolated.length} workers run`} playbooks without
+            isolation
+          </p>
+          <p className="text-sm text-status-changed">
+            Its playbooks run as the worker's own user and can read other runs' files. Fine for development
+            only; in production a worker refuses to start this way. Run it as docker-compose.yml does (as root
+            with only the SETUID, SETGID, CHOWN and KILL capabilities).
+          </p>
+        </div>
+      )}
+
       <div className="flex flex-col gap-2">
         {workers?.map((worker) => (
           <Card key={worker.id}>
@@ -72,6 +87,16 @@ export function WorkersPage() {
                 <Badge variant={worker.online ? "ok" : "skipped"}>
                   {worker.online ? "online" : "offline"}
                 </Badge>
+                {worker.isolated === true && (
+                  <Badge variant="outline" title="Each slot runs its playbooks as a user of its own">
+                    isolated
+                  </Badge>
+                )}
+                {worker.isolated === false && (
+                  <Badge variant="changed" title="Playbooks run as the worker's own user">
+                    not isolated
+                  </Badge>
+                )}
                 <span className="font-mono text-sm">{worker.id}</span>
               </div>
               <span className="text-sm text-muted-foreground">

@@ -4,14 +4,13 @@ and one heartbeat thread for the whole worker (lease renewal, cancel, timeout, s
 
 import json
 import logging
-import shutil
-import tempfile
 import threading
 import time
 from collections import deque
 from pathlib import Path
 
-from app.run_executor import ExecutionHandle, format_duration, host_counts, run_in_worker
+from app.run_executor import ExecutionHandle, format_duration, host_counts, run_in_worker, sweep
+from app.run_isolation import RunIdentity, identity_for_slot
 from app.scrub import build_scrubber
 from app.subprocess_env import clean_env
 from app.worker.client import ApiClient, ApiUnavailable
@@ -24,6 +23,7 @@ MAX_BATCH_BYTES = 1024 * 1024
 _TRUNCATED_STDOUT_CHARS = 64 * 1024
 _BATCH_DELAY_SECONDS = 0.2
 _FLUSH_TIMEOUT_SECONDS = 60.0
+_DIRTY_SLOT_RETRY_SECONDS = 30.0
 
 # Stop reasons (ExecutionHandle.stop_reason) and what they become.
 CANCELLED = "cancelled"
@@ -175,6 +175,7 @@ class Worker:
         worker_id: str,
         slots: int = 1,
         galaxy_dir: str | Path = "/data/galaxy",
+        isolated: bool = False,
         claim_wait_seconds: float = 25.0,
         heartbeat_seconds: float = 5.0,
         fence_seconds: float = 45.0,
@@ -183,6 +184,8 @@ class Worker:
         self.worker_id = worker_id
         self.slots = slots
         self.galaxy_dir = Path(galaxy_dir)
+        # Each slot runs its playbooks as a user of its own (app.run_isolation).
+        self.isolated = isolated
         self.claim_wait_seconds = claim_wait_seconds
         self.heartbeat_seconds = heartbeat_seconds
         self.fence_seconds = fence_seconds
@@ -197,7 +200,10 @@ class Worker:
 
     def start(self) -> None:
         for n in range(self.slots):
-            thread = threading.Thread(target=self._slot, name=f"slot-{n}", daemon=True)
+            identity = identity_for_slot(n) if self.isolated else None
+            thread = threading.Thread(
+                target=self._slot, args=(identity,), name=f"slot-{n}", daemon=True
+            )
             thread.start()
             self._slot_threads.append(thread)
         self._heartbeat_thread = threading.Thread(
@@ -233,15 +239,36 @@ class Worker:
 
     # ------------------------------------------------------------------ slots
 
-    def _slot(self) -> None:
+    def _sweep_until_clean(self, identity: RunIdentity) -> bool:
+        """Never hand a run a slot whose user still has processes (a previous run's, maybe
+        another project's): keep sweeping, not claiming, until it is clean. False if the
+        worker is stopping first."""
+        while not sweep(identity):
+            logger.error(
+                "slot user %s still has processes; not running anything on this slot "
+                "(retrying in %.0f s)",
+                identity.name,
+                _DIRTY_SLOT_RETRY_SECONDS,
+            )
+            if self._stopping.wait(_DIRTY_SLOT_RETRY_SECONDS):
+                return False
+        return True
+
+    def _slot(self, identity: RunIdentity | None = None) -> None:
         delay = 1.0
+        dirty = identity is not None  # whatever an earlier worker left behind
         while not self._stopping.is_set():
+            if dirty:
+                if identity is not None and not self._sweep_until_clean(identity):
+                    break
+                dirty = False
             try:
                 response = self.client.post(
                     "/internal/claim",
                     {
                         "worker_id": self.worker_id,
                         "slots": self.slots,
+                        "isolated": self.isolated,
                         "wait_seconds": self.claim_wait_seconds,
                     },
                     timeout=self.claim_wait_seconds + 15,
@@ -265,12 +292,15 @@ class Worker:
             if self._stopping.is_set():  # claimed while shutting down: end it at once
                 task.stop(SHUTDOWN)
             try:
-                self._execute(task, claim["job_token"])
+                self._execute(task, claim["job_token"], identity)
             except Exception:  # noqa: BLE001 - one run's failure must not end the slot
                 logger.exception("run %s: the worker failed", task.run_id)
             finally:
+                dirty = True
                 with self._lock:
                     self._tasks.pop(task.run_id, None)
+        if identity is not None and dirty:
+            sweep(identity)
 
     def _fetch_job(self, task: RunTask, job_token: str) -> dict | None:
         for delay in (1, 2, 4, 8, 16, None):
@@ -298,7 +328,7 @@ class Worker:
             "ANSIBLE_ROLES_PATH": str(self.galaxy_dir / "roles"),
         }
 
-    def _execute(self, task: RunTask, job_token: str) -> None:
+    def _execute(self, task: RunTask, job_token: str, identity: RunIdentity | None = None) -> None:
         job = self._fetch_job(task, job_token)
         if job is None:
             return  # the lease runs out and the reaper ends the run, unless the API did
@@ -318,21 +348,14 @@ class Worker:
         status: str | None = None
         return_code: int | None = None
         crashed = False
-        pdd = tempfile.mkdtemp(prefix=f"ansideck-run-{task.run_id}-")
         try:
-            project_dir = Path(pdd) / "project"
-            project_dir.mkdir()
-            (project_dir / "playbook.yml").write_text(job["playbook"])
-            inventory_dir = Path(pdd) / "inventory"
-            inventory_dir.mkdir()
-            inventory_path = inventory_dir / "hosts.yml"
-            inventory_path.write_text(job["inventory"])
             vault_password = job["vault_password"]
+            # The run's process writes these files itself, as the slot's user.
             status, return_code = run_in_worker(
                 {
-                    "private_data_dir": pdd,
-                    "playbook": "playbook.yml",
-                    "inventory": str(inventory_path),
+                    "files": {"playbook": job["playbook"], "inventory": job["inventory"]},
+                    "prefix": f"ansideck-run-{task.run_id}-",
+                    "own_home": identity is not None,
                     "ssh_key": job["ssh_key"],
                     "cmdline": job["cmdline"],
                     "limit": job["limit"],
@@ -346,6 +369,7 @@ class Worker:
                 clean_env(self._galaxy_env()),
                 on_event,
                 task.handle,
+                identity,
             )
         except Exception:  # noqa: BLE001 - reported as a failed run below
             if task.handle.stop_reason is None:
@@ -353,7 +377,6 @@ class Worker:
             crashed = True  # (a stopped run's last, cut-off output line can land here)
         finally:
             del job
-            shutil.rmtree(pdd, ignore_errors=True)
 
         flushed = sender.close()
         reason = task.handle.stop_reason
@@ -442,6 +465,7 @@ class Worker:
                 {
                     "worker_id": self.worker_id,
                     "slots": self.slots,
+                    "isolated": self.isolated,
                     "runs": [{"run_id": t.run_id, "claim_token": t.claim_token} for t in tasks],
                 },
                 timeout=max(self.heartbeat_seconds, 2.0),

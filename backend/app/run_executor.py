@@ -1,21 +1,25 @@
 """Runs one ansible-runner job in a child process (app.run_worker) and relays its events.
 
-Imports only the standard library (nothing from app.*), so it can move into the Phase 4B
-worker process, which has no database or encryption key; process isolation (a separate
-UID or sandbox, Phase 4C) goes here too.
+Imports only the standard library and app.run_isolation (also standard library only): it
+runs in the worker process, which has no database or encryption key. With a RunIdentity the
+child runs as that slot's own user, and sweep() cleans up after it (Phase 4C).
 """
 
 import contextlib
 import json
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import sys
 import threading
+import time
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
+
+from app.run_isolation import SWEEP_DIRS, RunIdentity, replace_home, wrap
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +28,9 @@ _WORKER_COMMAND = [sys.executable, "-m", "app.run_worker"]
 _WORKER_STOP_GRACE_SECONDS = 10
 # ansible-runner checks for a cancel (our SIGTERM) once per pexpect wait, 5 s by default.
 _CANCEL_POLL_SECONDS = 1
+_SWEEP_TIMEOUT_SECONDS = 60
+_SWEEP_ATTEMPTS = 3
+_HOME_NOT_CLEAN = 3  # app.run_worker.HOME_NOT_CLEAN (not imported: that loads ansible)
 
 
 def format_duration(seconds: int) -> str:
@@ -110,6 +117,69 @@ class ExecutionHandle:
         threading.Thread(target=stop_worker, args=(proc,), daemon=True).start()
 
 
+def processes_of(uid: int) -> list[int]:
+    """Live (not zombie) processes whose real, effective, saved or filesystem uid is `uid`
+    (Linux; read from /proc/<pid>/status, which stays readable for non-dumpable processes,
+    unlike the owner of /proc/<pid> itself)."""
+    found = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            status = (entry / "status").read_text()
+        except OSError:
+            continue
+        fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
+        if fields.get("State", "").split()[:1] == ["Z"]:
+            continue
+        if str(uid) in fields.get("Uid", "").split():
+            found.append(int(entry.name))
+    return found
+
+
+def sweep(identity: RunIdentity) -> bool:
+    """Kills every process of the slot's user and deletes its files in the shared temp dirs
+    and its home (as that user: the worker never touches a run's files). True once no process
+    of it is left and its home is empty and private; False if that failed every attempt, and
+    then the slot must not run anything."""
+    command = wrap([sys.executable, "-m", "app.run_worker", "--sweep", *SWEEP_DIRS], identity)
+    for attempt in range(_SWEEP_ATTEMPTS):
+        home_clean = False
+        try:
+            done = subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+                cwd=_BACKEND_ROOT,
+                timeout=_SWEEP_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("sweeping %s timed out", identity.name)
+        else:
+            home_clean = done.returncode == 0
+            if done.returncode == _HOME_NOT_CLEAN:
+                logger.warning("%s's home held another user's files; replacing it", identity.name)
+                try:
+                    replace_home(identity)
+                    home_clean = True
+                except OSError:
+                    logger.exception("could not replace the home of %s", identity.name)
+        left = processes_of(identity.uid)
+        if not left and home_clean:
+            return True
+        logger.warning(
+            "%s is not clean after sweep %s (%s process(es) left)",
+            identity.name,
+            attempt + 1,
+            len(left),
+        )
+        time.sleep(0.5)
+    return False
+
+
 def _process_table() -> dict[int, tuple[int, str]]:
     """{pid: (parent pid, command line)} of every visible process."""
     table: dict[int, tuple[int, str]] = {}
@@ -172,19 +242,41 @@ def kill_leftovers(marker: str) -> int:
     return len(frozen)
 
 
+def _clean_up(identity: RunIdentity | None, private_data_dir: str | None) -> None:
+    """Nothing of the run may outlive it: after a cancel, ansible's task workers would."""
+    if identity is not None:
+        if not sweep(identity):
+            logger.error("could not end every process of %s", identity.name)
+        return
+    if private_data_dir is not None:  # not isolated: same user, so find them by the dir
+        kill_leftovers(private_data_dir)
+        shutil.rmtree(private_data_dir, ignore_errors=True)
+
+
+def _checked_dir(path: str, job: dict) -> str | None:
+    """The child's private data dir, if it looks like one (it is cleaned up by path)."""
+    name = os.path.basename(path)
+    if os.path.isabs(path) and name.startswith(job.get("prefix", "ansideck-run-")):
+        return path
+    logger.error("ignoring an unexpected private data dir %r", path)
+    return None
+
+
 def run_in_worker(
     job: dict,
     env: dict[str, str],
     on_event: Callable[[dict], None],
     handle: ExecutionHandle | None = None,
+    identity: RunIdentity | None = None,
 ) -> tuple[str | None, int | None]:
     """Runs ansible-runner in a child process started with `env` instead of the app's
-    environment (see app.run_worker). Returns (ansible-runner status, rc); status is
-    None if the worker died without reporting a result."""
+    environment (see app.run_worker), as `identity` when given. Returns (ansible-runner
+    status, rc); status is None if the worker died without reporting a result."""
+    command = _WORKER_COMMAND if identity is None else wrap(_WORKER_COMMAND, identity)
     read_fd, write_fd = os.pipe()
     try:
         proc = subprocess.Popen(
-            _WORKER_COMMAND,
+            command,
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -202,6 +294,7 @@ def run_in_worker(
         handle.attach(proc)
 
     result: tuple[str | None, int | None] = (None, None)
+    private_data_dir: str | None = None
     try:
         with os.fdopen(read_fd, encoding="utf-8") as events:
             assert proc.stdin is not None
@@ -215,19 +308,20 @@ def run_in_worker(
                 message = json.loads(line)
                 if message["type"] == "event":
                     on_event(message["event"])
+                elif message["type"] == "started":
+                    private_data_dir = _checked_dir(message["private_data_dir"], job)
                 elif message["type"] == "result":
                     result = (message["status"], message["rc"])
     except BaseException:
         stop_worker(proc)
-        kill_leftovers(job["private_data_dir"])
+        _clean_up(identity, private_data_dir)
         raise
     try:
         returncode = proc.wait(timeout=_WORKER_STOP_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
         stop_worker(proc)
         returncode = proc.returncode
-    # Nothing of the run may outlive it: after a cancel, ansible's task workers would.
-    kill_leftovers(job["private_data_dir"])
+    _clean_up(identity, private_data_dir)
     if result[0] is None:
         logger.error("run worker exited (code %s) without reporting a result", returncode)
         return None, returncode or None

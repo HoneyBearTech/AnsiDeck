@@ -114,6 +114,7 @@ router = APIRouter(prefix="/internal")
 class ClaimIn(BaseModel):
     worker_id: str = Field(min_length=1, max_length=255)
     slots: int = Field(1, ge=1, le=256)
+    isolated: bool | None = None  # None: a worker from before Phase 4C
     wait_seconds: float = Field(MAX_CLAIM_WAIT_SECONDS, ge=0, le=MAX_CLAIM_WAIT_SECONDS)
 
 
@@ -140,6 +141,7 @@ class HeartbeatRun(BaseModel):
 class HeartbeatIn(BaseModel):
     worker_id: str = Field(min_length=1, max_length=255)
     slots: int = Field(1, ge=1, le=256)
+    isolated: bool | None = None
     runs: list[HeartbeatRun] = Field(max_length=256)
 
 
@@ -164,10 +166,10 @@ def _claim_once(worker_id: str) -> Claim | None:
         db.close()
 
 
-def _seen(worker_id: str, slots: int) -> None:
+def _seen(worker_id: str, slots: int, isolated: bool | None) -> None:
     db = get_sessionmaker()()
     try:
-        record_worker(db, worker_id, slots)
+        record_worker(db, worker_id, slots, isolated)
         db.commit()
     finally:
         db.close()
@@ -176,7 +178,7 @@ def _seen(worker_id: str, slots: int) -> None:
 @router.post("/claim", response_model=ClaimOut, responses={204: {"description": "Nothing to run"}})
 async def claim(body: ClaimIn) -> ClaimOut | Response:
     """Long poll: returns as soon as a run can be claimed, or 204 after wait_seconds."""
-    await asyncio.to_thread(_seen, body.worker_id, body.slots)
+    await asyncio.to_thread(_seen, body.worker_id, body.slots, body.isolated)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + body.wait_seconds
     with notifier.listen(QUEUE_TOPIC) as listener:
@@ -282,7 +284,7 @@ def heartbeat(body: HeartbeatIn, db: Session = Depends(get_db)) -> dict[str, lis
     """Renews the lease of each run the worker still owns: "ok", "cancel" (stop it), or "gone"
     (the claim ended; stop without reporting)."""
     lease = get_settings().run_lease_seconds
-    record_worker(db, body.worker_id, body.slots)
+    record_worker(db, body.worker_id, body.slots, body.isolated)
     answers: list[dict] = []
     for item in body.runs:
         row = db.execute(

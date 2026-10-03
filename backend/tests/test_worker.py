@@ -145,7 +145,7 @@ def test_an_oversized_event_is_truncated_not_lost() -> None:
 
 def test_the_worker_imports_nothing_that_could_reach_the_database_or_the_key() -> None:
     code = (
-        "import sys, app.worker.__main__; "
+        "import sys, app.worker.__main__, app.worker.runner; "
         "print('\\n'.join(sorted(m for m in sys.modules if m.split('.')[0] in "
         "('app', 'sqlalchemy', 'psycopg', 'fastapi', 'cryptography'))))"
     )
@@ -161,6 +161,7 @@ def test_the_worker_imports_nothing_that_could_reach_the_database_or_the_key() -
         "app",
         "app.process_hardening",
         "app.run_executor",
+        "app.run_isolation",
         "app.scrub",
         "app.subprocess_env",
         "app.vault",
@@ -187,7 +188,7 @@ def _worker_env(tmp_path, api_url: str = "http://127.0.0.1:9", **extra: str) -> 
     return {
         "PATH": os.environ["PATH"],
         "HOME": os.environ.get("HOME", str(tmp_path)),
-        "TMPDIR": str(tmp_path),  # its runs' private data dirs land in the test's tmp dir
+        "TMPDIR": str(tmp_path),
         "ANSIDECK_API_URL": api_url,
         "GALAXY_DIR": str(tmp_path / "galaxy"),
         "WORKER_ID": "process-worker",
@@ -288,7 +289,7 @@ def test_a_killed_worker_process_is_reaped_as_lost(client, tmp_path, internal_ap
     db.close()
     # A dead worker's ansible lives on outside a container (in one, the kernel ends the whole
     # PID namespace with its PID 1); clean up the way the worker itself would have.
-    marker = str(tmp_path / f"ansideck-run-{run_id}-")
+    marker = f"/tmp/ansideck-run-{run_id}-"  # app.run_worker.prepare()
     kill_leftovers(marker)
     assert _gone(marker)
 

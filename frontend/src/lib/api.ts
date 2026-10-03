@@ -275,6 +275,8 @@ export interface Run {
 export interface WorkerInfo {
   id: string;
   slots: number;
+  // Whether its playbooks run as per-slot users; null: a worker too old to say.
+  isolated: boolean | null;
   running: number;
   online: boolean;
   first_seen_at: string;

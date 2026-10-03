@@ -58,8 +58,23 @@ services:
     # environment from playbooks and reaps orphans itself. A wrapper process would hold the
     # container's environment, WORKER_TOKEN included, where a playbook could read it.
     command: ["/app/.venv/bin/python", "-m", "app.worker"]
+    # Playbooks run as a user of their own per slot (ansideck-run<n>, no capabilities), so
+    # they can't read the worker's token, signal it, or touch other runs' files and
+    # processes. Switching to those users takes root, with nothing more than these four
+    # capabilities (SETUID/SETGID: switch, CHOWN: create their homes, KILL: stop and clean
+    # up runs). Without them a production worker refuses to start.
+    user: "0"
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, CHOWN, KILL]
+    security_opt: ["no-new-privileges:true"]
+    # Runs can write only to /tmp (their private data dirs) and /dev/shm, which the worker
+    # sweeps after every run; nothing they leave can reach the next one.
+    read_only: true
+    tmpfs: [/tmp]
+    pids_limit: 1024
     environment:
       - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
       - PATH=/app/.venv/bin:/usr/local/bin:/usr/bin:/bin
       - ANSIDECK_API_URL=http://backend:8001
       - WORKER_TOKEN=${WORKER_TOKEN:-change-me-dev-only-worker-token}

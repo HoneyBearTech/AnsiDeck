@@ -478,9 +478,10 @@ export function ProjectsPage() {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Projects separate who can see and change playbooks, inventories, credentials and runs. They are access
-        control, not isolation: every run executes in the same container, so only give people who can write
-        playbooks and trigger runs a role you trust them with.
+        Projects separate who can see and change playbooks, inventories, credentials and runs. Runs are kept
+        apart on the workers (each runs as a user of its own and can't read other runs' files), but they share
+        the workers' network, so only give people who can write playbooks and trigger runs a role you trust
+        them with.
       </p>
 
       {error && <p className="text-sm text-destructive">{error}</p>}

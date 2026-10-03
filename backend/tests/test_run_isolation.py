@@ -116,6 +116,12 @@ def test_run_does_not_inherit_app_secrets(client: TestClient, tmp_path, monkeypa
     # The allowlist still gets through, and runs still see the shared galaxy paths.
     assert "PATH" in names
     assert "ANSIBLE_COLLECTIONS_PATH" in names
+    # Ansible's own state (SSH ControlPersist sockets above all) is the run's alone.
+    env = dict(line.split("=", 1) for line in seen.splitlines() if "=" in line)
+    own = f"/tmp/ansideck-run-{run['id']}-"
+    assert env["ANSIBLE_HOME"].startswith(own)
+    assert env["ANSIBLE_SSH_CONTROL_PATH_DIR"].startswith(own)
+    assert not env.get("HOME", "").startswith(own)  # not isolated: HOME stays the worker's
 
 
 def test_run_fails_when_the_worker_dies_without_a_result(

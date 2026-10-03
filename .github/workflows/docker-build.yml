@@ -42,6 +42,20 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}-${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}-${{ matrix.target }}
 
+      - name: Run isolation tests as the worker runs them
+        if: matrix.service == 'backend' && matrix.target == 'dev'
+        # Real playbooks as per-slot users, in the image with the worker's compose settings
+        # (root with only four capabilities, read-only root filesystem). Fails instead of
+        # skipping if the image or these flags no longer allow isolation.
+        run: |
+          docker run --rm --user 0 --cap-drop ALL \
+            --cap-add SETUID --cap-add SETGID --cap-add CHOWN --cap-add KILL \
+            --security-opt no-new-privileges:true --read-only --tmpfs /tmp \
+            -e PYTHONDONTWRITEBYTECODE=1 -e ANSIDECK_REQUIRE_ISOLATION=1 \
+            -e PATH=/app/.venv/bin:/usr/local/bin:/usr/bin:/bin \
+            ansideck-backend:dev \
+            python -m pytest --noconftest -p no:cacheprovider tests/test_isolation_root.py
+
       - name: Smoke test backend runtime image
         if: matrix.service == 'backend' && matrix.target == 'runtime'
         # The app needs Postgres (same pinned image as docker-compose.yml) and applies its
@@ -84,9 +98,19 @@ jobs:
       - name: Smoke test a worker from the backend runtime image
         if: matrix.service == 'backend' && matrix.target == 'runtime'
         # A worker reaches only the API's internal port, gets no database URL or keys, is
-        # non-dumpable (playbooks run as its user), and runs a real playbook to success.
+        # non-dumpable, runs playbooks as per-slot users (with docker-compose.yml's settings;
+        # in production it refuses to start without them), and runs a real playbook.
         run: |
+          out=$(docker run --rm -e ENVIRONMENT=production -e ANSIDECK_API_URL=http://smoke:8001 \
+            -e WORKER_TOKEN=ci-test-worker-token-0123456789abcdef \
+            ansideck-backend:runtime python -m app.worker 2>&1) && { echo "$out"; exit 1; }
+          echo "$out" | grep -q "Refusing to start: playbook runs can't be isolated" \
+            || { echo "$out"; exit 1; }
           docker run -d --name smoke-worker --network smoke-net \
+            --user 0 --cap-drop ALL \
+            --cap-add SETUID --cap-add SETGID --cap-add CHOWN --cap-add KILL \
+            --security-opt no-new-privileges:true --read-only --tmpfs /tmp \
+            -e ENVIRONMENT=production -e PYTHONDONTWRITEBYTECODE=1 \
             -e ANSIDECK_API_URL=http://smoke:8001 \
             -e WORKER_TOKEN=ci-test-worker-token-0123456789abcdef \
             ansideck-backend:runtime python -m app.worker
@@ -94,10 +118,13 @@ jobs:
             docker logs smoke-worker 2>&1 | grep -q " ready: " && break
             sleep 2
           done
-          docker logs smoke-worker 2>&1 | grep -q " ready: " || { docker logs smoke-worker; exit 1; }
-          if docker exec smoke-worker cat /proc/1/environ > /dev/null; then
-            echo "the worker's environment is readable by its own user"; exit 1
-          fi
+          docker logs smoke-worker 2>&1 | grep -q " ready: .* runs isolated" \
+            || { docker logs smoke-worker; exit 1; }
+          for user in 0 20000; do
+            if docker exec -u "$user" smoke-worker cat /proc/1/environ > /dev/null; then
+              echo "the worker's environment is readable by uid $user"; exit 1
+            fi
+          done
           if docker exec smoke-worker env | grep -E 'DATABASE_URL|CREDENTIAL_ENCRYPTION_KEY|AUTH_SECRET_KEY'; then
             echo "the worker has the API's secrets"; exit 1
           fi

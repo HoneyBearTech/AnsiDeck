@@ -195,6 +195,29 @@ def test_workers_report_in_by_claiming_and_heartbeating(client) -> None:
     assert make_user_client("operator1", "operator").get("/api/workers").status_code == 403
 
 
+def test_workers_report_whether_their_runs_are_isolated(client) -> None:
+    _login(client)
+    claim = internal_client().post(
+        "/internal/claim",
+        json={"worker_id": "iso", "slots": 1, "isolated": True, "wait_seconds": 0},
+    )
+    assert claim.status_code == 204  # nothing queued, but it reported in
+    _heartbeat_as("plain", isolated=False)
+    _heartbeat("old")  # a worker from before 4C doesn't say
+    workers = {w["id"]: w["isolated"] for w in client.get("/api/workers").json()}
+    assert workers == {"iso": True, "plain": False, "old": None}
+    # A worker that restarts without isolation is shown as such.
+    _heartbeat_as("iso", isolated=False)
+    assert {w["id"]: w["isolated"] for w in client.get("/api/workers").json()}["iso"] is False
+
+
+def _heartbeat_as(worker_id: str, isolated: bool) -> None:
+    response = internal_client().post(
+        "/internal/heartbeat", json={"worker_id": worker_id, "isolated": isolated, "runs": []}
+    )
+    assert response.status_code == 200
+
+
 def test_the_reaper_forgets_workers_not_seen_for_a_day(client) -> None:
     _heartbeat("old")
     _heartbeat("recent")

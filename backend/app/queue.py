@@ -94,13 +94,17 @@ def fail_run(run: Run, status: RunStatus, reason: str) -> None:
     append_status_line(run, f"AnsiDeck: {reason}")
 
 
-def record_worker(db: Session, worker_id: str, slots: int) -> None:
+def record_worker(db: Session, worker_id: str, slots: int, isolated: bool | None = None) -> None:
     """Marks the worker as seen now (the caller commits)."""
-    stmt = insert(Worker).values(id=worker_id[:255], slots=slots)
+    stmt = insert(Worker).values(id=worker_id[:255], slots=slots, isolated=isolated)
     db.execute(
         stmt.on_conflict_do_update(
             index_elements=[Worker.id],
-            set_={"slots": stmt.excluded.slots, "last_seen_at": func.now()},
+            set_={
+                "slots": stmt.excluded.slots,
+                "isolated": stmt.excluded.isolated,
+                "last_seen_at": func.now(),
+            },
         )
     )
 
