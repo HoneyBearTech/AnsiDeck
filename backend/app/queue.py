@@ -10,6 +10,7 @@ Rules, in this order:
 """
 
 import hashlib
+import logging
 import secrets
 from dataclasses import dataclass
 
@@ -24,8 +25,11 @@ from app.db import GALAXY_GATE_KEY
 from app.jobs import unrunnable_reason
 from app.models import GalaxyInstall, Run, RunStatus, Worker
 from app.notifications.events import run_finished
+from app.notifications.ops import worker_seen
 from app.notify import notifier, run_topic
 from app.run_log import append_status_line
+
+logger = logging.getLogger(__name__)
 
 QUEUE_TOPIC = "queue"
 JOB_TOKEN_SECONDS = 60
@@ -110,6 +114,12 @@ def record_worker(db: Session, worker_id: str, slots: int, isolated: bool | None
             },
         )
     )
+    # In a savepoint: notifications must never fail a claim or heartbeat.
+    try:
+        with db.begin_nested():
+            worker_seen(db, worker_id, slots, isolated)
+    except Exception:  # noqa: BLE001
+        logger.exception("could not check worker %s for notifications", worker_id)
 
 
 def online_slots(db: Session) -> int:

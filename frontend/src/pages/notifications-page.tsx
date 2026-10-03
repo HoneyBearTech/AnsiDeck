@@ -161,7 +161,7 @@ function ChannelDialog({
             URLs and tokens are stored encrypted and never shown again.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-4">
+        <div className="-mx-1 flex max-h-[65vh] flex-col gap-4 overflow-y-auto px-1">
           <div className="flex flex-col gap-2">
             <Label htmlFor="channel-name">Name</Label>
             <Input id="channel-name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -260,18 +260,27 @@ function ChannelDialog({
           )}
           <div className="flex flex-col gap-2">
             <Label>Events</Label>
-            {available.map((event) => (
-              <label key={event.name} className="flex items-start gap-2 text-sm">
-                <Checkbox
-                  className="mt-0.5"
-                  checked={events.includes(event.name)}
-                  onCheckedChange={(v) => toggleEvent(event.name, v === true)}
-                />
-                <span>
-                  {event.label}
-                  <span className="block text-muted-foreground">{event.description}</span>
-                </span>
-              </label>
+            {[...new Set(available.map((e) => e.group))].map((group) => (
+              <fieldset key={group} className="flex flex-col gap-2">
+                <legend className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {group}
+                </legend>
+                {available
+                  .filter((e) => e.group === group)
+                  .map((event) => (
+                    <label key={event.name} className="flex items-start gap-2 text-sm">
+                      <Checkbox
+                        className="mt-0.5"
+                        checked={events.includes(event.name)}
+                        onCheckedChange={(v) => toggleEvent(event.name, v === true)}
+                      />
+                      <span>
+                        {event.label}
+                        <span className="block text-muted-foreground">{event.description}</span>
+                      </span>
+                    </label>
+                  ))}
+              </fieldset>
             ))}
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}

@@ -692,7 +692,7 @@ def test_channel_validation(client, settings_env) -> None:
     )
     catalog = client.get("/api/notifications/catalog").json()
     assert catalog["email_available"] is False and "pushover" in catalog["kinds"]
-    assert {e["name"] for e in catalog["events"]} == {RUN_FAILED, RUN_RECOVERED}
+    assert {e["name"] for e in catalog["events"]} >= {RUN_FAILED, RUN_RECOVERED}
 
 
 def test_project_admins_manage_only_their_projects_channels(client) -> None:
@@ -739,3 +739,319 @@ def test_deleting_a_channel_is_audited_without_its_url(client) -> None:
     ]
     assert all("secret-token" not in json.dumps(e.detail) for e in events)
     assert events[0].detail == {"kind": "discord", "events": [RUN_FAILED], "enabled": True}
+
+
+# ------------------------------------------------------------------ 4D-2: ops and security
+
+GLOBAL_EVENTS = (
+    "worker.offline",
+    "worker.unisolated",
+    "queue.stuck",
+    "security.login_attack",
+    "security.admin_change",
+)
+
+
+def _events_queued() -> list[tuple[str, dict]]:
+    return [(d.event, d.payload) for d in _deliveries()]
+
+
+def _heartbeat(worker_id: str, isolated: bool | None = True) -> None:
+    body = {"worker_id": worker_id, "slots": 2, "runs": []}
+    if isolated is not None:
+        body["isolated"] = isolated
+    assert internal_client().post("/internal/heartbeat", json=body).status_code == 200
+
+
+def _set_worker_seen(worker_id: str, seconds_ago: int) -> None:
+    db = get_sessionmaker()()
+    db.execute(
+        text("UPDATE workers SET last_seen_at = now() - make_interval(secs => :s) WHERE id = :i"),
+        {"s": seconds_ago, "i": worker_id},
+    )
+    db.commit()
+    db.close()
+
+
+@pytest.mark.no_worker
+def test_a_silent_worker_is_reported_once_and_its_return_too(client) -> None:
+    from app.reaper import reap_once
+
+    _channel(None, name="ops", events=GLOBAL_EVENTS)
+    _heartbeat("w1")
+    _set_worker_seen("w1", 60)  # offline on the Workers page, but under 2 min: no alert
+    reap_once()
+    assert _events_queued() == []
+
+    _set_worker_seen("w1", 150)
+    reap_once()
+    reap_once()
+    [(event, payload)] = _events_queued()
+    assert (event, payload["state"], payload["worker"]) == ("worker.offline", "offline", "w1")
+
+    _heartbeat("w1")
+    _heartbeat("w1")
+    assert [(e, p["state"]) for e, p in _events_queued()] == [
+        ("worker.offline", "offline"),
+        ("worker.offline", "resolved"),
+    ]
+
+
+@pytest.mark.no_worker
+def test_a_worker_that_cannot_isolate_is_reported_once(client) -> None:
+    _channel(None, name="ops", events=("worker.unisolated",))
+    _heartbeat("dev", isolated=False)
+    _heartbeat("dev", isolated=False)
+    _heartbeat("old", isolated=None)  # a pre-4C worker doesn't say
+    assert [(e, p["worker"]) for e, p in _events_queued()] == [("worker.unisolated", "dev")]
+
+
+@pytest.mark.no_worker
+def test_forgotten_workers_take_their_alerts_with_them(client) -> None:
+    from app.models import NotificationAlert
+    from app.reaper import reap_once
+
+    _heartbeat("gone", isolated=False)
+    _set_worker_seen("gone", 200)
+    reap_once()
+    _set_worker_seen("gone", 25 * 3600)
+    reap_once()
+    db = get_sessionmaker()()
+    try:
+        assert db.query(NotificationAlert).count() == 0
+    finally:
+        db.close()
+
+
+def _age_queued(run_id: int, minutes: int) -> None:
+    db = get_sessionmaker()()
+    db.execute(
+        update(Run)
+        .where(Run.id == run_id)
+        .values(queued_at=text(f"now() - interval '{minutes} minutes'"))
+    )
+    db.commit()
+    db.close()
+
+
+@pytest.mark.no_worker
+def test_a_queue_stuck_without_workers_is_reported_once_and_when_it_moves(client) -> None:
+    from app.reaper import reap_once
+    from tests.test_queue import _queue_runs
+
+    _channel(None, name="ops", events=("queue.stuck",))
+    [[run_id]] = _queue_runs(client, 1, 1).values()
+    _age_queued(run_id, 5)
+    reap_once()
+    assert _events_queued() == []  # not long enough yet
+
+    _age_queued(run_id, 11)
+    reap_once()
+    reap_once()
+    [(event, payload)] = _events_queued()
+    assert (payload["state"], payload["waiting"], payload["oldest_run_id"]) == ("stuck", 1, run_id)
+    assert payload["reason"].startswith("No worker is online")
+
+    db = get_sessionmaker()()
+    db.execute(update(Run).where(Run.id == run_id).values(status="cancelled"))
+    db.commit()
+    db.close()
+    reap_once()
+    assert [p["state"] for _e, p in _events_queued()] == ["stuck", "resolved"]
+
+
+@pytest.mark.no_worker
+def test_waiting_behind_the_same_inventory_is_not_stuck(client) -> None:
+    from app.reaper import reap_once
+
+    _channel(None, name="ops", events=("queue.stuck",))
+    claimed = Claimed(client)  # running, holds the inventory
+    _heartbeat("w")
+    second = client.post("/api/runs", json=_same_run(client, claimed.run_id)).json()["id"]
+    _age_queued(second, 30)
+    reap_once()
+    assert _events_queued() == []
+
+
+def test_a_login_attack_is_reported_once_per_window(client) -> None:
+    _channel(None, name="security", events=("security.login_attack",))
+    for _ in range(8):  # the 5th locks the user out; later ones are refused before auditing
+        client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
+    [(event, payload)] = _events_queued()
+    assert (event, payload["kind"], payload["user"]) == (
+        "security.login_attack",
+        "password",
+        "admin",
+    )
+
+    for _ in range(2):  # a wrong worker token, twice: one alert per address and window
+        assert internal_client(token="w" * 40).post("/internal/ping", json={}).status_code == 401
+    assert [p["kind"] for _e, p in _events_queued()] == ["password", "worker_token"]
+
+
+def test_admin_changes_are_reported(client) -> None:
+    _login(client)
+    _channel(None, name="security", events=("security.admin_change",))
+    _channel(None, name="runs only", events=(RUN_FAILED,))
+    users = "/api/users"
+    admin2 = client.post(users, json={"username": "boss", "password": "p" * 12, "role": "admin"})
+    assert admin2.status_code == 201, admin2.text
+    operator = client.post(
+        users, json={"username": "oper", "password": "p" * 12, "role": "operator"}
+    )
+    assert operator.status_code == 201, operator.text
+    client.patch(f"{users}/{operator.json()['id']}", json={"role": "viewer"})  # not admin: quiet
+    client.patch(f"{users}/{operator.json()['id']}", json={"role": "admin"})
+    client.patch(f"{users}/{admin2.json()['id']}", json={"role": "operator"})  # a demotion: quiet
+    assert [(p["user"], p["change"], p["by"]) for _e, p in _events_queued()] == [
+        ("boss", "created as a global admin", "admin"),
+        ("oper", "made a global admin", "admin"),
+    ]
+
+
+def test_guessing_an_unknown_user_name_is_reported_too(client) -> None:
+    # Found by the compose E2E: unknown names are audited as "(unknown user)", so the lockout
+    # must be read off the audit event, not looked up in the throttle by name.
+    _channel(None, name="security", events=("security.login_attack",))
+    for _ in range(6):
+        client.post("/api/auth/login", json={"username": "nobody-here", "password": "x"})
+    [(event, payload)] = _events_queued()
+    assert (payload["kind"], payload["user"]) == ("password", "(unknown user)")
+    db = get_sessionmaker()()
+    try:
+        locked = db.query(AuditEvent).filter(AuditEvent.action == "auth.login").all()
+    finally:
+        db.close()
+    assert [bool((e.detail or {}).get("locked_out")) for e in locked] == [False] * 4 + [True]
+
+
+def test_a_second_factor_lockout_is_its_own_alert(client) -> None:
+    from app import audit
+    from app.models import User
+
+    _channel(None, name="security", events=("security.login_attack",))
+    db = get_sessionmaker()()
+    try:
+        admin = db.query(User).filter(User.username == "admin").one()
+        detail = {"reason": "bad second factor", "locked_out": True}
+        audit.record(
+            db, "auth.login", outcome="failure", actor=admin, ip="198.51.100.7", detail=detail
+        )
+    finally:
+        db.close()
+    [(_event, payload)] = _events_queued()
+    assert (payload["kind"], payload["user"]) == ("second_factor", "admin")
+    message = render.build("security.login_attack", payload)
+    assert message.title == "Repeated wrong 2FA codes for admin from 198.51.100.7"
+
+
+def test_two_factor_and_sso_admin_changes_come_off_the_audit_trail(client) -> None:
+    from app import audit
+    from app.models import User
+
+    _channel(None, name="security", events=("security.admin_change",))
+    db = get_sessionmaker()()
+    try:
+        admin = db.query(User).filter(User.username == "admin").one()
+        audit.record(db, "user.totp_reset", actor=admin, target_name="carol", ip="10.0.0.9")
+        audit.record(db, "auth.totp_disable", actor=admin, ip="10.0.0.9")
+        audit.record(db, "auth.login", actor=admin, ip="10.0.0.9", detail={"method": "oidc"})
+        audit.record(db, "auth.login", actor=admin, ip="10.0.0.9")  # password: quiet
+        audit.record(db, "user.totp_reset", outcome="failure", actor=admin, target_name="x")
+    finally:
+        db.close()
+    assert [(p["user"], p["change"]) for _e, p in _events_queued()] == [
+        ("carol", "had two-factor login reset"),
+        ("admin", "turned off two-factor login"),
+        ("admin", "signed in as a global admin with oidc"),
+    ]
+
+
+def test_ops_and_security_events_are_for_global_channels_only(client) -> None:
+    _login(client)
+    project = _project(client, "P")
+    for event in GLOBAL_EVENTS:
+        response = client.post(
+            f"/api/projects/{project}/notifications/channels",
+            json={"name": event, "kind": "slack", "url": SLACK, "events": [event]},
+        )
+        assert response.status_code == 422 and "global channels only" in response.json()["detail"]
+    groups = {
+        e["name"]: e["group"] for e in client.get("/api/notifications/catalog").json()["events"]
+    }
+    assert groups == {
+        RUN_FAILED: "Runs",
+        RUN_RECOVERED: "Runs",
+        "worker.offline": "Operations",
+        "worker.unisolated": "Operations",
+        "queue.stuck": "Operations",
+        "security.login_attack": "Security",
+        "security.admin_change": "Security",
+    }
+
+
+@pytest.mark.parametrize(
+    ("event", "payload", "title", "color", "path"),
+    [
+        (
+            "worker.offline",
+            {"state": "offline", "worker": "w1", "slots": 2},
+            "Worker w1 is offline",
+            0xE5484D,
+            "/workers",
+        ),
+        (
+            "worker.offline",
+            {"state": "resolved", "worker": "w1"},
+            "Worker w1 is back online",
+            0x30A46C,
+            "/workers",
+        ),
+        (
+            "worker.unisolated",
+            {"worker": "w1"},
+            "Worker w1 runs playbooks without isolation",
+            0xE5484D,
+            "/workers",
+        ),
+        (
+            "queue.stuck",
+            {"state": "stuck", "waiting": 1, "minutes": 10},
+            "Queue stuck: 1 run waiting over 10 min",
+            0xE5484D,
+            "/runs",
+        ),
+        (
+            "queue.stuck",
+            {"state": "stuck", "waiting": 3, "minutes": 10},
+            "Queue stuck: 3 runs waiting over 10 min",
+            0xE5484D,
+            "/runs",
+        ),
+        ("queue.stuck", {"state": "resolved"}, "Queue moving again", 0x30A46C, "/runs"),
+        (
+            "security.login_attack",
+            {"ip": "203.0.113.9", "kind": "password", "user": "admin"},
+            "Login attack from 203.0.113.9",
+            0xE5484D,
+            "/audit",
+        ),
+        (
+            "security.login_attack",
+            {"ip": "203.0.113.9", "kind": "worker_token"},
+            "Wrong worker token from 203.0.113.9",
+            0xE5484D,
+            "/audit",
+        ),
+        (
+            "security.admin_change",
+            {"user": "bob", "change": "made a global admin", "by": "alice"},
+            "Admin change: bob made a global admin",
+            0xE5484D,
+            "/audit",
+        ),
+    ],
+)
+def test_ops_and_security_messages(event, payload, title, color, path) -> None:
+    message = render.build(event, payload, "https://a.example")
+    assert (message.title, message.color, message.url) == (title, color, f"https://a.example{path}")

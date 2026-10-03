@@ -15,7 +15,10 @@ from app.db import get_sessionmaker
 from app.galaxy import try_start_install
 from app.jobs import UNRUNNABLE, unrunnable_reason
 from app.models import GalaxyInstall, Run, RunStatus, Worker
+from app.notifications import WORKER_OFFLINE, WORKER_UNISOLATED
+from app.notifications.alerts import clear_alerts
 from app.notifications.dispatch import prune as prune_deliveries
+from app.notifications.ops import check_queue, check_workers
 from app.notify import notifier, run_topic
 from app.queue import QUEUE_TOPIC, fail_run
 from app.run_executor import format_duration
@@ -104,8 +107,21 @@ def reap_once() -> list[int]:
         db.commit()
 
         retention = func.make_interval(0, 0, 0, 0, 0, 0, WORKER_RETENTION_SECONDS)
-        db.execute(delete(Worker).where(Worker.last_seen_at < func.now() - retention))
+        gone = db.scalars(
+            delete(Worker).where(Worker.last_seen_at < func.now() - retention).returning(Worker.id)
+        ).all()
+        clear_alerts(
+            db, [f"{event}:{w}" for w in gone for event in (WORKER_OFFLINE, WORKER_UNISOLATED)]
+        )
         prune_deliveries(db)
+        db.commit()
+
+        for check in (lambda: check_workers(db, WORKER_RETENTION_SECONDS), lambda: check_queue(db)):
+            try:
+                with db.begin_nested():
+                    check()
+            except Exception:  # noqa: BLE001 - notifications must never stop the reaper
+                logger.exception("notification check failed")
         db.commit()
 
         for run_id, action, project_id, worker_id in ended:
