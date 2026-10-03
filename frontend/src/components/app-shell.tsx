@@ -70,13 +70,15 @@ export function AppShell() {
   const isAdmin = user?.role === "admin";
   const hasNoProject = !!user && !isAdmin && user.projects.length === 0;
   const canSeeProjects = isAdmin || !!user?.projects.some((p) => p.role === "admin");
+  const canSeeNotifications =
+    isAdmin || !!user?.projects.some((p) => p.permissions.includes("notifications:manage"));
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="flex items-center justify-between border-b border-border px-6 py-4">
-        <div className="flex items-center gap-6">
+      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border px-6 py-4">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           <span className="font-mono text-lg text-primary">AnsiDeck</span>
-          <nav className="flex items-center gap-4">
+          <nav className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <NavItem to="/" label="Dashboard" />
             <NavItem to="/playbooks" label="Playbooks" />
             <NavItem to="/inventories" label="Inventories" />
@@ -88,6 +90,7 @@ export function AppShell() {
             <NavItem to="/users" label="Users" permission="users:manage" />
             <NavItem to="/audit" label="Audit" permission="audit:read" />
             <NavItem to="/workers" label="Workers" permission="workers:read" />
+            <NavItem to="/notifications" label="Notifications" visible={canSeeNotifications} />
           </nav>
         </div>
         <div className="flex items-center gap-3">

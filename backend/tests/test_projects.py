@@ -228,6 +228,14 @@ def test_every_project_scoped_route_with_an_id_is_covered_by_the_idor_matrix() -
         ("GET", "/api/projects/{project_id}/api-keys"),
         ("POST", "/api/projects/{project_id}/api-keys"),
         ("DELETE", "/api/projects/{project_id}/api-keys/{key_id}"),
+        # notification channels: tests/test_notifications.py (incl. another project's channel)
+        ("GET", "/api/projects/{project_id}/notifications/channels"),
+        ("POST", "/api/projects/{project_id}/notifications/channels"),
+        ("GET", "/api/projects/{project_id}/notifications/channels/{channel_id}"),
+        ("PATCH", "/api/projects/{project_id}/notifications/channels/{channel_id}"),
+        ("DELETE", "/api/projects/{project_id}/notifications/channels/{channel_id}"),
+        ("POST", "/api/projects/{project_id}/notifications/channels/{channel_id}/test"),
+        ("GET", "/api/projects/{project_id}/notifications/channels/{channel_id}/deliveries"),
     }
     found = set()
     for route in iter_api_routes(app):

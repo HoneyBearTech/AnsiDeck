@@ -25,6 +25,7 @@ from app.galaxy import try_start_install
 from app.hardening import FailureThrottle
 from app.jobs import build_job
 from app.models import Run, RunStatus
+from app.notifications.events import run_finished
 from app.notify import notifier, run_topic
 from app.queue import QUEUE_TOPIC, Claim, claim_next, fail_run, hash_token, record_worker
 from app.run_log import append_events
@@ -334,6 +335,7 @@ def complete(
     run.lease_expires_at = None
     run.claim_token_hash = None
     project_id, worker_id = run.project_id, run.worker_id
+    run_finished(db, run)
     db.commit()
 
     if body.status == RunStatus.TIMED_OUT:

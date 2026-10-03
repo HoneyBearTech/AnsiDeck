@@ -15,6 +15,7 @@ from app.db import get_sessionmaker
 from app.galaxy import try_start_install
 from app.jobs import UNRUNNABLE, unrunnable_reason
 from app.models import GalaxyInstall, Run, RunStatus, Worker
+from app.notifications.dispatch import prune as prune_deliveries
 from app.notify import notifier, run_topic
 from app.queue import QUEUE_TOPIC, fail_run
 from app.run_executor import format_duration
@@ -104,6 +105,7 @@ def reap_once() -> list[int]:
 
         retention = func.make_interval(0, 0, 0, 0, 0, 0, WORKER_RETENTION_SECONDS)
         db.execute(delete(Worker).where(Worker.last_seen_at < func.now() - retention))
+        prune_deliveries(db)
         db.commit()
 
         for run_id, action, project_id, worker_id in ended:

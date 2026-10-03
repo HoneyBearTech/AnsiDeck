@@ -12,6 +12,7 @@ import { GalaxyPage } from "@/pages/galaxy-page";
 import { InventoriesPage } from "@/pages/inventories-page";
 import { InventoryDetailPage } from "@/pages/inventory-detail-page";
 import { LoginPage } from "@/pages/login-page";
+import { NotificationsPage } from "@/pages/notifications-page";
 import { PlaybookDetailPage } from "@/pages/playbook-detail-page";
 import { PlaybooksPage } from "@/pages/playbooks-page";
 import { ProjectsPage } from "@/pages/projects-page";
@@ -89,6 +90,7 @@ function App() {
               </RequirePermission>
             }
           />
+          <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/runs" element={<RunsPage />} />
           <Route

@@ -283,6 +283,85 @@ export interface WorkerInfo {
   last_seen_at: string;
 }
 
+export type ChannelKind = "webhook" | "discord" | "slack" | "teams" | "email" | "pushbullet" | "pushover";
+
+export interface NotificationEvent {
+  name: string;
+  label: string;
+  description: string;
+  // Available to project channels (global channels can take every event).
+  project: boolean;
+}
+
+export interface NotificationCatalog {
+  events: NotificationEvent[];
+  kinds: ChannelKind[];
+  email_available: boolean;
+}
+
+export interface NotificationChannel {
+  id: number;
+  project_id: number | null;
+  name: string;
+  kind: ChannelKind;
+  // Safe to show: scheme://host/…last 4, the email addresses, or the push service's name.
+  target: string;
+  recipients: string[] | null;
+  has_secret: boolean;
+  events: string[];
+  enabled: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  last_delivery: { status: string; event: string; created_at: string; error: string | null } | null;
+}
+
+// Write-only settings; on update, leave a field out to keep what is stored.
+export interface ChannelSecrets {
+  url?: string;
+  secret?: string; // "" removes the webhook signing secret
+  token?: string;
+  user_key?: string;
+  recipients?: string[];
+}
+
+export interface ChannelInput extends ChannelSecrets {
+  name: string;
+  kind: ChannelKind;
+  events: string[];
+  enabled?: boolean;
+}
+
+export interface ChannelUpdate extends ChannelSecrets {
+  name?: string;
+  events?: string[];
+  enabled?: boolean;
+}
+
+export interface NotificationDelivery {
+  id: number;
+  event: string;
+  title: string;
+  status: "pending" | "sending" | "sent" | "failed";
+  attempts: number;
+  last_status_code: number | null;
+  last_error: string | null;
+  created_at: string;
+  next_attempt_at: string | null;
+  sent_at: string | null;
+}
+
+export interface TestResult {
+  ok: boolean;
+  status_code: number | null;
+  error: string | null;
+}
+
+// null = global channels.
+function channelsPath(projectId: number | null): string {
+  return projectId === null ? "/notifications/channels" : `/projects/${projectId}/notifications/channels`;
+}
+
 export const api = {
   health: () => request<HealthStatus>("/health"),
   login: (username: string, password: string) =>
@@ -550,6 +629,22 @@ export const api = {
   cancelRun: (id: number) => request<Run>(`/runs/${id}/cancel`, { method: "POST" }),
 
   listWorkers: () => request<WorkerInfo[]>("/workers"),
+
+  notificationCatalog: () => request<NotificationCatalog>("/notifications/catalog"),
+  listChannels: (projectId: number | null) => request<NotificationChannel[]>(channelsPath(projectId)),
+  createChannel: (projectId: number | null, input: ChannelInput) =>
+    request<NotificationChannel>(channelsPath(projectId), { method: "POST", body: JSON.stringify(input) }),
+  updateChannel: (projectId: number | null, id: number, update: ChannelUpdate) =>
+    request<NotificationChannel>(`${channelsPath(projectId)}/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(update),
+    }),
+  deleteChannel: (projectId: number | null, id: number) =>
+    request<void>(`${channelsPath(projectId)}/${id}`, { method: "DELETE" }),
+  testChannel: (projectId: number | null, id: number) =>
+    request<TestResult>(`${channelsPath(projectId)}/${id}/test`, { method: "POST" }),
+  listDeliveries: (projectId: number | null, id: number) =>
+    request<NotificationDelivery[]>(`${channelsPath(projectId)}/${id}/deliveries`),
 };
 
 /** `from` skips the log lines already received, so a dropped stream resumes where it left off. */

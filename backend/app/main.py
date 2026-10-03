@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.db import get_sessionmaker, init_db
 from app.hardening import OriginCheckMiddleware
 from app.internal_api import internal_app
+from app.notifications.dispatch import dispatch_forever
 from app.process_hardening import disable_process_inspection
 from app.reaper import INTERVAL_SECONDS, reap_once
 from app.routers import (
@@ -26,6 +27,7 @@ from app.routers import (
     galaxy,
     health,
     inventories,
+    notifications,
     playbooks,
     projects,
     runs,
@@ -78,6 +80,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     galaxy_roles_dir()
 
     reaper = asyncio.create_task(_reap_forever())
+    dispatcher = asyncio.create_task(dispatch_forever())
     internal = serving = None
     if settings.internal_api_enabled:
         internal = _EmbeddedServer(
@@ -94,9 +97,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         yield
     finally:
         reaper.cancel()
+        dispatcher.cancel()
         if internal is not None:
             internal.should_exit = True  # graceful: in-flight worker calls finish
-        await asyncio.gather(reaper, *([serving] if serving else []), return_exceptions=True)
+        await asyncio.gather(
+            reaper, dispatcher, *([serving] if serving else []), return_exceptions=True
+        )
 
 
 app = FastAPI(title="AnsiDeck API", version="0.1.0", lifespan=lifespan)
@@ -136,3 +142,9 @@ app.include_router(api_keys.router, prefix="/api/projects/{project_id}/api-keys"
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(audit_router.router, prefix="/api/audit", tags=["audit"])
 app.include_router(workers.router, prefix="/api/workers", tags=["workers"])
+app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
+app.include_router(
+    notifications.project_router,
+    prefix="/api/projects/{project_id}/notifications",
+    tags=["notifications"],
+)
