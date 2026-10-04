@@ -9,6 +9,7 @@ import httpx
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from app import metrics
 from app.config import Settings, get_settings
 from app.db import get_sessionmaker
 from app.models import NotificationChannel, NotificationDelivery
@@ -114,7 +115,9 @@ def deliver(
         db.commit()  # the attempt counts even if this process dies while sending
         outcome = send(channel, delivery.event, payload, settings, transport)
         _record(delivery, outcome)
+        kind, status_after = channel.kind, delivery.status
         db.commit()
+        metrics.notification_attempted(kind, status_after)
         if not outcome.ok:
             logger.warning(
                 "notification %s to channel %s: %s (attempt %s, %s)",

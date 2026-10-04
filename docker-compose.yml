@@ -30,12 +30,17 @@ services:
       # The internal worker API (never published): reachable from the workers network only.
       - INTERNAL_API_HOST=0.0.0.0
       - WORKER_TOKEN=${WORKER_TOKEN:-change-me-dev-only-worker-token}
+      # Prometheus metrics: nothing listens until METRICS_TOKEN is set in .env.
+      - METRICS_HOST=0.0.0.0
     volumes:
       - ./backend:/app
       - backend-venv:/app/.venv
       - backend-data:/data
     ports:
       - "${BACKEND_PORT:-8000}:8000"
+      # Loopback only, for a Prometheus on this machine (host.docker.internal:8002 from a
+      # container). Never publish it further.
+      - "127.0.0.1:${BACKEND_METRICS_PORT:-8002}:8002"
     command: ["uv", "run", "fastapi", "dev", "app/main.py", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]

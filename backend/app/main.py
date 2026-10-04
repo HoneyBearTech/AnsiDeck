@@ -11,12 +11,13 @@ from fastapi.responses import JSONResponse
 from psycopg.errors import NumericValueOutOfRange
 from sqlalchemy.exc import DataError
 
-from app import audit
+from app import audit, metrics
 from app.bootstrap import refuse_to_start_over_legacy_data, seed_fresh_install
 from app.config import get_settings
 from app.db import get_sessionmaker, init_db
 from app.hardening import OriginCheckMiddleware
 from app.internal_api import internal_app
+from app.metrics_api import metrics_app
 from app.notifications.dispatch import dispatch_forever
 from app.process_hardening import disable_process_inspection
 from app.reaper import INTERVAL_SECONDS, reap_once
@@ -55,6 +56,12 @@ class _EmbeddedServer(uvicorn.Server):
         yield
 
 
+def _embedded(asgi_app: FastAPI, host: str, port: int) -> _EmbeddedServer:
+    return _EmbeddedServer(
+        uvicorn.Config(asgi_app, host=host, port=port, lifespan="off", log_level="warning")
+    )
+
+
 async def _reap_forever() -> None:
     while True:
         try:
@@ -81,28 +88,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     reaper = asyncio.create_task(_reap_forever())
     dispatcher = asyncio.create_task(dispatch_forever())
-    internal = serving = None
+    servers: list[_EmbeddedServer] = []
     if settings.internal_api_enabled:
-        internal = _EmbeddedServer(
-            uvicorn.Config(
-                internal_app,
-                host=settings.internal_api_host,
-                port=settings.internal_api_port,
-                lifespan="off",
-                log_level="warning",
-            )
+        servers.append(
+            _embedded(internal_app, settings.internal_api_host, settings.internal_api_port)
         )
-        serving = asyncio.create_task(internal.serve())
+    if settings.metrics_token:
+        servers.append(_embedded(metrics_app, settings.metrics_host, settings.metrics_port))
+    serving = [asyncio.create_task(server.serve()) for server in servers]
     try:
         yield
     finally:
         reaper.cancel()
         dispatcher.cancel()
-        if internal is not None:
-            internal.should_exit = True  # graceful: in-flight worker calls finish
-        await asyncio.gather(
-            reaper, dispatcher, *([serving] if serving else []), return_exceptions=True
-        )
+        for server in servers:
+            server.should_exit = True  # graceful: in-flight worker calls finish
+        await asyncio.gather(reaper, dispatcher, *serving, return_exceptions=True)
 
 
 app = FastAPI(title="AnsiDeck API", version="0.1.0", lifespan=lifespan)
@@ -126,6 +127,8 @@ app.add_middleware(
 )
 
 app.add_middleware(OriginCheckMiddleware, allowed_origins=settings.cors_origins)
+# Outermost, so requests the Origin check refuses are counted too.
+app.add_middleware(metrics.HTTPMetricsMiddleware, server="public")
 
 app.include_router(health.router, prefix="/api")
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])

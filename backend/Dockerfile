@@ -50,9 +50,10 @@ COPY --from=build /app /app
 ENV PATH="/app/.venv/bin:$PATH"
 USER appuser
 # 8000: the API. 8001: the internal worker API (workers only; never publish it).
+# 8002: Prometheus metrics, only when METRICS_TOKEN is set (scrapers only; never publish it).
 # The same image runs a worker with the command: python -m app.worker, as root with only
 # the SETUID, SETGID, CHOWN and KILL capabilities (see docker-compose.yml): it runs
 # each slot's playbooks as that slot's own user, and refuses to start in production without.
-EXPOSE 8000 8001
+EXPOSE 8000 8001 8002
 HEALTHCHECK --interval=30s --timeout=3s CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
 CMD ["fastapi", "run", "app/main.py", "--host", "0.0.0.0", "--port", "8000"]

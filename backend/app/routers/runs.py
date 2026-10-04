@@ -16,7 +16,7 @@ from fastapi import (
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, metrics
 from app.db import get_db, get_sessionmaker
 from app.dependencies import SESSION_COOKIE_NAME, RateLimited, authenticate_request
 from app.hardening import client_ip
@@ -202,6 +202,7 @@ def create_run(
     db.add(run)
     db.commit()
     db.refresh(run)
+    metrics.run_queued(project_id, via_api_key=run.triggered_by_api_key_id is not None)
 
     audit.record(
         db,

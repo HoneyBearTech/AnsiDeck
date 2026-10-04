@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app import metrics
 from app.models import AuditEvent, User
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,8 @@ def record(
     except Exception:  # noqa: BLE001
         db.rollback()
         logger.exception("failed to write audit event %s", action)
+        return
+    metrics.audit_recorded(action, outcome, locked_out=bool((detail or {}).get("locked_out")))
 
 
 def _notify(

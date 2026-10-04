@@ -20,6 +20,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
+from app import metrics
 from app.config import get_settings
 from app.db import GALAXY_GATE_KEY
 from app.jobs import unrunnable_reason
@@ -99,6 +100,7 @@ def fail_run(run: Run, status: RunStatus, reason: str) -> None:
     append_status_line(run, f"AnsiDeck: {reason}")
     if (session := object_session(run)) is not None:
         run_finished(session, run)
+        metrics.run_finished(session, run.project_id, status.value, run.started_at)
 
 
 def record_worker(db: Session, worker_id: str, slots: int, isolated: bool | None = None) -> None:
@@ -193,7 +195,9 @@ def claim_next(db: Session, worker_id: str) -> Claim | None:
         run = db.get(Run, run_id, populate_existing=True)
         reason = unrunnable_reason(run)
         if reason is None:
+            waited = (run.claimed_at - run.queued_at).total_seconds()
             db.commit()
+            metrics.run_claimed(waited)
             return Claim(run_id, claim_token, job_token)
         fail_run(run, RunStatus.FAILED, f"not run: {reason}")
         db.commit()
