@@ -123,6 +123,9 @@ def test_import_backfills_the_default_project_and_copies_everything(empty) -> No
     (run,) = _all(Run)
     assert (run.queued_at, run.claimed_at) == (run.created_at, run.started_at)
     assert run.attempt == 1 and run.worker_id is None and run.hosts_total is None
+    # The analytics views (0008) came back with the upgrade and read the imported rows.
+    with get_engine().connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM analytics.runs")).scalar() == 1
 
 
 def test_imported_users_keep_working_access_and_ids_continue(empty) -> None:

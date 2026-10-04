@@ -335,6 +335,8 @@ class Run(Base):
         ),
         Index("ix_runs_queue", "queued_at", "id", postgresql_where=text("status = 'queued'")),
         Index("ix_runs_lease", "lease_expires_at", postgresql_where=text("status = 'running'")),
+        # History by time range (the analytics views behind the Grafana dashboards).
+        Index("ix_runs_finished_at", "finished_at"),
     )
 
 

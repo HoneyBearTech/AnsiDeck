@@ -185,3 +185,65 @@ def test_0003_fails_what_the_old_engine_left_unfinished_and_downgrades() -> None
         with admin.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
         admin.dispose()
+
+
+def test_0008_creates_the_analytics_views_and_downgrades_cleanly() -> None:
+    """The downgrade removes the schema, its views, the default privileges analytics-grant
+    set on it, and the index; upgrading again works."""
+    url = make_url(TEST_DATABASE_URL)
+    scratch = url.database.removesuffix("_test") + "_migration_test"
+    role = "ansideck_analytics_migration_test"
+    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{scratch}"'))
+        if conn.execute(text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": role}).first():
+            conn.execute(text(f"DROP ROLE {role}"))
+        conn.execute(text(f"CREATE ROLE {role} NOLOGIN"))
+    engine = create_engine(url.set(database=scratch))
+    config = alembic_config()
+
+    def migrate(step, revision: str) -> None:
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            step(config, revision)
+
+    def analytics_state(conn) -> tuple[int, int, bool]:
+        views = conn.execute(
+            text("SELECT count(*) FROM pg_views WHERE schemaname = 'analytics'")
+        ).scalar()
+        default_acls = conn.execute(
+            text(
+                "SELECT count(*) FROM pg_default_acl d "
+                "JOIN pg_namespace n ON n.oid = d.defaclnamespace WHERE n.nspname = 'analytics'"
+            )
+        ).scalar()
+        index = conn.execute(
+            text("SELECT 1 FROM pg_indexes WHERE indexname = 'ix_runs_finished_at'")
+        ).first()
+        return views, default_acls, index is not None
+
+    try:
+        migrate(command.upgrade, "0008")
+        with engine.begin() as conn:
+            grant = f"GRANT SELECT ON TABLES TO {role}"
+            conn.execute(text(f"ALTER DEFAULT PRIVILEGES IN SCHEMA analytics {grant}"))
+            conn.execute(text(f"GRANT USAGE ON SCHEMA analytics TO {role}"))
+            assert analytics_state(conn) == (9, 1, True)
+
+        migrate(command.downgrade, "0007")
+        with engine.connect() as conn:
+            assert analytics_state(conn) == (0, 0, False)
+            assert not conn.execute(
+                text("SELECT 1 FROM pg_namespace WHERE nspname = 'analytics'")
+            ).first()
+
+        migrate(command.upgrade, "0008")
+        with engine.connect() as conn:
+            assert analytics_state(conn) == (9, 0, True)
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+            conn.execute(text(f"DROP ROLE IF EXISTS {role}"))
+        admin.dispose()
