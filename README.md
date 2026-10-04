@@ -134,6 +134,8 @@ they are.
   which has no `uv`: `python -m app.cli reset-totp <username>`).
 - The audit log records sign-ins, run activity and permission denials, and is kept for
   `AUDIT_RETENTION_DAYS` (365 by default).
+- If you turn on metrics (`METRICS_TOKEN`), never publish or proxy port 8002; give Prometheus the token
+  in a file. The token only reads metrics.
 
 ## Notifications
 
@@ -173,6 +175,31 @@ to see what was sent; failed deliveries are retried for up to about 1 h 45 min.
   signing secret, an `X-AnsiDeck-Signature: sha256=<HMAC of "<X-AnsiDeck-Timestamp>.<body>">`
   header.
 - Links to runs need `PUBLIC_URL`.
+
+## Monitoring with Prometheus (optional)
+
+Set `METRICS_TOKEN` and the backend serves Prometheus metrics at `/metrics` on a port of its own, 8002
+(`METRICS_PORT`, listening on `METRICS_HOST`, which compose sets to `0.0.0.0`). Scrapers must send the token
+as a bearer token; wrong tokens get 401, are throttled per address and recorded in the audit log. Without a
+token nothing listens. The port is never served through the frontend or the API's port 8000; the dev compose
+stack publishes it on `127.0.0.1` only. [grafana/prometheus/scrape.example.yml](grafana/prometheus/scrape.example.yml)
+is a scrape job to start from.
+
+What you get:
+
+- **Runs:** runs queued and finished (by project and status), run duration and queue-wait histograms,
+  runs queued or running now, the oldest queued run's age.
+- **Workers:** workers online and offline, slots and busy slots per worker, whether each isolates its runs,
+  when each last reported in.
+- **Notifications and alerts:** send attempts by channel kind and outcome, the outbox backlog, ops alerts
+  raised now (worker offline or not isolated, queue stuck).
+- **API:** requests and latency by route template and status, for the public and the internal worker API;
+  audit events by action and outcome, sign-in lockouts; the usual process metrics.
+
+Labels never carry user names, playbook names, inventory host names, run ids, raw paths or anything from a run's output.
+Projects are labelled by id; `ansideck_project_info` maps ids to names. Counters live in the API process and
+restart from zero with it, which `rate()` and `increase()` handle, so run exactly one API process (no
+`--workers`).
 
 ## Triggering runs from CI
 

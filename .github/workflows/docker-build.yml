@@ -71,9 +71,10 @@ jobs:
             [ "$(docker inspect -f '{{.State.Health.Status}}' smoke-db)" = healthy ] && break
             sleep 2
           done
-          docker run -d --name smoke --network smoke-net -p 8000:8000 \
+          docker run -d --name smoke --network smoke-net -p 8000:8000 -p 127.0.0.1:8002:8002 \
             -e AUTH_SECRET_KEY=ci-test -e ADMIN_PASSWORD=ci-test \
             -e INTERNAL_API_HOST=0.0.0.0 -e WORKER_TOKEN=ci-test-worker-token-0123456789abcdef \
+            -e METRICS_HOST=0.0.0.0 -e METRICS_TOKEN=ci-test-metrics-token-0123456789abcdef \
             -e CREDENTIAL_ENCRYPTION_KEY=8JQKBeSl5G-WvrMG3wRXlVUrowrX3qAkZq0Nycsd9qc= \
             -e DATABASE_URL=postgresql+psycopg://ansideck:ci-test@smoke-db:5432/ansideck \
             ansideck-backend:runtime
@@ -132,6 +133,20 @@ jobs:
           python3 backend/scripts/smoke_run.py http://localhost:8000 ci-test "$RUNNER_TEMP/smoke_key" \
             || { docker logs smoke-worker; docker logs smoke; exit 1; }
           docker logs smoke-worker
+
+      - name: Smoke test metrics in backend runtime image
+        if: matrix.service == 'backend' && matrix.target == 'runtime'
+        # Served on their own port, only with the token; the run above is counted, the database
+        # gauges work, and the process metrics still read /proc/self in a non-dumpable process.
+        run: |
+          curl -sf -H "Authorization: Bearer ci-test-metrics-token-0123456789abcdef" \
+            http://localhost:8002/metrics > "$RUNNER_TEMP/metrics.txt"
+          grep -E '^ansideck_runs_finished_total\{project_id="1",status="success"\} 1\.0$' "$RUNNER_TEMP/metrics.txt"
+          grep -E '^ansideck_db_up 1\.0$' "$RUNNER_TEMP/metrics.txt"
+          grep -E '^ansideck_slots\{state="total"\} [1-9]' "$RUNNER_TEMP/metrics.txt"
+          grep -E '^process_resident_memory_bytes [0-9]' "$RUNNER_TEMP/metrics.txt"
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8002/metrics)" = 401 ]
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/metrics)" = 404 ]
 
       - name: Smoke test frontend runtime image
         if: matrix.service == 'frontend' && matrix.target == 'runtime'

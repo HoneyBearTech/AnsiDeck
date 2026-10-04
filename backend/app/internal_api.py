@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, metrics
 from app.config import get_settings
 from app.db import get_db, get_sessionmaker
 from app.galaxy import try_start_install
@@ -336,6 +336,7 @@ def complete(
     run.claim_token_hash = None
     project_id, worker_id = run.project_id, run.worker_id
     run_finished(db, run)
+    metrics.run_finished(db, project_id, body.status, run.started_at)
     db.commit()
 
     if body.status == RunStatus.TIMED_OUT:
@@ -357,3 +358,4 @@ internal_app = FastAPI(
 )
 internal_app.include_router(router)
 internal_app.add_middleware(WorkerAuthMiddleware)
+internal_app.add_middleware(metrics.HTTPMetricsMiddleware, server="internal")  # outermost

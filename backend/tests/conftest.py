@@ -36,6 +36,7 @@ from app.hardening import (  # noqa: E402
 )
 from app.internal_api import internal_app, worker_ip_throttle  # noqa: E402
 from app.main import app  # noqa: E402
+from app.metrics_api import metrics_ip_throttle  # noqa: E402
 from app.models import Project, ProjectMember, User  # noqa: E402
 from app.worker.client import ApiClient  # noqa: E402
 from app.worker.runner import Worker  # noqa: E402
@@ -124,6 +125,7 @@ def client(request, tmp_path, monkeypatch) -> Generator[TestClient, None, None]:
     sso_ip_throttle.clear()
     totp_user_throttle.clear()
     worker_ip_throttle.clear()
+    metrics_ip_throttle.clear()
     truncate_all()
 
     seed_db = get_sessionmaker()()

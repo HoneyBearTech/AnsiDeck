@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     # A worker's claim on a run lasts this long past its latest heartbeat.
     run_lease_seconds: int = 60
 
+    # Prometheus metrics (app.metrics_api): served on a port of their own, only when a token
+    # is set, to scrapers that send it as a bearer token. Never publish or proxy the port.
+    metrics_token: str = ""
+    metrics_host: str = "127.0.0.1"
+    metrics_port: int = 8002
+
     # Audit events older than this are pruned at startup; 0 keeps them forever.
     audit_retention_days: int = 365
 
@@ -135,6 +141,25 @@ class Settings(BaseSettings):
             raise ValueError(
                 "ENVIRONMENT=production refuses SMTP_TLS=none to a remote server (the password "
                 "and messages would cross the network in clear text)."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_metrics(self) -> "Settings":
+        if not self.metrics_token:
+            return self
+        if self.metrics_token in (self.worker_token, self.auth_secret_key):
+            raise ValueError(
+                "METRICS_TOKEN must differ from WORKER_TOKEN and AUTH_SECRET_KEY: whoever "
+                "scrapes metrics must not be able to act as a worker or sign sessions."
+            )
+        if (
+            self.environment.lower() == "production"
+            and len(self.metrics_token) < MIN_WORKER_TOKEN_LENGTH
+        ):
+            raise ValueError(
+                f"ENVIRONMENT=production requires a METRICS_TOKEN of at least "
+                f"{MIN_WORKER_TOKEN_LENGTH} characters."
             )
         return self
 

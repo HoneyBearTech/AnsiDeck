@@ -1,0 +1,18 @@
+# A scrape job for AnsiDeck's metrics: add it under `scrape_configs:` in your prometheus.yml.
+#
+# The metrics are served on the backend's port 8002, only when METRICS_TOKEN is set, and only
+# to requests that send that token. Keep the port private: scrape it over a Docker network or
+# from the same machine, never through the reverse proxy that serves AnsiDeck.
+- job_name: ansideck
+  scrape_interval: 30s
+  scrape_timeout: 10s
+  # The token, in a file only Prometheus can read (not inline in this config).
+  authorization:
+    type: Bearer
+    credentials_file: /etc/prometheus/ansideck-metrics-token
+  static_configs:
+    # A Prometheus container on the backend's Docker network:
+    - targets: ["backend:8002"]
+    # A Prometheus container on the same machine as the dev compose stack, which publishes
+    # the port on 127.0.0.1 only (Docker Desktop):
+    # - targets: ["host.docker.internal:8002"]
