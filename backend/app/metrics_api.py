@@ -24,7 +24,7 @@ from prometheus_client.registry import Collector
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, metrics
 from app.config import get_settings
 from app.db import get_sessionmaker
 from app.hardening import FailureThrottle
@@ -60,6 +60,7 @@ def _read(db: Session) -> list[GaugeMetricFamily]:
         return db.execute(text(sql), params).scalar()
 
     projects = rows("SELECT id, name FROM projects ORDER BY id")
+    metrics.project_series(project_id for project_id, _ in projects)
     info = _gauge(
         "ansideck_project_info", "Project names by id (always 1)", ("project_id", "project")
     )
@@ -293,7 +294,7 @@ metrics_app = FastAPI(title="AnsiDeck metrics", docs_url=None, redoc_url=None, o
 
 
 @metrics_app.get("/metrics")
-async def metrics() -> Response:
+async def serve_metrics() -> Response:
     body = await asyncio.to_thread(generate_latest, REGISTRY)
     return Response(body, media_type=CONTENT_TYPE_LATEST)
 

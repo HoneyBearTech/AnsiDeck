@@ -166,6 +166,55 @@ jobs:
             echo "grafana_ro can read the users table"; exit 1
           fi
 
+      - name: Smoke test the Grafana dashboards against the backend runtime image
+        if: matrix.service == 'backend' && matrix.target == 'runtime'
+        # A throwaway Prometheus scrapes the metrics and a throwaway Grafana gets both data
+        # sources and the dashboards; every panel, annotation and variable query must run, and
+        # the core panels must show the run above.
+        run: |
+          mkdir -p "$RUNNER_TEMP/prom"
+          printf '%s' ci-test-metrics-token-0123456789abcdef > "$RUNNER_TEMP/prom/token"
+          chmod 644 "$RUNNER_TEMP/prom/token"
+          cat > "$RUNNER_TEMP/prom/prometheus.yml" <<'YAML'
+          scrape_configs:
+            - job_name: ansideck
+              scrape_interval: 5s
+              scrape_timeout: 4s
+              authorization:
+                type: Bearer
+                credentials_file: /etc/prometheus/token
+              static_configs:
+                - targets: ["smoke:8002"]
+          YAML
+          docker run -d --name smoke-prometheus --network smoke-net \
+            -v "$RUNNER_TEMP/prom/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            -v "$RUNNER_TEMP/prom/token:/etc/prometheus/token:ro" \
+            prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+          docker run -d --name smoke-grafana --network smoke-net -p 127.0.0.1:3000:3000 \
+            -e GF_SECURITY_ADMIN_PASSWORD=ci-test-grafana-admin \
+            grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/api/health > /dev/null && break
+            sleep 2
+          done
+          # Two scrapes after the target is up, so rates have two samples.
+          for i in $(seq 1 30); do
+            docker exec smoke-prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=up' \
+              | grep -q '"value":\[[0-9.]*,"1"\]' && break
+            sleep 2
+          done
+          sleep 12
+          GRAFANA_PASSWORD=ci-test-grafana-admin POSTGRES_PASSWORD=ci-test-grafana \
+            python3 grafana/tools/verify_dashboards.py --grafana http://localhost:3000 \
+              --prometheus-url http://smoke-prometheus:9090 --scrape-interval 5s \
+              --postgres smoke-db:5432 --database ansideck --postgres-user grafana_ro \
+              --since now-15m --interval-ms 5000 \
+              --expect-data Database --expect-data "Workers online" \
+              --expect-data "Runs queued and running" --expect-data "API requests by status" \
+              --expect-data "Finished runs by status" --expect-data Workers \
+              --expect-data "Sign-ins by outcome and method" \
+            || { docker logs smoke-grafana 2>&1 | tail -40; exit 1; }
+
       - name: Smoke test frontend runtime image
         if: matrix.service == 'frontend' && matrix.target == 'runtime'
         run: |

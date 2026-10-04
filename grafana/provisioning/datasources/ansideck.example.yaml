@@ -1,0 +1,34 @@
+# Example Grafana data source provisioning for AnsiDeck: copy into Grafana's
+# provisioning/datasources/ and fill in the addresses. The fixed uids are what
+# provisioning/alerting/ansideck.example.yaml refers to; the dashboards don't need them
+# (they pick data sources through their own variables).
+apiVersion: 1
+
+datasources:
+  # Prometheus that scrapes AnsiDeck's metrics (see ../../prometheus/scrape.example.yml).
+  - name: AnsiDeck Prometheus
+    uid: ansideck-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    jsonData:
+      timeInterval: 30s  # your scrape interval: sizes $__rate_interval
+
+  # The AnsiDeck database, as the read-only role that `python -m app.cli analytics-grant`
+  # set up (it can read the analytics views and nothing else). Keep the database private.
+  - name: AnsiDeck database
+    uid: ansideck-database
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: postgres:5432
+    user: grafana_ro
+    jsonData:
+      database: ansideck
+      sslmode: require  # "disable" only on a private Docker network
+      postgresVersion: 1800
+      # Stay under the role's CONNECTION LIMIT (Grafana's default allows 100).
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+    secureJsonData:
+      password: $ANSIDECK_GRAFANA_DB_PASSWORD  # from Grafana's environment

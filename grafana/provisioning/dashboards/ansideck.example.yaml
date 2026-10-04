@@ -1,0 +1,12 @@
+# Example Grafana dashboard provisioning: loads AnsiDeck's dashboards from a folder
+# (mount or copy grafana/dashboards/ there) into a Grafana folder named AnsiDeck.
+apiVersion: 1
+
+providers:
+  - name: AnsiDeck
+    folder: AnsiDeck
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true  # edits are kept until the next restart; export them to keep them
+    options:
+      path: /var/lib/grafana/dashboards/ansideck

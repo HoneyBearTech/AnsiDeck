@@ -1,6 +1,9 @@
 """Prometheus metrics (app.metrics, app.metrics_api): off without a token, token-protected,
 low-cardinality labels, nothing secret, and the numbers move when runs do."""
 
+import subprocess
+import sys
+
 import pytest
 from fastapi.testclient import TestClient
 from prometheus_client.parser import text_string_to_metric_families
@@ -296,6 +299,37 @@ def test_notification_attempts_are_counted_by_outcome() -> None:
     for status in ("sent", "pending", "failed", "sending"):  # "sending" is not an outcome
         metrics.notification_attempted("webhook", status)
     assert {o: count(o) - before[o] for o in before} == {"sent": 1, "retry": 1, "failed": 1}
+
+
+def test_counters_start_at_zero_so_increase_sees_the_first_step(
+    admin_client, scrape, monkeypatch
+) -> None:
+    """Every project's run series exist (at zero) before its first run: Prometheus'
+    increase() can't see a series' first step. (Counters live for the whole test process,
+    so this uses an id no test has run anything in.)"""
+    metrics.project_series([987654])
+    samples = scrape()
+    for status in ("success", "failed", "cancelled", "timed_out"):
+        labels = frozenset({("project_id", "987654"), ("status", status)})
+        assert samples.get(("ansideck_runs_finished_total", labels)) == 0, status
+    duration = ("ansideck_run_duration_seconds_count", frozenset({("project_id", "987654")}))
+    assert samples.get(duration) == 0
+
+    seen: list[list[int]] = []
+    monkeypatch.setattr(metrics, "project_series", lambda ids: seen.append(list(ids)))
+    fresh = admin_client.post("/api/projects", json={"name": "Fresh", "description": ""})
+    scrape()
+    assert fresh.json()["id"] in seen[-1]  # each scrape passes every project
+
+
+def test_security_counters_exist_from_the_start() -> None:
+    """In a fresh process (the test process already counted failures elsewhere)."""
+    code = "from app import metrics; print(sorted(k for k in metrics.AUDIT_EVENTS._metrics))"
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    ).stdout
+    for pair in ("('auth.login', 'failure')", "('worker.auth_failed', 'failure')"):
+        assert pair in out
 
 
 def test_raised_ops_alerts_and_the_outbox_are_gauged(client, scrape) -> None:

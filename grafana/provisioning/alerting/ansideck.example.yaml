@@ -1,0 +1,101 @@
+# Example Grafana alert rules for AnsiDeck: trends only. AnsiDeck's own notifications already
+# report single events (a run failed, a worker went offline, the queue is stuck, a login
+# attack, an admin change), so these rules don't repeat them. Copy into Grafana's
+# provisioning/alerting/ and route the "ansideck" label in your notification policies.
+# They use the Prometheus data source uid from ../datasources/ansideck.example.yaml.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: AnsiDeck
+    folder: AnsiDeck
+    interval: 1m
+    rules:
+      - uid: ansideck-failure-ratio
+        title: AnsiDeck runs failing more than usual
+        condition: C
+        for: 15m
+        labels: {ansideck: trend}
+        annotations:
+          summary: More than 30% of the runs that ended in the last hour failed or timed out.
+        data:
+          - refId: A
+            datasourceUid: ansideck-prometheus
+            relativeTimeRange: {from: 3600, to: 0}
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                sum(increase(ansideck_runs_finished_total{status=~"failed|timed_out"}[1h]))
+                / sum(increase(ansideck_runs_finished_total{status=~"success|failed|timed_out"}[1h]))
+          - refId: C
+            datasourceUid: __expr__
+            model: {refId: C, type: threshold, expression: A,
+                    conditions: [{evaluator: {type: gt, params: [0.3]}}]}
+        noDataState: OK
+        execErrState: Error
+
+      - uid: ansideck-signin-failures
+        title: AnsiDeck failed sign-ins spiking
+        condition: C
+        for: 0s
+        labels: {ansideck: trend}
+        annotations:
+          summary: Over 30 failed sign-ins in 15 minutes (across all names and addresses).
+        data:
+          - refId: A
+            datasourceUid: ansideck-prometheus
+            relativeTimeRange: {from: 900, to: 0}
+            model:
+              refId: A
+              instant: true
+              expr: sum(increase(ansideck_audit_events_total{action="auth.login",outcome="failure"}[15m]))
+          - refId: C
+            datasourceUid: __expr__
+            model: {refId: C, type: threshold, expression: A,
+                    conditions: [{evaluator: {type: gt, params: [30]}}]}
+        noDataState: OK
+        execErrState: Error
+
+      - uid: ansideck-notification-backlog
+        title: AnsiDeck notifications not going out
+        condition: C
+        for: 5m
+        labels: {ansideck: trend}
+        annotations:
+          summary: A notification has waited over 15 minutes to be sent (see the delivery log).
+        data:
+          - refId: A
+            datasourceUid: ansideck-prometheus
+            relativeTimeRange: {from: 600, to: 0}
+            model: {refId: A, instant: true, expr: ansideck_notification_outbox_oldest_age_seconds}
+          - refId: C
+            datasourceUid: __expr__
+            model: {refId: C, type: threshold, expression: A,
+                    conditions: [{evaluator: {type: gt, params: [900]}}]}
+        noDataState: OK
+        execErrState: Error
+
+      - uid: ansideck-metrics-missing
+        title: AnsiDeck metrics missing or database unreachable
+        condition: C
+        for: 5m
+        labels: {ansideck: trend}
+        annotations:
+          summary: >-
+            Prometheus gets no AnsiDeck metrics (API down, wrong token, or port 8002 not
+            reachable), or the API can't read its database.
+        data:
+          - refId: A
+            datasourceUid: ansideck-prometheus
+            relativeTimeRange: {from: 600, to: 0}
+            model:
+              refId: A
+              instant: true
+              expr: (absent_over_time(ansideck_build_info[5m]) or (ansideck_db_up == 0)) * 0 + 1
+          - refId: C
+            datasourceUid: __expr__
+            model: {refId: C, type: threshold, expression: A,
+                    conditions: [{evaluator: {type: gt, params: [0]}}]}
+        noDataState: OK
+        execErrState: Error
