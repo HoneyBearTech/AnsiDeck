@@ -148,6 +148,24 @@ jobs:
           [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8002/metrics)" = 401 ]
           [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/metrics)" = 404 ]
 
+      - name: Smoke test the analytics views in backend runtime image
+        if: matrix.service == 'backend' && matrix.target == 'runtime'
+        # A Grafana-style login role, granted with the image's own CLI, reads the analytics views
+        # (the run above is there) and nothing else.
+        run: |
+          docker exec smoke-db psql -U ansideck -d ansideck -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE grafana_ro LOGIN PASSWORD 'ci-test-grafana' NOINHERIT" \
+            -c "ALTER ROLE grafana_ro SET default_transaction_read_only = on"
+          docker exec smoke python -m app.cli analytics-grant grafana_ro
+          as_grafana() {
+            docker exec -e PGPASSWORD=ci-test-grafana smoke-db \
+              psql -h 127.0.0.1 -U grafana_ro -d ansideck -v ON_ERROR_STOP=1 -tAc "$1"
+          }
+          [ "$(as_grafana "SELECT count(*) FROM analytics.runs WHERE status = 'success'")" = 1 ]
+          if as_grafana "SELECT 1 FROM public.users LIMIT 1"; then
+            echo "grafana_ro can read the users table"; exit 1
+          fi
+
       - name: Smoke test frontend runtime image
         if: matrix.service == 'frontend' && matrix.target == 'runtime'
         run: |

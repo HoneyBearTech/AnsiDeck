@@ -7,6 +7,9 @@
                                      (the app also does this at startup)
     import-sqlite <path> [--check]   one-time import of a pre-Postgres ansideck.db
     reset-totp <username>            turn off a user's two-factor login
+    analytics-grant <role>           let a (Grafana) database role read the analytics views
+    analytics-check <role>           check such a role can read nothing else
+    analytics-revoke <role>          take that access away again
 
 reset-totp is the break-glass for a user who lost both their authenticator and their
 recovery codes when no other admin can reset it from the Users page.
@@ -16,7 +19,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from app import audit, totp
+from app import analytics, audit, totp
 from app.db import get_sessionmaker, init_db
 from app.models import User
 from app.sqlite_import import ImportFailed, import_sqlite
@@ -72,6 +75,36 @@ def import_legacy(path: str, check: bool) -> int:
     return 0
 
 
+def _report(role: str, result: analytics.CheckResult) -> int:
+    for warning in result.warnings:
+        print(f"warning: {warning}")
+    for problem in result.problems:
+        print(f"problem: {problem}", file=sys.stderr)
+    if not result.ok:
+        print(f"{role} is not limited to reading the analytics views.", file=sys.stderr)
+        return 1
+    print(f"{role} can read the analytics views and nothing else.")
+    return 0
+
+
+def analytics_command(command: str, role: str) -> int:
+    init_db()
+    db = get_sessionmaker()()
+    try:
+        if command == "analytics-grant":
+            return _report(role, analytics.grant(db, role))
+        if command == "analytics-check":
+            return _report(role, analytics.check(db, role))
+        analytics.revoke(db, role)
+        print(f"{role} can no longer read the analytics views.")
+        return 0
+    except analytics.AnalyticsError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    finally:
+        db.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description="AnsiDeck maintenance")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -83,7 +116,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     reset = commands.add_parser("reset-totp", help="turn off a user's two-factor login")
     reset.add_argument("username")
+    for name, about in (
+        ("analytics-grant", "let a database role read the analytics views (for Grafana)"),
+        ("analytics-check", "check a role can read the analytics views and nothing else"),
+        ("analytics-revoke", "take a role's access to the analytics views away"),
+    ):
+        commands.add_parser(name, help=about).add_argument("role")
     args = parser.parse_args(argv)
+    if args.command.startswith("analytics-"):
+        return analytics_command(args.command, args.role)
     if args.command == "migrate":
         return migrate()
     if args.command == "import-sqlite":

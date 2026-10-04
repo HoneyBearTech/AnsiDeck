@@ -38,6 +38,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.sql.schema import Table
 
 import app.models  # noqa: F401  (registers every table on Base.metadata)
+from app.analytics import SCHEMA as ANALYTICS_SCHEMA
 from app.db import DEFAULT_PROJECT_NAME, Base, get_engine, upgrade_schema
 
 # The Alembic revision whose schema matches the last SQLite one (the Postgres baseline).
@@ -261,6 +262,9 @@ def _reset_to_sqlite_era_schema(dst: Connection) -> list[Table]:
             + ", ".join(non_empty)
             + "). The import only goes into an empty database."
         )
+    # The analytics views (migration 0008) read these tables; the upgrade to the latest
+    # revision after the copy creates them again (a Grafana role then needs analytics-grant).
+    dst.execute(text(f"DROP SCHEMA IF EXISTS {ANALYTICS_SCHEMA} CASCADE"))
     existing.drop_all(dst)
     upgrade_schema(dst, SQLITE_ERA_REVISION)
     target = MetaData()

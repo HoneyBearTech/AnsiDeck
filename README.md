@@ -136,6 +136,8 @@ they are.
   `AUDIT_RETENTION_DAYS` (365 by default).
 - If you turn on metrics (`METRICS_TOKEN`), never publish or proxy port 8002; give Prometheus the token
   in a file. The token only reads metrics.
+- Give Grafana its own database role with `analytics-grant` (never the app's database user), and check it
+  with `analytics-check`.
 
 ## Notifications
 
@@ -176,7 +178,7 @@ to see what was sent; failed deliveries are retried for up to about 1 h 45 min.
   header.
 - Links to runs need `PUBLIC_URL`.
 
-## Monitoring with Prometheus (optional)
+## Monitoring with Prometheus and Grafana (optional)
 
 Set `METRICS_TOKEN` and the backend serves Prometheus metrics at `/metrics` on a port of its own, 8002
 (`METRICS_PORT`, listening on `METRICS_HOST`, which compose sets to `0.0.0.0`). Scrapers must send the token
@@ -200,6 +202,46 @@ Labels never carry user names, playbook names, inventory host names, run ids, ra
 Projects are labelled by id; `ansideck_project_info` maps ids to names. Counters live in the API process and
 restart from zero with it, which `rate()` and `increase()` handle, so run exactly one API process (no
 `--workers`).
+
+### History for Grafana: the read-only analytics views
+
+For history (run trends, durations, failures, sign-ins, audit events) Grafana reads the database through its
+PostgreSQL data source, but only the views in the `analytics` schema: `runs`, `projects`, `workers`,
+`galaxy_installs`, `audit_events`, `notification_deliveries`, `ops_alerts`, `api_keys` and `user_summary`
+(user counts by role, nothing per user). The views leave out everything secret or sensitive: extra variables,
+host limits, playbook contents, credential and vault password names, hashes, encrypted values, run output,
+notification payloads and errors, and audit details beyond a few fixed fields. Client addresses appear only
+as their network (`/24` for IPv4, `/48` for IPv6). User names are included: the audit trail is about who did
+what.
+
+Give Grafana a database role of its own. AnsiDeck never creates roles; create one as a database superuser,
+for example with `docker compose exec postgres psql -U ansideck ansideck`:
+
+```sql
+CREATE ROLE grafana_ro LOGIN PASSWORD '<a long random password>' NOINHERIT CONNECTION LIMIT 5;
+ALTER ROLE grafana_ro SET default_transaction_read_only = on;
+ALTER ROLE grafana_ro SET statement_timeout = '30s';
+ALTER ROLE grafana_ro SET search_path = analytics;
+GRANT CONNECT ON DATABASE ansideck TO grafana_ro;
+-- Recommended unless something else using this database needs temporary tables (AnsiDeck doesn't):
+REVOKE TEMPORARY ON DATABASE ansideck FROM PUBLIC;
+```
+
+Then let it read the views (in the production image: `python -m app.cli analytics-grant grafana_ro`):
+
+```sh
+docker compose exec backend uv run python -m app.cli analytics-grant grafana_ro
+```
+
+`analytics-grant` refuses superusers and roles that belong to the app's own database user, grants `SELECT` on
+the views (including views later upgrades add), and then runs `analytics-check`. The check fails if the role
+can read or change anything outside the views, or can't read one of them, and warns about missing hardening
+from the SQL above. Run `analytics-check grafana_ro` again after upgrades or role changes;
+`analytics-revoke grafana_ro` takes the access away. Keep the database off the network: Grafana should reach it
+over a private network (the dev compose stack publishes Postgres on `127.0.0.1:5433` only, which a Grafana
+container on the same machine reaches as `host.docker.internal:5433`). Anyone who can edit dashboards or use
+Explore in Grafana can read everything in these views, so give that access only to people you would let read
+the audit log.
 
 ## Triggering runs from CI
 
