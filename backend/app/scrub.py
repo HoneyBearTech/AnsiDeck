@@ -60,13 +60,23 @@ def mask_secret_keys(obj: Any, under_secret: bool = False) -> Any:
     return obj
 
 
-def _collect_named_values(obj: Any, out: set[str], under_secret: bool = False) -> None:
+def _collect_named_values(
+    obj: Any, out: set[str], under_secret: bool = False, seen: set | None = None
+) -> None:
+    # Untrusted YAML can share containers through aliases: visiting each once (per secret
+    # context) keeps an alias bomb linear.
+    if seen is None:
+        seen = set()
+    if isinstance(obj, (dict, list)):
+        if (id(obj), under_secret) in seen:
+            return
+        seen.add((id(obj), under_secret))
     if isinstance(obj, dict):
         for k, v in obj.items():
-            _collect_named_values(v, out, under_secret or is_secret_key(str(k)))
+            _collect_named_values(v, out, under_secret or is_secret_key(str(k)), seen)
     elif isinstance(obj, list):
         for v in obj:
-            _collect_named_values(v, out, under_secret)
+            _collect_named_values(v, out, under_secret, seen)
     elif under_secret and obj is not None and not isinstance(obj, bool):
         out.add(str(obj))
 
@@ -107,7 +117,11 @@ def collect_secrets(
     playbook_text: str,
     extra_vars: dict | None,
     host_vars: Iterable[dict],
+    repo_vars_texts: Iterable[str] = (),
 ) -> set[str]:
+    """`repo_vars_texts`: a git run's variable files (group_vars, host_vars, vars, role vars
+    and defaults). Their values under secret-looking keys count, their vaulted values too, and
+    every value of a whole-file vault."""
     secrets: set[str] = {ssh_key_pem.strip()}
     if vault_password:
         secrets.add(vault_password)
@@ -117,21 +131,41 @@ def collect_secrets(
     for hv in host_vars:
         _collect_named_values(hv, secrets)
 
+    repo_vars: list[Any] = []
+    for text in repo_vars_texts:
+        if text.lstrip().startswith(_VAULT_PREFIX):
+            if vault_password:
+                try:
+                    plain = decrypt_vault_text(text, vault_password)
+                except VaultError:
+                    continue
+                _collect_named_values(_load_yaml(plain), secrets, under_secret=True)
+            continue
+        repo_vars.append(_load_yaml(text))
+    for data in repo_vars:
+        _collect_named_values(data, secrets)
+
     if vault_password:
         vaulted: list[str] = []
-        try:
-            _collect_vault_texts(yaml.load(playbook_text, Loader=_PlaybookLoader), vaulted)  # noqa: S506
-        except (yaml.YAMLError, RecursionError):  # too deep to parse = unparsable
-            pass
+        _collect_vault_texts(_load_yaml(playbook_text), vaulted)
         _collect_vault_texts(extra_vars, vaulted)
         for hv in host_vars:
             _collect_vault_texts(hv, vaulted)
+        for data in repo_vars:
+            _collect_vault_texts(data, vaulted)
         for text in vaulted:
             try:
                 secrets.add(decrypt_vault_text(text, vault_password))
             except VaultError:
                 pass
     return secrets
+
+
+def _load_yaml(text: str) -> Any:
+    try:
+        return yaml.load(text, Loader=_PlaybookLoader)  # noqa: S506 - SafeLoader subclass
+    except (yaml.YAMLError, RecursionError):  # too deep to parse = unparsable
+        return None
 
 
 def _variants(secret: str) -> set[str]:

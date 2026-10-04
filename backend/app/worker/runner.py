@@ -2,6 +2,7 @@
 and one heartbeat thread for the whole worker (lease renewal, cancel, timeout, self-fencing).
 """
 
+import hashlib
 import json
 import logging
 import threading
@@ -9,11 +10,18 @@ import time
 from collections import deque
 from pathlib import Path
 
-from app.run_executor import ExecutionHandle, format_duration, host_counts, run_in_worker, sweep
+from app.run_executor import (
+    ExecutionHandle,
+    RunRefused,
+    format_duration,
+    host_counts,
+    run_in_worker,
+    sweep,
+)
 from app.run_isolation import RunIdentity, identity_for_slot
 from app.scrub import build_scrubber
 from app.subprocess_env import clean_env
-from app.worker.client import ApiClient, ApiUnavailable
+from app.worker.client import ApiClient, ApiRefused, ApiUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -322,6 +330,32 @@ class Worker:
             return None
         return None
 
+    def _fetch_snapshot(self, task: RunTask, project: dict) -> bytes | None:
+        """The run's repository tar, exactly as its job describes it (size and sha256)."""
+        expected = int(project["bytes"])
+        for delay in (1, 2, 4, 8, None):
+            try:
+                data = self.client.download(
+                    f"/internal/runs/{task.run_id}/snapshot",
+                    {},
+                    claim_token=task.claim_token,
+                    max_bytes=expected,
+                )
+            except ApiUnavailable as exc:
+                if delay is None or task.handle.stop_reason:
+                    logger.error("run %s: could not fetch the repository (%s)", task.run_id, exc)
+                    return None
+                time.sleep(delay)
+                continue
+            except ApiRefused as exc:
+                logger.error("run %s: repository refused (%s)", task.run_id, exc)
+                return None
+            if len(data) != expected or hashlib.sha256(data).hexdigest() != project["sha256"]:
+                logger.error("run %s: the repository doesn't match its job", task.run_id)
+                return None
+            return data
+        return None
+
     def _galaxy_env(self) -> dict[str, str]:
         return {
             "ANSIBLE_COLLECTIONS_PATH": str(self.galaxy_dir / "collections"),
@@ -340,6 +374,17 @@ class Worker:
         sender = EventSender(self.client, task)
         recap: dict[str, int] = {}
 
+        # A playbook synced from git runs inside its repository at the run's commit.
+        snapshot: bytes | None = None
+        if job.get("project"):
+            snapshot = self._fetch_snapshot(task, job["project"])
+            if snapshot is None:
+                sender.close()
+                self._complete(
+                    task, sender.last_seq, "failed", "could not fetch the repository", None, {}
+                )
+                return
+
         def on_event(event: dict) -> None:
             if event.get("event") == "playbook_on_stats":
                 recap.update(host_counts(event.get("event_data")))  # before scrubbing
@@ -348,12 +393,14 @@ class Worker:
         status: str | None = None
         return_code: int | None = None
         crashed = False
+        refused: str | None = None
         try:
             vault_password = job["vault_password"]
             # The run's process writes these files itself, as the slot's user.
             status, return_code = run_in_worker(
                 {
                     "files": {"playbook": job["playbook"], "inventory": job["inventory"]},
+                    "project": {"playbook": job["project"]["playbook"]} if snapshot else None,
                     "prefix": f"ansideck-run-{task.run_id}-",
                     "own_home": identity is not None,
                     "ssh_key": job["ssh_key"],
@@ -370,7 +417,10 @@ class Worker:
                 on_event,
                 task.handle,
                 identity,
+                stdin_tail=snapshot,
             )
+        except RunRefused as exc:
+            refused = str(exc)
         except Exception:  # noqa: BLE001 - reported as a failed run below
             if task.handle.stop_reason is None:
                 logger.exception("run %s: could not run the playbook", task.run_id)
@@ -387,6 +437,8 @@ class Worker:
             logger.error("run %s: output could not be delivered; not reporting", task.run_id)
             return
         outcome, why = self._outcome(task, reason, status, crashed)
+        if refused is not None and reason is None:
+            outcome, why = "failed", f"not run: {refused}"
         self._complete(task, sender.last_seq, outcome, why, return_code, recap)
 
     @staticmethod

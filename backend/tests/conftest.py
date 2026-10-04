@@ -96,6 +96,9 @@ class _NoTimeout:
     def post(self, path: str, *, json: dict, headers: dict, timeout: float):  # noqa: ARG002
         return self.http.post(path, json=json, headers=headers)
 
+    def stream(self, method: str, path: str, *, json: dict, headers: dict, timeout: float):  # noqa: ARG002
+        return self.http.stream(method, path, json=json, headers=headers)
+
 
 def start_worker(galaxy_dir, **options) -> Worker:
     """A real worker (real claims, real ansible subprocesses, real scrubbing) in this process,

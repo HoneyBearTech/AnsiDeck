@@ -262,12 +262,17 @@ def _checked_dir(path: str, job: dict) -> str | None:
     return None
 
 
+class RunRefused(Exception):
+    """The run process refused to start the run (its message is safe to show)."""
+
+
 def run_in_worker(
     job: dict,
     env: dict[str, str],
     on_event: Callable[[dict], None],
     handle: ExecutionHandle | None = None,
     identity: RunIdentity | None = None,
+    stdin_tail: bytes | None = None,
 ) -> tuple[str | None, int | None]:
     """Runs ansible-runner in a child process started with `env` instead of the app's
     environment (see app.run_worker), as `identity` when given. Returns (ansible-runner
@@ -295,14 +300,17 @@ def run_in_worker(
 
     result: tuple[str | None, int | None] = (None, None)
     private_data_dir: str | None = None
+    refused: str | None = None
     try:
         with os.fdopen(read_fd, encoding="utf-8") as events:
             assert proc.stdin is not None
             # The job (SSH key, vault password) travels over stdin — never argv or env.
             settings = {"pexpect_timeout": _CANCEL_POLL_SECONDS}
             proc.stdin.write(
-                json.dumps({"settings": settings, **job, "event_fd": write_fd}).encode()
+                json.dumps({"settings": settings, **job, "event_fd": write_fd}).encode() + b"\n"
             )
+            if stdin_tail is not None:
+                proc.stdin.write(stdin_tail)  # a git run's repository (a tar), after the job
             proc.stdin.close()
             for line in events:
                 message = json.loads(line)
@@ -312,6 +320,8 @@ def run_in_worker(
                     private_data_dir = _checked_dir(message["private_data_dir"], job)
                 elif message["type"] == "result":
                     result = (message["status"], message["rc"])
+                elif message["type"] == "refused":
+                    refused = str(message.get("reason") or "refused")
     except BaseException:
         stop_worker(proc)
         _clean_up(identity, private_data_dir)
@@ -322,6 +332,8 @@ def run_in_worker(
         stop_worker(proc)
         returncode = proc.returncode
     _clean_up(identity, private_data_dir)
+    if refused is not None:
+        raise RunRefused(refused)
     if result[0] is None:
         logger.error("run worker exited (code %s) without reporting a result", returncode)
         return None, returncode or None

@@ -16,13 +16,15 @@ from fastapi import (
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import audit, metrics
+from app import audit, git_sync, metrics
 from app.db import get_db, get_sessionmaker
 from app.dependencies import SESSION_COOKIE_NAME, RateLimited, authenticate_request
 from app.hardening import client_ip
 from app.models import (
     FINISHED_STATUSES,
     Credential,
+    GitSnapshot,
+    GitSource,
     Inventory,
     InventoryGroup,
     Playbook,
@@ -54,8 +56,19 @@ _guard = guard(Permission.CONTENT_READ, Permission.RUNS_TRIGGER, scope=Scope.PRO
 HIDDEN = "[HIDDEN]"
 
 
+def commit_url(web_url: str | None, commit: str | None) -> str | None:
+    """A link to the commit on its forge (GitLab's path differs from GitHub's and Gitea's)."""
+    if not web_url or not commit:
+        return None
+    separator = "/-/commit/" if "gitlab" in web_url.lower() else "/commit/"
+    return f"{web_url.rstrip('/')}{separator}{commit}"
+
+
 def _run_out(db: Session, run: Run, user: User) -> RunOut:
     out = RunOut.model_validate(run)
+    if run.git_source_id is not None:
+        source = db.get(GitSource, run.git_source_id)
+        out.commit_url = commit_url(source.web_url if source else None, run.git_commit)
     can_see = Permission.RUNS_READ_EXTRA_VARS in project_permissions(db, user, run.project_id)
     if out.extra_vars and not can_see:
         out.extra_vars = {key: HIDDEN for key in out.extra_vars}
@@ -74,6 +87,44 @@ def list_runs(
     if ids is not None:
         query = query.filter(Run.project_id.in_(ids))
     return [_run_out(db, run, user) for run in query.order_by(Run.id.desc()).all()]
+
+
+def _pin_snapshot(db: Session, playbook: Playbook) -> dict:
+    """A synced playbook runs inside its repository at the source's current commit. The
+    snapshot row is share-locked until the run is committed, so a sync can't supersede (and
+    the reaper can't prune) it in between; afterwards the queued run pins it."""
+    if playbook.missing_at is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "This playbook is no longer in its git repository"
+        )
+    source = db.get(GitSource, playbook.source_id)
+    snapshot = (
+        db.scalars(
+            select(GitSnapshot)
+            .where(GitSnapshot.id == source.current_snapshot_id)
+            .with_for_update(read=True)
+        ).first()
+        if source is not None and source.current_snapshot_id is not None
+        else None
+    )
+    if snapshot is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "The git source has not synced yet")
+    try:
+        text = git_sync.read_member(snapshot, playbook.repo_path)
+    except (git_sync.SyncError, OSError) as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "The playbook is missing from the synced commit"
+        ) from exc
+    return {
+        "text": text,
+        "columns": {
+            "git_source_id": source.id,
+            "git_source_name": source.name,
+            "git_snapshot_id": snapshot.id,
+            "git_commit": snapshot.commit,
+            "playbook_path": playbook.repo_path,
+        },
+    }
 
 
 def _require_same_project(obj, project_id: int, label: str) -> None:
@@ -120,15 +171,7 @@ def create_run(
         "Playbook not found",
     )
     project_id = playbook.project_id
-    if playbook.source_id is not None:
-        if playbook.missing_at is not None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "This playbook is no longer in its git repository"
-            )
-        # Phase 4E-2 runs these inside the repository; never a single-file approximation.
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "Running playbooks synced from git is not available yet"
-        )
+    git = _pin_snapshot(db, playbook) if playbook.source_id is not None else None
     if payload.become and Permission.RUNS_BECOME not in project_permissions(
         db, current_user, project_id
     ):
@@ -177,8 +220,9 @@ def create_run(
         )
         _require_same_project(vault_password, project_id, "Vault password")
 
-    # The run executes the playbook as it is now, whatever happens to it while queued.
-    playbook_text = playbook_path(playbook.id).read_bytes()
+    # The run executes the playbook as it is now, whatever happens to it while queued; a
+    # synced one inside its repository at the commit current now (see _pin_snapshot).
+    playbook_text = git["text"].encode() if git else playbook_path(playbook.id).read_bytes()
     if len(playbook_text) > MAX_PLAYBOOK_SNAPSHOT_BYTES:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -207,6 +251,7 @@ def create_run(
         timeout_seconds=payload.timeout_seconds,
         playbook_snapshot=playbook_text.decode("utf-8"),
         playbook_sha256=hashlib.sha256(playbook_text).hexdigest(),
+        **(git["columns"] if git else {}),
     )
     db.add(run)
     db.commit()
@@ -227,6 +272,7 @@ def create_run(
             "group": group.name if group else None,
             "become": payload.become,
             "check_mode": payload.check_mode,
+            **({"commit": run.git_commit} if run.git_commit else {}),
         },
     )
     notifier.notify(QUEUE_TOPIC)  # wake the workers waiting for a claim

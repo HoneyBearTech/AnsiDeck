@@ -5,10 +5,13 @@ so run_executor spawns this module with an allowlisted environment instead of ru
 ansible-runner in the app process. Deliberately imports nothing from app.* — in
 particular not app.config, which would load the app's secrets.
 
-Protocol: one JSON job on stdin: ansible_runner.run kwargs plus "event_fd", "files"
-({"playbook": text, "inventory": text}), "prefix" (of the private data dir's name) and
-"own_home" (isolated runs: use, and check, the slot user's home; see app.run_isolation).
-One JSON line per message on the inherited event_fd: {"type": "started",
+Protocol: one JSON job line on stdin: ansible_runner.run kwargs plus "event_fd", "files"
+({"playbook": text, "inventory": text}), "prefix" (of the private data dir's name),
+"own_home" (isolated runs: use, and check, the slot user's home; see app.run_isolation) and
+"project" (a run of a playbook synced from git: {"playbook": its path in the repository}; the
+repository itself, a tar, follows the job line on stdin and is unpacked as the project).
+One JSON line per message on the inherited event_fd: {"type": "refused", "reason": ...} alone
+if the run can't be set up (e.g. its repository won't unpack), else {"type": "started",
 "private_data_dir": ...} first, then {"type": "event", "event": {...}} for each
 ansible-runner event, then a final {"type": "result", "status": ..., "rc": ...}.
 SIGTERM is turned into a clean ansible-runner cancel by ansible-runner itself (it
@@ -42,6 +45,72 @@ _SWEEP_KILL_ROUNDS = 100
 HOME_NOT_CLEAN = 3  # app.run_executor.sweep() acts on it
 
 
+MAX_PROJECT_ENTRIES = 50_000
+MAX_PROJECT_BYTES = 1024 * 1024 * 1024  # the API caps snapshots far lower; this guards the child
+_SAFE_TARFILE = (3, 12, 11)  # tarfile's "data" filter has the 2025 path-escape fixes
+
+
+def unpack_project(stream, project: Path) -> None:
+    """Unpacks a repository tar into `project` with tarfile's "data" filter: nothing outside
+    it (no "..", absolute paths, links pointing out, devices), no setuid bits, and limits on
+    entries and bytes. Raises on anything refused."""
+    if sys.version_info < _SAFE_TARFILE:
+        raise RuntimeError("Python 3.12.11 or later is needed to unpack repositories safely")
+    import tarfile
+
+    counted = {"entries": 0, "bytes": 0}
+
+    def guarded(member, path):
+        counted["entries"] += 1
+        counted["bytes"] += member.size
+        if counted["entries"] > MAX_PROJECT_ENTRIES or counted["bytes"] > MAX_PROJECT_BYTES:
+            raise RuntimeError("the repository is too large to unpack")
+        return tarfile.data_filter(member, path)
+
+    with tarfile.open(fileobj=stream, mode="r|") as tar:
+        tar.extractall(project, filter=guarded)
+    while stream.read(65536):  # the archive's padding: the sender is still writing it
+        pass
+
+
+def project_playbook(project: Path, path: str) -> str:
+    """The repository playbook a run executes, which must be a file inside the project."""
+    parts = path.split("/")
+    if not path or path.startswith("/") or ".." in parts or "\0" in path:
+        raise RuntimeError(f"invalid playbook path: {path!r}")
+    real = os.path.realpath(project / path)
+    if not real.startswith(os.path.realpath(project) + os.sep) or not os.path.isfile(real):
+        raise RuntimeError(f"{path} is not a file in the repository")
+    return path
+
+
+def _search_path(project: Path, variable: str, keys: tuple[str, ...], default: str) -> str:
+    """`variable` (roles or collections path) with the repository's own entries first: its
+    roles/ or collections/, then those its ansible.cfg names inside the repository. The
+    environment overrides ansible.cfg, so they must be merged here."""
+    import configparser
+
+    entries = [project / default]
+    cfg = project / "ansible.cfg"
+    if cfg.is_file():
+        parser = configparser.ConfigParser(interpolation=None, strict=False)
+        try:
+            parser.read(cfg, encoding="utf-8")
+        except (configparser.Error, UnicodeDecodeError):
+            pass
+        inside = os.path.realpath(project) + os.sep
+        for key in keys:
+            for entry in parser.get("defaults", key, fallback="").split(os.pathsep):
+                entry = entry.strip()
+                if not entry or entry.startswith("~"):
+                    continue
+                path = Path(os.path.realpath(project / entry))
+                if str(path).startswith(inside) and path not in entries:
+                    entries.append(path)
+    existing = os.environ.get(variable, "")
+    return os.pathsep.join([str(e) for e in entries] + ([existing] if existing else []))
+
+
 def prepare(job: dict) -> str:
     """Creates the run's private data dir (0700) with its playbook and inventory, and gives
     ansible a home of its own in it: its SSH ControlPersist sockets (~/.ansible/cp) would
@@ -49,11 +118,31 @@ def prepare(job: dict) -> str:
     same user@host. Returns the private data dir."""
     files = job.pop("files")
     own_home = job.pop("own_home", False)
+    repository = job.pop("project", None)
     # Short paths: SSH's control and agent sockets live in here (104-108 byte limit).
     base = "/tmp" if os.path.isdir("/tmp") else None
     pdd = Path(tempfile.mkdtemp(prefix=job.pop("prefix", "ansideck-run-"), dir=base))
-    (pdd / "project").mkdir()
-    (pdd / "project" / "playbook.yml").write_text(files["playbook"])
+    project = pdd / "project"
+    project.mkdir()
+    if repository is not None:
+        try:
+            unpack_project(sys.stdin.buffer, project)
+            playbook = project_playbook(project, repository["playbook"])
+        except BaseException:
+            shutil.rmtree(pdd, ignore_errors=True)
+            raise
+        os.environ["ANSIBLE_ROLES_PATH"] = _search_path(
+            project, "ANSIBLE_ROLES_PATH", ("roles_path",), "roles"
+        )
+        os.environ["ANSIBLE_COLLECTIONS_PATH"] = _search_path(
+            project,
+            "ANSIBLE_COLLECTIONS_PATH",
+            ("collections_path", "collections_paths"),
+            "collections",
+        )
+    else:
+        playbook = "playbook.yml"
+        (project / playbook).write_text(files["playbook"])
     (pdd / "inventory").mkdir()
     (pdd / "inventory" / "hosts.yml").write_text(files["inventory"])
     ansible_home = pdd / "ansible"
@@ -65,7 +154,7 @@ def prepare(job: dict) -> str:
         (pdd / "tmp").mkdir(mode=0o700)
         os.environ["TMPDIR"] = str(pdd / "tmp")
     job["private_data_dir"] = str(pdd)
-    job["playbook"] = "playbook.yml"
+    job["playbook"] = playbook
     job["inventory"] = str(pdd / "inventory" / "hosts.yml")
     return str(pdd)
 
@@ -99,7 +188,11 @@ def run(job: dict) -> None:
 
     import ansible_runner  # here, not at the top: --sweep should start fast
 
-    pdd = prepare(job)
+    try:
+        pdd = prepare(job)
+    except Exception as exc:  # noqa: BLE001 - reported, the run fails with this reason
+        emit({"type": "refused", "reason": str(exc)[:300]})
+        return
     emit({"type": "started", "private_data_dir": pdd})
     try:
         runner = ansible_runner.run(event_handler=on_event, **job)
@@ -193,7 +286,7 @@ def sweep(roots: list[str]) -> int:
 def main() -> int:
     if sys.argv[1:2] == ["--sweep"]:
         return sweep(sys.argv[2:])
-    run(json.load(sys.stdin))
+    run(json.loads(sys.stdin.buffer.readline()))
     return 0
 
 

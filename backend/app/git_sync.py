@@ -30,6 +30,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import tarfile
 import tempfile
 import threading
 import time
@@ -999,6 +1000,60 @@ def prune_snapshots(db: Session) -> int:
         (git_snapshot_dir(source_id) / f"{commit}.tar").unlink(missing_ok=True)
     db.commit()
     return len(stale)
+
+
+def snapshot_path(snapshot: GitSnapshot) -> Path:
+    return git_snapshot_dir(snapshot.source_id) / f"{snapshot.commit}.tar"
+
+
+def read_member(snapshot: GitSnapshot, path: str, max_bytes: int = MAX_PLAYBOOK_BYTES) -> str:
+    """A regular file's text from a snapshot (a run's playbook), or SyncError."""
+    with tarfile.open(snapshot_path(snapshot)) as tar:
+        try:
+            member = tar.getmember(path)
+        except KeyError as exc:
+            raise SyncError(f"{path} is not in commit {snapshot.commit[:12]}") from exc
+        if not member.isfile() or member.size > max_bytes:
+            raise SyncError(f"{path} is not a playbook file")
+        handle = tar.extractfile(member)
+        assert handle is not None
+        try:
+            return handle.read().decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise SyncError(f"{path} is not UTF-8 text") from exc
+
+
+# Where a repository keeps variables (which may hold vaulted secrets the run's output must not
+# show): inventory-style group_vars/host_vars anywhere, vars/, and roles' vars and defaults.
+_VARS_FILE = re.compile(
+    r"(^|/)(group_vars|host_vars)/.+|(^|/)vars/[^/]+$|^roles/[^/]+/(vars|defaults)/.+"
+)
+MAX_VARS_FILE_BYTES = 256 * 1024
+MAX_VARS_TOTAL_BYTES = 4 * 1024 * 1024
+
+
+def vars_texts(snapshot: GitSnapshot) -> list[str]:
+    """The text of the snapshot's variable files (bounded), for the scrubber to find secrets
+    in: vaulted values and values under secret-looking keys."""
+    texts: list[str] = []
+    total = 0
+    with tarfile.open(snapshot_path(snapshot)) as tar:
+        for member in tar:
+            if not member.isfile() or member.size > MAX_VARS_FILE_BYTES:
+                continue
+            if not _VARS_FILE.search(member.name):
+                continue
+            if total + member.size > MAX_VARS_TOTAL_BYTES:
+                break
+            handle = tar.extractfile(member)
+            if handle is None:
+                continue
+            try:
+                texts.append(handle.read().decode("utf-8"))
+            except UnicodeDecodeError:
+                continue
+            total += member.size
+    return texts
 
 
 def remove_files(source_id: int, playbook_ids: list[int]) -> None:
