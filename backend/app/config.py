@@ -103,6 +103,19 @@ class Settings(BaseSettings):
     smtp_from: str = ""
     smtp_tls: Literal["starttls", "tls", "none"] = "starttls"
 
+    # Git sources (app.git_sync). Remotes on loopback, private, link-local and other non-public
+    # addresses are refused unless their host name, address or CIDR is listed here
+    # (comma-separated), e.g. "gitea.lan,192.168.1.0/24" for a self-hosted forge.
+    git_allowed_private_hosts: str = ""
+    git_sync_timeout_seconds: int = Field(300, ge=10)
+    git_max_repo_mb: int = Field(500, ge=1)  # the fetch mirror on disk
+    git_max_snapshot_mb: int = Field(50, ge=1)  # what one run gets
+    git_max_files: int = Field(20_000, ge=1)
+    git_max_playbooks: int = Field(500, ge=1)  # per source
+    git_sync_concurrency: int = Field(2, ge=1, le=16)
+    # Test-only: allows file:// remotes. Production refuses to start with it.
+    git_allow_local_sources: bool = False
+
     # Test-only escape hatch: lets requirements.yml reference local tarballs/dirs
     # so tests can install offline. Must stay False in any real deployment —
     # local sources let a user read arbitrary paths inside the container.
@@ -121,6 +134,10 @@ class Settings(BaseSettings):
     @classmethod
     def _strip_trailing_slash(cls, v: str) -> str:
         return v.strip().rstrip("/")
+
+    @property
+    def git_allowlist(self) -> list[str]:
+        return [e.strip() for e in self.git_allowed_private_hosts.split(",") if e.strip()]
 
     @property
     def notify_allowlist(self) -> list[str]:
@@ -228,6 +245,11 @@ class Settings(BaseSettings):
                 or len(self.worker_token) < MIN_WORKER_TOKEN_LENGTH
             ):
                 insecure.append(f"WORKER_TOKEN (at least {MIN_WORKER_TOKEN_LENGTH} characters)")
+            if self.git_allow_local_sources:
+                raise ValueError(
+                    "ENVIRONMENT=production refuses GIT_ALLOW_LOCAL_SOURCES (test-only: it lets "
+                    "git sources read the server's own files)."
+                )
             if insecure:
                 raise ValueError(
                     f"ENVIRONMENT=production but {', '.join(insecure)} still has its insecure "

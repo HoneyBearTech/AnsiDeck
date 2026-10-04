@@ -247,3 +247,54 @@ def test_0008_creates_the_analytics_views_and_downgrades_cleanly() -> None:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
             conn.execute(text(f"DROP ROLE IF EXISTS {role}"))
         admin.dispose()
+
+
+def test_0009_adds_git_sources_and_downgrades_with_the_0008_view() -> None:
+    url = make_url(TEST_DATABASE_URL)
+    scratch = url.database.removesuffix("_test") + "_migration_test"
+    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{scratch}"'))
+    engine = create_engine(url.set(database=scratch))
+    config = alembic_config()
+
+    def migrate(step, revision: str) -> None:
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            step(config, revision)
+
+    def view_columns(conn) -> list[str]:
+        return list(
+            conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns WHERE "
+                    "table_schema = 'analytics' AND table_name = 'runs' ORDER BY ordinal_position"
+                )
+            ).scalars()
+        )
+
+    try:
+        migrate(command.upgrade, "0009")
+        with engine.connect() as conn:
+            assert view_columns(conn)[-2:] == ["git_source_name", "git_commit"]
+            assert conn.execute(text("SELECT to_regclass('git_sources')")).scalar()
+        migrate(command.downgrade, "0008")
+        with engine.connect() as conn:
+            assert view_columns(conn)[-1] == "hosts_unreachable"
+            assert conn.execute(text("SELECT to_regclass('git_sources')")).scalar() is None
+            playbook_columns = set(
+                conn.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'playbooks'"
+                    )
+                ).scalars()
+            )
+            assert "source_id" not in playbook_columns
+        migrate(command.upgrade, "0009")
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        admin.dispose()

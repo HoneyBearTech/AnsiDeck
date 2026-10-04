@@ -236,6 +236,16 @@ def test_every_project_scoped_route_with_an_id_is_covered_by_the_idor_matrix() -
         ("DELETE", "/api/projects/{project_id}/notifications/channels/{channel_id}"),
         ("POST", "/api/projects/{project_id}/notifications/channels/{channel_id}/test"),
         ("GET", "/api/projects/{project_id}/notifications/channels/{channel_id}/deliveries"),
+        # git sources: tests/test_git_sources.py (every route, through both projects' paths)
+        ("GET", "/api/projects/{project_id}/git-sources"),
+        ("POST", "/api/projects/{project_id}/git-sources"),
+        ("GET", "/api/projects/{project_id}/git-sources/{source_id}"),
+        ("PATCH", "/api/projects/{project_id}/git-sources/{source_id}"),
+        ("DELETE", "/api/projects/{project_id}/git-sources/{source_id}"),
+        ("GET", "/api/projects/{project_id}/git-sources/{source_id}/snapshots"),
+        ("POST", "/api/projects/{project_id}/git-sources/{source_id}/test"),
+        ("POST", "/api/projects/{project_id}/git-sources/{source_id}/trust-host-key"),
+        ("POST", "/api/projects/{project_id}/git-sources/{source_id}/sync"),
     }
     found = set()
     for route in iter_api_routes(app):

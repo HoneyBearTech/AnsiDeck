@@ -161,9 +161,12 @@ class VaultPassword(Base):
 
 
 class Playbook(Base):
-    """Metadata only — YAML content lives on disk at {data_dir}/playbooks/{id}.yml."""
+    """Metadata only — YAML content lives on disk at {data_dir}/playbooks/{id}.yml. A playbook
+    with a source_id is synced from git (read-only here; the file on disk is a display copy
+    of it at the source's current commit)."""
 
     __tablename__ = "playbooks"
+    __table_args__ = (UniqueConstraint("source_id", "repo_path"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
@@ -172,6 +175,84 @@ class Playbook(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("git_sources.id", ondelete="CASCADE"), index=True, default=None
+    )
+    repo_path: Mapped[str | None] = mapped_column(String(1024), default=None)
+    # Set while the file is gone from the source's current commit (it comes back if it does).
+    missing_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+
+class GitSource(Base):
+    """A git repository a project's playbooks are synced from (app.git_sync). Its token is
+    encrypted and write-only; an SSH source uses one of the project's credentials as its
+    deploy key, and syncs only once an admin trusted the server's host key."""
+
+    __tablename__ = "git_sources"
+    __table_args__ = (UniqueConstraint("project_id", "name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    url: Mapped[str] = mapped_column(String(500))
+    branch: Mapped[str] = mapped_column(String(255), default="main")
+    subdir: Mapped[str | None] = mapped_column(String(500), default=None)
+    web_url: Mapped[str | None] = mapped_column(String(500), default=None)  # commit links
+    playbook_globs: Mapped[list[str]] = mapped_column(JSON, default=list)
+    auth_kind: Mapped[str] = mapped_column(String(20), default="none")
+    credential_id: Mapped[int | None] = mapped_column(
+        ForeignKey("credentials.id", ondelete="RESTRICT"), index=True, default=None
+    )
+    https_username: Mapped[str | None] = mapped_column(String(255), default=None)
+    encrypted_token: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
+    ssh_known_hosts: Mapped[str | None] = mapped_column(Text, default=None)
+    auto_sync_seconds: Mapped[int] = mapped_column(Integer, default=300)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    current_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("git_snapshots.id", ondelete="SET NULL", use_alter=True), default=None
+    )
+    sync_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    last_sync_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    last_sync_finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    last_sync_status: Mapped[str | None] = mapped_column(String(10), default=None)
+    last_sync_error: Mapped[str | None] = mapped_column(String(1000), default=None)
+    created_by: Mapped[str] = mapped_column(String(150))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class GitSnapshot(Base):
+    """One synced commit of a source: an immutable tar of its tree on disk
+    ({data_dir}/git/snapshots/<source>/<commit>.tar) that runs execute in."""
+
+    __tablename__ = "git_snapshots"
+    __table_args__ = (UniqueConstraint("source_id", "commit"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey("git_sources.id", ondelete="CASCADE"), index=True
+    )
+    commit: Mapped[str] = mapped_column(String(64))
+    commit_subject: Mapped[str] = mapped_column(String(255), default="")
+    commit_author: Mapped[str] = mapped_column(String(255), default="")
+    committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    file_count: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # When a newer commit replaced it; pruned once no run needs it.
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
 
 class Inventory(Base):
@@ -318,6 +399,17 @@ class Run(Base):
         DateTime(timezone=True), default=None
     )
     cancel_requested_by: Mapped[str | None] = mapped_column(String(150), default=None)
+
+    # Runs of playbooks synced from git execute in the repository at this commit.
+    git_source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("git_sources.id", ondelete="SET NULL"), default=None
+    )
+    git_source_name: Mapped[str | None] = mapped_column(String(100), default=None)
+    git_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("git_snapshots.id", ondelete="SET NULL"), default=None
+    )
+    git_commit: Mapped[str | None] = mapped_column(String(64), default=None)
+    playbook_path: Mapped[str | None] = mapped_column(String(1024), default=None)
 
     # Log appends are idempotent and crash-safe: the last event sequence number written and
     # the log file's committed length (anything past it is an unfinished write, cut off).

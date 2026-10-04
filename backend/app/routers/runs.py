@@ -120,6 +120,15 @@ def create_run(
         "Playbook not found",
     )
     project_id = playbook.project_id
+    if playbook.source_id is not None:
+        if playbook.missing_at is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "This playbook is no longer in its git repository"
+            )
+        # Phase 4E-2 runs these inside the repository; never a single-file approximation.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Running playbooks synced from git is not available yet"
+        )
     if payload.become and Permission.RUNS_BECOME not in project_permissions(
         db, current_user, project_id
     ):

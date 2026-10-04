@@ -43,7 +43,7 @@ COLUMNS = {
         "worker", "cancel_requested", "timeout_seconds", "created_at", "queued_at",
         "claimed_at", "started_at", "finished_at", "queue_wait_seconds", "run_seconds",
         "total_seconds", "hosts_total", "hosts_ok", "hosts_changed", "hosts_failed",
-        "hosts_unreachable",
+        "hosts_unreachable", "git_source_name", "git_commit",
     ],
     "user_summary": ["role", "active", "sso_linked", "two_factor", "users"],
     "workers": [

@@ -7,7 +7,7 @@ from app import audit
 from app.crypto import encrypt_secret
 from app.db import get_db
 from app.hardening import client_ip
-from app.models import Credential, User
+from app.models import Credential, GitSource, User
 from app.permissions import Permission, Scope, guard
 from app.schemas.credentials import CredentialCreate, CredentialOut
 from app.scoping import get_scoped, readable_project_ids, resolve_write_project
@@ -106,6 +106,11 @@ def delete_credential(
         "Credential not found",
     )
     name, project_id = credential.name, credential.project_id
+    source = db.query(GitSource).filter(GitSource.credential_id == credential_id).first()
+    if source is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Git source {source.name!r} uses this key as its deploy key"
+        )
     db.delete(credential)
     db.commit()
     audit.record(

@@ -48,6 +48,7 @@ class Permission(StrEnum):
     WORKERS_READ = "workers:read"  # worker processes (host names, pids, slots, last seen)
     NOTIFICATIONS_MANAGE = "notifications:manage"  # one project's notification channels
     NOTIFICATIONS_GLOBAL = "notifications:global"  # global channels (ops, security, all runs)
+    SOURCES_MANAGE = "sources:manage"  # one project's git sources (URL, keys, host keys)
 
 
 # Permissions that exist only at the global level; a project admin never gets them.

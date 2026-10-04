@@ -139,6 +139,29 @@ they are.
 - Give Grafana its own database role with `analytics-grant` (never the app's database user), and check it
   with `analytics-check`.
 
+## Playbooks from git (optional)
+
+A project's admins can sync its playbooks from a git repository (**Playbooks → Git sources**, or
+`/api/projects/{id}/git-sources`). AnsiDeck fetches the source's branch (only its latest commit) every 5
+minutes by default (per source; 0 = only on **Sync now**, which operators can press too). Every file matching
+the source's patterns (by default `*.yml`, `*.yaml`, `playbooks/*.yml` and `playbooks/*.yaml`, optionally
+inside a subdirectory) that is a playbook appears as a read-only playbook: change it in the repository. A
+file that disappears upstream is marked "removed upstream" (it keeps its id for CI, can't run, and can then
+be deleted); it comes back if the file does. Running synced playbooks inside the repository (with its
+roles, templates and vars, at the commit current when the run starts) arrives in the next release.
+
+- **Remotes:** `https://` (public, or with a user name and token, stored encrypted and never shown again),
+  or `ssh://` / `user@host:path` with an SSH key from the project's credentials as the deploy key. For an ssh
+  source, **Test connection** shows the server's host key fingerprint: compare it with the one your forge
+  publishes, then trust it (or paste a `known_hosts` line). Syncs refuse to run until a key is trusted and fail
+  if it changes.
+- **Servers on your network** (private addresses) need `GIT_ALLOWED_PRIVATE_HOSTS`; plain `http://` only works
+  to those.
+- **What is never done:** hooks, submodules (they arrive as empty directories), tags, Git LFS, installing a
+  repository's `requirements.yml` (use the Galaxy page), or following symlinks out of the repository (such a
+  commit is refused and the previous one stays current). A commit over `GIT_MAX_SNAPSHOT_MB` (50) or
+  `GIT_MAX_FILES` (20000), or a repository over `GIT_MAX_REPO_MB` (500), is refused.
+
 ## Notifications
 
 The **Notifications** page sends events to Discord, Slack, Microsoft Teams (a Workflows

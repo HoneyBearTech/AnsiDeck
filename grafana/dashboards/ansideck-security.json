@@ -590,7 +590,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "${postgres}"
           },
-          "rawSql": "SELECT created_at AS time, action, actor_username AS \"by\", target_type AS target, target_name AS name, project_id AS project, outcome FROM analytics.audit_events WHERE $__timeFilter(created_at) AND (action ~ '^(user|project\\.member|apikey\\.(create|revoke)|credential|vault_password|notification_channel)\\.' OR action IN ('auth.totp_disable', 'auth.sso_link')) ORDER BY created_at DESC LIMIT 50",
+          "rawSql": "SELECT created_at AS time, action, actor_username AS \"by\", target_type AS target, target_name AS name, project_id AS project, outcome FROM analytics.audit_events WHERE $__timeFilter(created_at) AND (action ~ '^(user|project\\.member|apikey\\.(create|revoke)|credential|vault_password|notification_channel)\\.' OR action IN ('auth.totp_disable', 'auth.sso_link', 'git_source.create', 'git_source.update', 'git_source.delete', 'git_source.trust_host_key')) ORDER BY created_at DESC LIMIT 50",
           "format": "table",
           "rawQuery": true,
           "editorMode": "code"

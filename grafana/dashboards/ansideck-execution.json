@@ -755,7 +755,7 @@
     },
     {
       "type": "row",
-      "title": "API",
+      "title": "Git sources",
       "id": 11,
       "collapsed": false,
       "panels": [],
@@ -768,14 +768,204 @@
     },
     {
       "type": "timeseries",
+      "title": "Git syncs",
+      "description": "Syncs by outcome: ok (a new commit), unchanged, failed, busy (that source was already syncing).",
+      "id": 12,
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 34
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus}"
+          },
+          "expr": "sum by (outcome) (increase(ansideck_git_syncs_total[$__rate_interval]))",
+          "legendFormat": "{{outcome}}",
+          "range": true,
+          "instant": false,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ok"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "unchanged"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "busy"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Git sync duration (95th percentile)",
+      "description": "Fetch, check and snapshot of one source.",
+      "id": 13,
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 34
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(ansideck_git_sync_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95",
+          "range": true,
+          "instant": false,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "API",
+      "id": 14,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      }
+    },
+    {
+      "type": "timeseries",
       "title": "API requests by status",
       "description": "Requests per second to the public API (port 8000).",
-      "id": 12,
+      "id": 15,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 34
+        "y": 42
       },
       "datasource": {
         "type": "prometheus",
@@ -828,12 +1018,12 @@
       "type": "timeseries",
       "title": "Slowest API routes (95th percentile)",
       "description": "",
-      "id": 13,
+      "id": 16,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 34
+        "y": 42
       },
       "datasource": {
         "type": "prometheus",
@@ -886,12 +1076,12 @@
       "type": "timeseries",
       "title": "Server errors (5xx share)",
       "description": "Share of public and internal API requests answered with a 5xx.",
-      "id": 14,
+      "id": 17,
       "gridPos": {
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 42
+        "y": 50
       },
       "datasource": {
         "type": "prometheus",
@@ -946,12 +1136,12 @@
       "type": "timeseries",
       "title": "Worker API calls",
       "description": "Calls from workers to the internal API (claims long-poll for up to 25 s).",
-      "id": 15,
+      "id": 18,
       "gridPos": {
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 42
+        "y": 50
       },
       "datasource": {
         "type": "prometheus",
@@ -1004,12 +1194,12 @@
       "type": "timeseries",
       "title": "API process",
       "description": "Resident memory and CPU of the API process.",
-      "id": 16,
+      "id": 19,
       "gridPos": {
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 42
+        "y": 50
       },
       "datasource": {
         "type": "prometheus",
@@ -1090,26 +1280,26 @@
     {
       "type": "row",
       "title": "Execution history",
-      "id": 17,
+      "id": 20,
       "collapsed": false,
       "panels": [],
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 49
+        "y": 57
       }
     },
     {
       "type": "barchart",
       "title": "Average queue wait by hour of day",
       "description": "By the hour runs were queued (database time zone, usually UTC).",
-      "id": 18,
+      "id": 21,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 50
+        "y": 58
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1160,12 +1350,12 @@
       "type": "table",
       "title": "Runs per worker",
       "description": "",
-      "id": 19,
+      "id": 22,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 50
+        "y": 58
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1200,12 +1390,12 @@
       "type": "table",
       "title": "Runs AnsiDeck ended (not ansible's own result)",
       "description": "Cancelled, timed out, worker lost, or not runnable.",
-      "id": 20,
+      "id": 23,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 58
+        "y": 66
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1240,12 +1430,12 @@
       "type": "table",
       "title": "Galaxy installs",
       "description": "Installs block new runs while they wait or run.",
-      "id": 21,
+      "id": 24,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 58
+        "y": 66
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",

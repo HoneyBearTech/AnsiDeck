@@ -49,3 +49,23 @@ def galaxy_install_log_path(install_id: int) -> Path:
     path = galaxy_dir() / "installs"
     path.mkdir(parents=True, exist_ok=True)
     return path / f"{install_id}.log"
+
+
+def git_dir() -> Path:
+    path = Path(get_settings().data_dir) / "git"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def git_mirror_path(source_id: int) -> Path:
+    """A source's bare fetch mirror (created by app.git_sync)."""
+    parent = git_dir() / "mirrors"
+    parent.mkdir(parents=True, exist_ok=True)
+    return parent / f"{source_id}.git"
+
+
+def git_snapshot_dir(source_id: int) -> Path:
+    """A source's snapshot tars, one per synced commit."""
+    path = git_dir() / "snapshots" / str(source_id)
+    path.mkdir(parents=True, exist_ok=True)
+    return path

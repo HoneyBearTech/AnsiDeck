@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.db import get_sessionmaker
 from app.galaxy import try_start_install
+from app.git_sync import prune_snapshots
 from app.jobs import UNRUNNABLE, unrunnable_reason
 from app.models import GalaxyInstall, Run, RunStatus, Worker
 from app.notifications import WORKER_OFFLINE, WORKER_UNISOLATED
@@ -115,6 +116,11 @@ def reap_once() -> list[int]:
         )
         prune_deliveries(db)
         db.commit()
+        try:
+            prune_snapshots(db)
+        except Exception:  # noqa: BLE001 - the next pass tries again
+            db.rollback()
+            logger.exception("could not prune git snapshots")
 
         for check in (lambda: check_workers(db, WORKER_RETENTION_SECONDS), lambda: check_queue(db)):
             try:

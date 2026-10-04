@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncGenerator, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -15,10 +16,12 @@ from app import audit, metrics
 from app.bootstrap import refuse_to_start_over_legacy_data, seed_fresh_install
 from app.config import get_settings
 from app.db import get_sessionmaker, init_db
+from app.git_sync import LOOP_SECONDS, SYNC_TOPIC, due_sources, sync_source
 from app.hardening import OriginCheckMiddleware
 from app.internal_api import internal_app
 from app.metrics_api import metrics_app
 from app.notifications.dispatch import dispatch_forever
+from app.notify import notifier
 from app.process_hardening import disable_process_inspection
 from app.reaper import INTERVAL_SECONDS, reap_once
 from app.routers import (
@@ -26,6 +29,7 @@ from app.routers import (
     auth,
     credentials,
     galaxy,
+    git_sources,
     health,
     inventories,
     notifications,
@@ -62,6 +66,42 @@ def _embedded(asgi_app: FastAPI, host: str, port: int) -> _EmbeddedServer:
     )
 
 
+def _due_sources() -> list[int]:
+    db = get_sessionmaker()()
+    try:
+        return due_sources(db)
+    finally:
+        db.close()
+
+
+async def _git_sync_forever() -> None:
+    """Syncs git sources when due or requested, a few at a time, each in a thread."""
+    loop = asyncio.get_running_loop()
+    limit = settings.git_sync_concurrency
+    executor = ThreadPoolExecutor(max_workers=limit, thread_name_prefix="git-sync")
+    running: set[int] = set()
+
+    def finished(source_id: int) -> None:
+        running.discard(source_id)
+        notifier.notify(SYNC_TOPIC)  # a slot is free: look again
+
+    try:
+        with notifier.listen(SYNC_TOPIC) as listener:
+            while True:
+                try:
+                    for source_id in await asyncio.to_thread(_due_sources):
+                        if source_id in running or len(running) >= limit:
+                            continue
+                        running.add(source_id)
+                        future = loop.run_in_executor(executor, sync_source, source_id)
+                        future.add_done_callback(lambda _f, sid=source_id: finished(sid))
+                except Exception:  # noqa: BLE001 - the next round tries again
+                    logger.exception("git sync round failed")
+                await listener.wait(LOOP_SECONDS)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
 async def _reap_forever() -> None:
     while True:
         try:
@@ -88,6 +128,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     reaper = asyncio.create_task(_reap_forever())
     dispatcher = asyncio.create_task(dispatch_forever())
+    syncer = asyncio.create_task(_git_sync_forever())
     servers: list[_EmbeddedServer] = []
     if settings.internal_api_enabled:
         servers.append(
@@ -101,9 +142,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     finally:
         reaper.cancel()
         dispatcher.cancel()
+        syncer.cancel()
         for server in servers:
             server.should_exit = True  # graceful: in-flight worker calls finish
-        await asyncio.gather(reaper, dispatcher, *serving, return_exceptions=True)
+        await asyncio.gather(reaper, dispatcher, syncer, *serving, return_exceptions=True)
 
 
 app = FastAPI(title="AnsiDeck API", version="0.1.0", lifespan=lifespan)
@@ -142,6 +184,9 @@ app.include_router(galaxy.router, prefix="/api/galaxy", tags=["galaxy"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(runs.router, prefix="/api/runs", tags=["runs"])
 app.include_router(api_keys.router, prefix="/api/projects/{project_id}/api-keys", tags=["api-keys"])
+app.include_router(
+    git_sources.router, prefix="/api/projects/{project_id}/git-sources", tags=["git-sources"]
+)
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(audit_router.router, prefix="/api/audit", tags=["audit"])
 app.include_router(workers.router, prefix="/api/workers", tags=["workers"])
