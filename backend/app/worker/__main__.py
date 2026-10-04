@@ -24,7 +24,18 @@ logger = logging.getLogger("app.worker")
 # The worker gets secrets only per run, from the API. Finding the API's own secrets in its
 # environment means it was deployed wrong (e.g. with the API's env_file), and playbooks run
 # as the worker's user, so it refuses to start rather than expose them.
-FORBIDDEN_ENV = ("CREDENTIAL_ENCRYPTION_KEY", "DATABASE_URL", "AUTH_SECRET_KEY")
+# The API's secrets, and its secret store login (whoever holds those reads every project's
+# secrets; a playbook could read them from the worker's environment).
+FORBIDDEN_ENV = (
+    "CREDENTIAL_ENCRYPTION_KEY",
+    "DATABASE_URL",
+    "AUTH_SECRET_KEY",
+    "SECRETS_STORE_TOKEN_FILE",
+    "SECRETS_STORE_SECRET_ID_FILE",
+    "SECRETS_STORE_ROLE_ID",
+    "VAULT_TOKEN",
+    "BAO_TOKEN",
+)
 _API_WAIT_SECONDS = 120.0
 
 

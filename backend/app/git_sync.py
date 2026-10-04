@@ -50,6 +50,7 @@ from app.db import get_engine, get_sessionmaker
 from app.models import Credential, GitSnapshot, GitSource, Playbook, Run, RunStatus
 from app.netguard import DestinationError, literal, resolve, vet
 from app.scrub import _PlaybookLoader
+from app.secret_store import SecretStoreError, explain, resolve_credential
 from app.storage import git_mirror_path, git_snapshot_dir, playbook_path
 from app.subprocess_env import clean_env
 
@@ -750,7 +751,13 @@ def auth_for(db: Session, source: GitSource) -> Auth:
         credential = db.get(Credential, source.credential_id)
         if credential is None or credential.project_id != source.project_id:
             raise SyncError("the source's SSH key is gone or in another project")
-        auth.ssh_key = decrypt_secret(credential.encrypted_private_key).decode()
+        try:
+            auth.ssh_key = resolve_credential(credential)
+        except SecretStoreError as exc:
+            raise SyncError(
+                f"could not read the deploy key '{credential.name}' from the secret store: "
+                f"{explain(exc.kind)}"
+            ) from None
     return auth
 
 

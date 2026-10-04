@@ -41,7 +41,18 @@ def test_create_list_delete_credential(client: TestClient) -> None:
     )
     assert create_response.status_code == 201
     body = create_response.json()
-    assert set(body.keys()) == {"id", "name", "description", "project_id", "created_at"}
+    assert set(body.keys()) == {
+        "id",
+        "name",
+        "description",
+        "project_id",
+        "created_at",
+        "store",
+        "store_path",
+        "store_key",
+        "store_location",
+    }
+    assert body["store"] == "ansideck" and body["store_path"] is None
     credential_id = body["id"]
 
     list_response = client.get("/api/credentials")
@@ -53,6 +64,10 @@ def test_create_list_delete_credential(client: TestClient) -> None:
         "description",
         "project_id",
         "created_at",
+        "store",
+        "store_path",
+        "store_key",
+        "store_location",
     }
 
     delete_response = client.delete(f"/api/credentials/{credential_id}")

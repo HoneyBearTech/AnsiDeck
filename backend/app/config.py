@@ -1,5 +1,8 @@
+import os
+import re
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -116,6 +119,28 @@ class Settings(BaseSettings):
     # Test-only: allows file:// remotes. Production refuses to start with it.
     git_allow_local_sources: bool = False
 
+    # Secret store (app.secret_store): credentials and vault passwords may live in OpenBao or
+    # HashiCorp Vault (KV v2) instead of AnsiDeck's database. Off unless the URL is set. Each
+    # project's secrets live under <kv mount>/<path prefix>/<project id>/; AnsiDeck reads them
+    # when a run starts and never stores them. Its own login: a token file (e.g. written by an
+    # Agent) or AppRole (role id here, secret id in a file); both files are re-read as they
+    # change. "Vault" here would collide with Ansible Vault, hence the SECRETS_STORE_ names.
+    secrets_store_url: str = ""
+    secrets_store_auth: Literal["token", "approle"] = "token"
+    secrets_store_token_file: str = ""
+    secrets_store_role_id: str = ""
+    secrets_store_secret_id_file: str = ""
+    secrets_store_approle_mount: str = "approle"
+    secrets_store_namespace: str = ""
+    secrets_store_ca_cert: str = ""
+    secrets_store_kv_mount: str = "secret"
+    secrets_store_path_prefix: str = "ansideck"
+    # Optional: read each project's secrets with a short-lived child token limited to this
+    # store policy ("{project_id}" is replaced), so the store itself keeps projects apart.
+    secrets_store_project_policy: str = ""
+    secrets_store_timeout_seconds: float = Field(8.0, ge=2.0, le=10.0)
+    secrets_store_label: str = "OpenBao"
+
     # Test-only escape hatch: lets requirements.yml reference local tarballs/dirs
     # so tests can install offline. Must stay False in any real deployment —
     # local sources let a user read arbitrary paths inside the container.
@@ -177,6 +202,56 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"ENVIRONMENT=production requires a METRICS_TOKEN of at least "
                 f"{MIN_WORKER_TOKEN_LENGTH} characters."
+            )
+        return self
+
+    @property
+    def secrets_store_enabled(self) -> bool:
+        return bool(self.secrets_store_url)
+
+    @model_validator(mode="after")
+    def _validate_secrets_store(self) -> "Settings":
+        if not self.secrets_store_url:
+            return self
+        url = urlsplit(self.secrets_store_url)
+        if url.scheme not in ("https", "http") or not url.hostname:
+            raise ValueError("SECRETS_STORE_URL must be an https:// (or http://) URL")
+        local = url.hostname in ("localhost", "127.0.0.1", "::1")
+        if self.environment.lower() == "production" and url.scheme != "https" and not local:
+            raise ValueError(
+                "ENVIRONMENT=production requires https for SECRETS_STORE_URL (set "
+                "SECRETS_STORE_CA_CERT for a private CA)."
+            )
+        segment = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$")
+        for name in ("secrets_store_kv_mount", "secrets_store_path_prefix",
+                     "secrets_store_approle_mount"):  # fmt: skip
+            if not segment.match(getattr(self, name)):
+                raise ValueError(f"{name.upper()} must be one path segment (letters, digits, ._-)")
+        if self.secrets_store_namespace and not all(
+            segment.match(part) for part in self.secrets_store_namespace.split("/")
+        ):
+            raise ValueError("SECRETS_STORE_NAMESPACE has invalid characters")
+        if self.secrets_store_auth == "token":
+            files = {"SECRETS_STORE_TOKEN_FILE": self.secrets_store_token_file}
+        else:
+            if not self.secrets_store_role_id:
+                raise ValueError("SECRETS_STORE_AUTH=approle needs SECRETS_STORE_ROLE_ID")
+            files = {"SECRETS_STORE_SECRET_ID_FILE": self.secrets_store_secret_id_file}
+        if self.secrets_store_ca_cert:
+            files["SECRETS_STORE_CA_CERT"] = self.secrets_store_ca_cert
+        for name, path in files.items():
+            if not path:
+                raise ValueError(f"the secret store needs {name}")
+            if not os.access(path, os.R_OK):
+                raise ValueError(f"{name} ({path}) is not a readable file")
+        policy = self.secrets_store_project_policy
+        if policy and (
+            "{project_id}" not in policy
+            or not re.fullmatch(r"[A-Za-z0-9_.{}-]{1,120}", policy)
+            or policy.replace("{project_id}", "").count("{")
+        ):
+            raise ValueError(
+                "SECRETS_STORE_PROJECT_POLICY must be a policy name containing {project_id}"
             )
         return self
 

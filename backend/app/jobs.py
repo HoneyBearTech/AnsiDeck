@@ -8,11 +8,16 @@ the internal API, with a one-time token.
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.crypto import decrypt_secret
 from app.git_sync import snapshot_path, vars_texts
 from app.inventory_render import render_inventory_yaml
 from app.models import Credential, GitSnapshot, Inventory, InventoryGroup, Run, VaultPassword
 from app.scrub import collect_secrets
+from app.secret_store import (
+    SecretStoreError,
+    new_deadline,
+    resolve_credential,
+    resolve_vault_password,
+)
 
 
 def unrunnable_reason(run: Run) -> str | None:
@@ -56,15 +61,26 @@ def assert_same_project(run: Run, obj, label: str) -> None:
 
 
 def build_job(db: Session, run: Run) -> dict:
+    """SecretStoreError (with `.subject` naming the secret) when a credential or vault password
+    in the secret store can't be read; one deadline covers all of the job's reads."""
+    deadline = new_deadline()
     credential = db.get(Credential, run.credential_id)
     assert_same_project(run, credential, "credential")
-    private_key_pem = decrypt_secret(credential.encrypted_private_key).decode()
+    try:
+        private_key_pem = resolve_credential(credential, deadline)
+    except SecretStoreError as exc:
+        exc.subject = f"credential '{credential.name}'"
+        raise
 
     vault_password_plain = None
     if run.vault_password_id is not None:
         vault_password = db.get(VaultPassword, run.vault_password_id)
         assert_same_project(run, vault_password, "vault password")
-        vault_password_plain = decrypt_secret(vault_password.encrypted_password).decode()
+        try:
+            vault_password_plain = resolve_vault_password(vault_password, deadline)
+        except SecretStoreError as exc:
+            exc.subject = f"vault password '{vault_password.name}'"
+            raise
 
     inventory = db.get(Inventory, run.inventory_id)
     assert_same_project(run, inventory, "inventory")

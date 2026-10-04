@@ -134,10 +134,47 @@ they are.
   which has no `uv`: `python -m app.cli reset-totp <username>`).
 - The audit log records sign-ins, run activity and permission denials, and is kept for
   `AUDIT_RETENTION_DAYS` (365 by default).
+- With a secret store, give AnsiDeck a read-only policy on its prefix only, put its secret id or token in a file
+  only the backend can read, and bind the AppRole to AnsiDeck's address.
 - If you turn on metrics (`METRICS_TOKEN`), never publish or proxy port 8002; give Prometheus the token
   in a file. The token only reads metrics.
 - Give Grafana its own database role with `analytics-grant` (never the app's database user), and check it
   with `analytics-check`.
+
+## Secret store (optional): OpenBao or HashiCorp Vault
+
+Credentials (SSH keys) and vault passwords are stored encrypted in AnsiDeck's database by default. With a secret
+store configured, a project's admins can instead create them as **references** into a KV v2 secrets engine:
+AnsiDeck reads the value when a run starts (and when a git source or the Vault page needs it) and never stores
+it. Rotate a secret in the store and the next run uses the new version.
+
+Every project reads only its own subtree, `<SECRETS_STORE_KV_MOUNT>/<SECRETS_STORE_PATH_PREFIX>/<project id>/`
+(by default `secret/ansideck/<id>/`); a reference is a path below it (letters, digits, `.`, `_`, `-`; no `..`) and
+a key in that secret (`private_key` or `password` by default). Configure the store in `.env` (see
+`.env.example`), then set it up, for example with the `bao` (or `vault`) CLI:
+
+```sh
+bao policy write ansideck - <<'POLICY'
+path "secret/data/ansideck/*" { capabilities = ["read"] }
+POLICY
+bao auth enable approle
+bao write auth/approle/role/ansideck token_policies=ansideck token_ttl=20m token_max_ttl=1h \
+    secret_id_bound_cidrs=<AnsiDeck's address>/32 token_bound_cidrs=<AnsiDeck's address>/32
+bao read -field=role_id auth/approle/role/ansideck/role-id          # SECRETS_STORE_ROLE_ID
+bao write -f -field=secret_id auth/approle/role/ansideck/secret-id  # into SECRETS_STORE_SECRET_ID_FILE
+bao kv put secret/ansideck/1/web/ssh private_key=@id_ed25519        # project 1's key
+```
+
+AnsiDeck's identity can read every project's subtree, so AnsiDeck itself keeps them apart. To have the store
+enforce it too, set `SECRETS_STORE_PROJECT_POLICY=ansideck-project-{project_id}`, create one policy per project
+(`path "secret/data/ansideck/<id>/*" { capabilities = ["read"] }`), add them all to the role's
+`token_policies`, and add `path "auth/token/create" { capabilities = ["update"] }` to its policy: each read then
+uses a single-use child token that holds only that project's policy.
+
+If the store can't be reached, is sealed, or refuses AnsiDeck's login, runs that need its secrets fail with that
+reason, and a **Secret store unavailable** notification goes to global channels once (and again when it works).
+Admins can check its status at `GET /api/secret-store/status`. Never give workers the `SECRETS_STORE_*` settings: a worker refuses
+to start with them.
 
 ## Playbooks from git (optional)
 

@@ -110,7 +110,9 @@ def _idor_calls(b: dict) -> list[tuple[str, str, dict | None]]:
         ("PUT", f"/api/inventories/{inv}/hosts/{b['host']}", {"hostname": "x"}),
         ("DELETE", f"/api/inventories/{inv}/hosts/{b['host']}", None),
         ("DELETE", f"/api/credentials/{b['credential']}", None),
+        ("POST", f"/api/credentials/{b['credential']}/check", None),
         ("DELETE", f"/api/vault-passwords/{b['vault']}", None),
+        ("POST", f"/api/vault-passwords/{b['vault']}/check", None),
         ("GET", f"/api/runs/{run}", None),
         ("POST", f"/api/runs/{run}/cancel", None),
         (
@@ -212,7 +214,9 @@ def test_every_project_scoped_route_with_an_id_is_covered_by_the_idor_matrix() -
         ("PUT", "/api/inventories/{inventory_id}/hosts/{host_id}"),
         ("DELETE", "/api/inventories/{inventory_id}/hosts/{host_id}"),
         ("DELETE", "/api/credentials/{credential_id}"),
+        ("POST", "/api/credentials/{credential_id}/check"),
         ("DELETE", "/api/vault-passwords/{vault_password_id}"),
+        ("POST", "/api/vault-passwords/{vault_password_id}/check"),
         ("GET", "/api/runs/{run_id}"),
         ("POST", "/api/runs/{run_id}/cancel"),
     }

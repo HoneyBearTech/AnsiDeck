@@ -9,7 +9,13 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import Run, RunStatus, Worker
-from app.notifications import QUEUE_STUCK, RESOLVED, WORKER_OFFLINE, WORKER_UNISOLATED
+from app.notifications import (
+    QUEUE_STUCK,
+    RESOLVED,
+    SECRETS_UNAVAILABLE,
+    WORKER_OFFLINE,
+    WORKER_UNISOLATED,
+)
 from app.notifications.alerts import clear_alert, raise_alert
 from app.notifications.events import emit
 
@@ -101,3 +107,17 @@ def check_queue(db: Session) -> None:
             emit(db, QUEUE_STUCK, project_id=None, data=data)
     elif clear_alert(db, QUEUE_STUCK):
         emit(db, QUEUE_STUCK, project_id=None, data={"state": RESOLVED})
+
+
+def secret_store_failed(db: Session, kind: str, label: str) -> None:
+    """The secret store can't be used (unreachable, sealed, TLS, login): alert once."""
+    data = {"kind": kind, "label": label[:60]}
+    if raise_alert(db, SECRETS_UNAVAILABLE, data):
+        emit(db, SECRETS_UNAVAILABLE, project_id=None, data=data)
+
+
+def secret_store_ok(db: Session, label: str) -> None:
+    if clear_alert(db, SECRETS_UNAVAILABLE):
+        emit(
+            db, SECRETS_UNAVAILABLE, project_id=None, data={"state": RESOLVED, "label": label[:60]}
+        )
