@@ -114,7 +114,7 @@ def get_playbook(
     playbook = get_scoped(
         db, user, request, Playbook, playbook_id, Permission.CONTENT_READ, "Playbook not found"
     )
-    return _to_detail(db, playbook, playbook_path(playbook_id).read_text())
+    return _to_detail(db, playbook, playbook_path(playbook.id).read_text())
 
 
 @router.put("/{playbook_id}", response_model=PlaybookDetail)
@@ -132,12 +132,12 @@ def update_playbook(
         raise _read_only(db, playbook)
     if payload.content is not None:
         _validate_yaml(payload.content)
-        playbook_path(playbook_id).write_text(payload.content)
+        playbook_path(playbook.id).write_text(payload.content)
     if payload.name is not None:
         playbook.name = payload.name
     db.commit()
     db.refresh(playbook)
-    return _to_detail(db, playbook, playbook_path(playbook_id).read_text())
+    return _to_detail(db, playbook, playbook_path(playbook.id).read_text())
 
 
 @router.delete("/{playbook_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -154,4 +154,4 @@ def delete_playbook(
         raise _read_only(db, playbook)  # only once it is gone upstream
     db.delete(playbook)
     db.commit()
-    playbook_path(playbook_id).unlink(missing_ok=True)
+    playbook_path(playbook.id).unlink(missing_ok=True)

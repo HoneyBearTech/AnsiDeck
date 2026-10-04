@@ -288,10 +288,10 @@ def delete_source(
             status.HTTP_409_CONFLICT, "Runs from this source are queued or running; wait for them"
         )
     playbook_ids = list(db.scalars(select(Playbook.id).where(Playbook.source_id == source.id)))
-    name = source.name
+    name, deleted_id = source.name, source.id  # paths come from the row, not the request
     db.delete(source)  # its playbooks and snapshots cascade; runs keep their name snapshot
     db.commit()
-    git_sync.remove_files(source_id, playbook_ids)
+    git_sync.remove_files(deleted_id, playbook_ids)
     audit.record(
         db,
         "git_source.delete",
