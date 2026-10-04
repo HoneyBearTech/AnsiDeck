@@ -137,11 +137,14 @@ export function RunTriggerPage() {
             <SelectValue placeholder="Select a playbook" />
           </SelectTrigger>
           <SelectContent>
-            {playbooks.map((playbook) => (
-              <SelectItem key={playbook.id} value={String(playbook.id)}>
-                {playbook.name}
-              </SelectItem>
-            ))}
+            {playbooks
+              .filter((playbook) => playbook.missing_at === null)
+              .map((playbook) => (
+                <SelectItem key={playbook.id} value={String(playbook.id)}>
+                  {playbook.name}
+                  {playbook.source_name && ` (git: ${playbook.source_name})`}
+                </SelectItem>
+              ))}
           </SelectContent>
         </Select>
       </div>

@@ -155,6 +155,13 @@ export interface PlaybookSummary {
   project_id: number;
   created_at: string;
   updated_at: string;
+  // Synced from git (read-only): its source, path in the repository and current commit; set
+  // missing_at once the file is gone upstream (it can't run then, and may be deleted).
+  source_id: number | null;
+  source_name: string | null;
+  repo_path: string | null;
+  commit: string | null;
+  missing_at: string | null;
 }
 
 export interface PlaybookDetail extends PlaybookSummary {
@@ -270,6 +277,69 @@ export interface Run {
   hosts_unreachable: number | null;
   // Why a queued run hasn't started (getRun only; null otherwise).
   waiting_reason: string | null;
+  // Runs of playbooks synced from git: the commit they execute and a link to it.
+  git_source_name: string | null;
+  git_commit: string | null;
+  playbook_path: string | null;
+  commit_url: string | null;
+}
+
+export type GitAuthKind = "none" | "ssh_key" | "https_token";
+
+export interface GitSource {
+  id: number;
+  project_id: number;
+  name: string;
+  url: string;
+  branch: string;
+  subdir: string | null;
+  web_url: string | null;
+  playbook_globs: string[];
+  auth_kind: GitAuthKind;
+  credential_id: number | null;
+  credential_name: string | null;
+  https_username: string | null;
+  has_token: boolean;
+  host_keys: { type: string; fingerprint: string }[];
+  auto_sync_seconds: number;
+  enabled: boolean;
+  commit: string | null;
+  commit_subject: string | null;
+  committed_at: string | null;
+  warnings: string[];
+  playbooks: number;
+  missing_playbooks: number;
+  sync_requested_at: string | null;
+  last_sync_started_at: string | null;
+  last_sync_finished_at: string | null;
+  last_sync_status: "ok" | "failed" | "running" | null;
+  last_sync_error: string | null;
+  created_by: string;
+  created_at: string;
+}
+
+export interface GitSourceInput {
+  name?: string;
+  url?: string;
+  branch?: string;
+  subdir?: string | null;
+  web_url?: string | null;
+  playbook_globs?: string[];
+  auth_kind?: GitAuthKind;
+  credential_id?: number | null;
+  https_username?: string | null;
+  token?: string; // write-only; omit to keep the stored one
+  auto_sync_seconds?: number;
+  enabled?: boolean;
+}
+
+export interface GitTestResult {
+  ok: boolean;
+  error: string | null;
+  default_branch: string | null;
+  branch_exists: boolean | null;
+  host_keys: { type: string; fingerprint: string; trusted: boolean }[];
+  host_key_trusted: boolean | null;
 }
 
 export interface WorkerInfo {
@@ -630,6 +700,29 @@ export const api = {
   cancelRun: (id: number) => request<Run>(`/runs/${id}/cancel`, { method: "POST" }),
 
   listWorkers: () => request<WorkerInfo[]>("/workers"),
+
+  listGitSources: (projectId: number) => request<GitSource[]>(`/projects/${projectId}/git-sources`),
+  createGitSource: (projectId: number, input: GitSourceInput) =>
+    request<GitSource>(`/projects/${projectId}/git-sources`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateGitSource: (projectId: number, id: number, input: GitSourceInput) =>
+    request<GitSource>(`/projects/${projectId}/git-sources/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  deleteGitSource: (projectId: number, id: number) =>
+    request<void>(`/projects/${projectId}/git-sources/${id}`, { method: "DELETE" }),
+  testGitSource: (projectId: number, id: number) =>
+    request<GitTestResult>(`/projects/${projectId}/git-sources/${id}/test`, { method: "POST" }),
+  trustGitHostKey: (projectId: number, id: number, trust: { fingerprint?: string; known_hosts?: string }) =>
+    request<GitSource>(`/projects/${projectId}/git-sources/${id}/trust-host-key`, {
+      method: "POST",
+      body: JSON.stringify(trust),
+    }),
+  syncGitSource: (projectId: number, id: number) =>
+    request<{ queued: boolean }>(`/projects/${projectId}/git-sources/${id}/sync`, { method: "POST" }),
 
   notificationCatalog: () => request<NotificationCatalog>("/notifications/catalog"),
   listChannels: (projectId: number | null) => request<NotificationChannel[]>(channelsPath(projectId)),

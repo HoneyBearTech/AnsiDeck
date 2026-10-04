@@ -152,6 +152,24 @@ export function RunDetailPage() {
             {run.diff_mode && " · diff"}
             {run.limit && ` · limit: ${run.limit}`}
           </p>
+          {run.git_commit && (
+            <p className="text-sm text-muted-foreground">
+              From git source {run.git_source_name} · <span className="font-mono">{run.playbook_path}</span>{" "}
+              at{" "}
+              {run.commit_url ? (
+                <a
+                  href={run.commit_url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="font-mono text-primary hover:underline"
+                >
+                  {run.git_commit.slice(0, 8)}
+                </a>
+              ) : (
+                <span className="font-mono text-foreground">{run.git_commit.slice(0, 8)}</span>
+              )}
+            </p>
+          )}
           <StatusNote run={run} />
         </div>
         <div className="flex items-center gap-3">

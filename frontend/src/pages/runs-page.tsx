@@ -54,6 +54,12 @@ export function RunsPage() {
                   </span>
                   <span className="text-xs text-muted-foreground">
                     {run.triggered_by} · {new Date(run.created_at).toLocaleString()}
+                    {run.git_commit && (
+                      <>
+                        {" · "}
+                        <span className="font-mono">{run.git_commit.slice(0, 8)}</span>
+                      </>
+                    )}
                     {run.become && " · become"}
                     {run.check_mode && " · check"}
                     {run.diff_mode && " · diff"}
