@@ -47,7 +47,7 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
-    networks: [default, db, workers]
+    networks: [default, db, workers, secrets]
     depends_on:
       postgres:
         condition: service_healthy
@@ -102,6 +102,30 @@ services:
       backend:
         condition: service_healthy
 
+  # Development only (`docker compose --profile openbao up -d`): an OpenBao dev server, to try
+  # keeping credentials and vault passwords in a secret store. It keeps everything in memory
+  # (gone when it restarts) and its root token is a fixed dev default; never use it for real
+  # secrets. Set it up with backend/scripts/openbao_dev_setup.py (see the README). Only the
+  # backend is on the secrets network: workers can't reach the store.
+  openbao:
+    profiles: [openbao]
+    image: openbao/openbao:2.7.1@sha256:6d2b93856e3fcf7b18ad855a0b51eaba474dc8b79cf554379ea32034797d2acf
+    environment:
+      - BAO_DEV_ROOT_TOKEN_ID=${OPENBAO_DEV_ROOT_TOKEN:-dev-only-root-token}
+      - BAO_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+      # For `docker compose exec openbao bao ...`.
+      - BAO_ADDR=http://127.0.0.1:8200
+      - BAO_TOKEN=${OPENBAO_DEV_ROOT_TOKEN:-dev-only-root-token}
+    # Loopback only, for the bao CLI and API on this machine.
+    ports:
+      - "127.0.0.1:${OPENBAO_PORT:-8200}:8200"
+    networks: [secrets]
+    healthcheck:
+      test: ["CMD", "bao", "status"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   frontend:
     build:
       context: ./frontend
@@ -123,6 +147,7 @@ services:
 networks:
   db:
   workers:
+  secrets:
 
 volumes:
   postgres-data:

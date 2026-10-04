@@ -150,8 +150,11 @@ it. Rotate a secret in the store and the next run uses the new version.
 
 Every project reads only its own subtree, `<SECRETS_STORE_KV_MOUNT>/<SECRETS_STORE_PATH_PREFIX>/<project id>/`
 (by default `secret/ansideck/<id>/`); a reference is a path below it (letters, digits, `.`, `_`, `-`; no `..`) and
-a key in that secret (`private_key` or `password` by default). Configure the store in `.env` (see
-`.env.example`), then set it up, for example with the `bao` (or `vault`) CLI:
+a key in that secret (`private_key` or `password` by default). On the **Credentials** page (and for vault
+passwords, the **Vault** page) choose **In OpenBao** (or your `SECRETS_STORE_LABEL`) instead of **Stored in
+AnsiDeck**: AnsiDeck reads the reference once to check it, and the card's **Test** button checks it again
+without showing the value. Configure the store in `.env` (see `.env.example`), then set it up, for example
+with the `bao` (or `vault`) CLI:
 
 ```sh
 bao policy write ansideck - <<'POLICY'
@@ -173,8 +176,21 @@ uses a single-use child token that holds only that project's policy.
 
 If the store can't be reached, is sealed, or refuses AnsiDeck's login, runs that need its secrets fail with that
 reason, and a **Secret store unavailable** notification goes to global channels once (and again when it works).
-Admins can check its status at `GET /api/secret-store/status`. Never give workers the `SECRETS_STORE_*` settings: a worker refuses
-to start with them.
+The **Workers** page shows the store's status as AnsiDeck last checked it (every minute). Never give workers the
+`SECRETS_STORE_*` settings: a worker refuses to start with them.
+
+To try it locally, Docker Compose has an `openbao` profile: a throwaway OpenBao dev server (in memory, a fixed
+root token, on loopback only; never for real secrets) on a network only the backend joins.
+
+```sh
+docker compose --profile openbao up -d
+docker compose exec backend uv run python scripts/openbao_dev_setup.py   # prints the .env lines to add
+docker compose up -d backend                                             # after adding them
+docker compose exec -T openbao bao kv put -mount=secret ansideck/1/web/ssh private_key=- < ~/.ssh/id_ed25519
+```
+
+The script sets up the AppRole and policies above (one per existing project) and keeps the secret id on the
+backend's data volume. Run it again after OpenBao restarts or after you add projects.
 
 ## Playbooks from git (optional)
 

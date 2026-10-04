@@ -192,7 +192,16 @@ export interface InventoryDetail extends InventorySummary {
   hosts: InventoryHost[];
 }
 
-export interface Credential {
+// Where a credential's key or a vault password lives: encrypted in AnsiDeck, or a reference
+// into the secret store (OpenBao / Vault), read when a run starts.
+export interface SecretRef {
+  store: "ansideck" | "external";
+  store_path: string | null;
+  store_key: string | null;
+  store_location: string | null;
+}
+
+export interface Credential extends SecretRef {
   id: number;
   name: string;
   description: string | null;
@@ -200,13 +209,46 @@ export interface Credential {
   created_at: string;
 }
 
-export interface VaultPassword {
+export interface VaultPassword extends SecretRef {
   id: number;
   name: string;
   description: string | null;
   project_id: number;
   created_at: string;
 }
+
+export interface SecretCheck {
+  ok: boolean;
+  version: number | null;
+  error_kind: string | null;
+  error: string | null;
+}
+
+export interface SecretStoreInfo {
+  enabled: boolean;
+  label: string;
+  base_path: string | null;
+  path_rules: string;
+}
+
+export interface SecretStoreStatus {
+  enabled: boolean;
+  label: string;
+  url: string | null;
+  ok: boolean | null;
+  reachable: boolean | null;
+  sealed: boolean | null;
+  version: string | null;
+  token_ttl: number | null;
+  error_kind: string | null;
+  error: string | null;
+  checked_at: number | null;
+  last_ok_at: number | null;
+}
+
+/** Either the secret itself, or a reference into the secret store. */
+export type SecretSource =
+  { kind: "ansideck"; value: string } | { kind: "external"; path: string; key: string };
 
 export interface VaultEncryptResult {
   vault_text: string;
@@ -633,25 +675,40 @@ export const api = {
     }),
 
   listCredentials: () => request<Credential[]>(scoped("/credentials")),
-  createCredential: (name: string, privateKey: string, description?: string) =>
+  createCredential: (name: string, source: SecretSource, description?: string) =>
     request<Credential>("/credentials", {
       method: "POST",
       body: JSON.stringify({
         name,
         description,
-        private_key: privateKey,
+        ...(source.kind === "ansideck"
+          ? { private_key: source.value }
+          : { store_path: source.path, store_key: source.key }),
         project_id: activeProjectId ?? undefined,
       }),
     }),
+  checkCredential: (id: number) => request<SecretCheck>(`/credentials/${id}/check`, { method: "POST" }),
   deleteCredential: (id: number) => request<void>(`/credentials/${id}`, { method: "DELETE" }),
 
   listVaultPasswords: () => request<VaultPassword[]>(scoped("/vault-passwords")),
-  createVaultPassword: (name: string, password: string, description?: string) =>
+  createVaultPassword: (name: string, source: SecretSource, description?: string) =>
     request<VaultPassword>("/vault-passwords", {
       method: "POST",
-      body: JSON.stringify({ name, description, password, project_id: activeProjectId ?? undefined }),
+      body: JSON.stringify({
+        name,
+        description,
+        ...(source.kind === "ansideck"
+          ? { password: source.value }
+          : { store_path: source.path, store_key: source.key }),
+        project_id: activeProjectId ?? undefined,
+      }),
     }),
   deleteVaultPassword: (id: number) => request<void>(`/vault-passwords/${id}`, { method: "DELETE" }),
+  checkVaultPassword: (id: number) =>
+    request<SecretCheck>(`/vault-passwords/${id}/check`, { method: "POST" }),
+  secretStoreInfo: (projectId: number) =>
+    request<SecretStoreInfo>(`/secret-store/info?project_id=${projectId}`),
+  secretStoreStatus: () => request<SecretStoreStatus>("/secret-store/status"),
   encryptVaultString: (vaultPasswordId: number, plaintext: string, varName?: string) =>
     request<VaultEncryptResult>("/vault/encrypt", {
       method: "POST",

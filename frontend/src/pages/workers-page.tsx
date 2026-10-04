@@ -2,13 +2,49 @@ import * as React from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { api, ApiError, type WorkerInfo } from "@/lib/api";
+import { api, ApiError, type SecretStoreStatus, type WorkerInfo } from "@/lib/api";
 
 const REFRESH_MS = 5000;
+
+function when(seconds: number | null): string {
+  return seconds ? new Date(seconds * 1000).toLocaleString() : "never";
+}
+
+/** The secret store as the API's probe last saw it (every minute). */
+function SecretStoreCard({ status }: { status: SecretStoreStatus }) {
+  const pending = status.ok === null || status.ok === undefined;
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-2 p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={pending ? "skipped" : status.ok ? "ok" : "failed"}>
+            {pending ? "not checked yet" : status.ok ? "reachable" : "unavailable"}
+          </Badge>
+          {status.sealed && <Badge variant="failed">sealed</Badge>}
+          <span className="font-medium">Secret store: {status.label}</span>
+          {status.url && <span className="font-mono text-sm text-muted-foreground">{status.url}</span>}
+          {status.version && <span className="text-sm text-muted-foreground">v{status.version}</span>}
+        </div>
+        {status.ok === false && status.error && (
+          <p className="text-sm text-destructive">
+            {status.error.charAt(0).toUpperCase() + status.error.slice(1)}. Runs that use a secret kept there
+            fail until it is back.
+          </p>
+        )}
+        <p className="text-sm text-muted-foreground">
+          Checked {when(status.checked_at)} · last reachable {when(status.last_ok_at)}
+          {status.token_ttl != null &&
+            ` · AnsiDeck's token has ${Math.round(status.token_ttl / 60)} min left`}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
 
 export function WorkersPage() {
   const [workers, setWorkers] = React.useState<WorkerInfo[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [store, setStore] = React.useState<SecretStoreStatus | null>(null);
 
   React.useEffect(() => {
     let active = true;
@@ -23,6 +59,10 @@ export function WorkersPage() {
         .catch((err) => {
           if (active) setError(err instanceof ApiError ? err.message : "Something went wrong");
         });
+      api
+        .secretStoreStatus()
+        .then((status) => active && setStore(status))
+        .catch(() => active && setStore(null));
     }
     load();
     const timer = setInterval(load, REFRESH_MS);
@@ -78,6 +118,8 @@ export function WorkersPage() {
           </p>
         </div>
       )}
+
+      {store?.enabled && <SecretStoreCard status={store} />}
 
       <div className="flex flex-col gap-2">
         {workers?.map((worker) => (
