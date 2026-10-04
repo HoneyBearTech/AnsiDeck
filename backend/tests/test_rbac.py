@@ -62,6 +62,15 @@ MATRIX = [
     ("GET", "/api/projects/1/notifications/channels", ADMIN),
     ("POST", "/api/projects/1/notifications/channels", ADMIN),
     ("DELETE", "/api/projects/1/notifications/channels/999", ADMIN),
+    ("GET", "/api/projects/1/git-sources", ALL),
+    ("POST", "/api/projects/1/git-sources", ADMIN),
+    ("GET", "/api/projects/1/git-sources/999", ALL),
+    ("PATCH", "/api/projects/1/git-sources/999", ADMIN),
+    ("DELETE", "/api/projects/1/git-sources/999", ADMIN),
+    ("GET", "/api/projects/1/git-sources/999/snapshots", ALL),
+    ("POST", "/api/projects/1/git-sources/999/test", ADMIN),
+    ("POST", "/api/projects/1/git-sources/999/trust-host-key", ADMIN),
+    ("POST", "/api/projects/1/git-sources/999/sync", OPERATOR_UP),
 ]
 
 

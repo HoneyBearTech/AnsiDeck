@@ -117,6 +117,21 @@ for _action, _outcome in (
 ):
     AUDIT_EVENTS.labels(_action, _outcome)
 
+GIT_SYNCS = Counter(
+    "ansideck_git_syncs",
+    "Git source syncs, by outcome (ok: a new commit, unchanged, failed, busy)",
+    ["outcome"],
+    registry=REGISTRY,
+)
+GIT_SYNC_DURATION = Histogram(
+    "ansideck_git_sync_duration_seconds",
+    "Time one git source sync took",
+    buckets=(0.5, 1, 2.5, 5, 10, 30, 60, 120, 300),
+    registry=REGISTRY,
+)
+for _outcome in ("ok", "unchanged", "failed"):
+    GIT_SYNCS.labels(_outcome)
+
 _METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
 _ACTION = re.compile(r"^[a-z_]{1,30}\.[a-z_]{1,40}$")
 _OUTCOMES = frozenset({"success", "failure", "denied"})
@@ -179,6 +194,12 @@ def run_finished(db: Session, project_id: int, status: str, started_at: datetime
 
 def run_claimed(wait_seconds: float) -> None:
     QUEUE_WAIT.observe(max(wait_seconds, 0.0))
+
+
+def git_sync_finished(outcome: str, seconds: float) -> None:
+    GIT_SYNCS.labels(outcome).inc()
+    if outcome != "busy":
+        GIT_SYNC_DURATION.observe(seconds)
 
 
 def audit_recorded(action: str, outcome: str, locked_out: bool) -> None:

@@ -7,6 +7,7 @@ from app.db import get_db
 from app.hardening import client_ip
 from app.models import (
     Credential,
+    GitSource,
     Inventory,
     Playbook,
     Project,
@@ -148,6 +149,7 @@ def delete_project(
         "vault passwords": db.query(VaultPassword)
         .filter(VaultPassword.project_id == project_id)
         .count(),
+        "git sources": db.query(GitSource).filter(GitSource.project_id == project_id).count(),
     }
     remaining = {name: n for name, n in counts.items() if n}
     if remaining:

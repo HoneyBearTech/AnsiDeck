@@ -8,26 +8,19 @@ address it checked (no second DNS lookup to rebind), with redirects off. Respons
 never read back to the caller.
 """
 
-import ipaddress
-import socket
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 import httpx
 
+from app.netguard import Address, DestinationError, literal, resolve, vet
+
+__all__ = ["Destination", "DestinationError", "check", "post"]
+
 TIMEOUT_SECONDS = 10.0
 # None: real network. Tests put an httpx.MockTransport here.
 default_transport: httpx.BaseTransport | None = None
-_Address = ipaddress.IPv4Address | ipaddress.IPv6Address
-
-
-class DestinationError(ValueError):
-    """The URL may not be sent to (bad scheme, refused address), or its host doesn't resolve
-    right now (`retryable`: DNS can come back)."""
-
-    def __init__(self, message: str, *, retryable: bool = False) -> None:
-        super().__init__(message)
-        self.retryable = retryable
+_resolve = resolve  # module-level, so tests can stub DNS
 
 
 @dataclass(frozen=True)
@@ -35,36 +28,8 @@ class Destination:
     scheme: str
     host: str  # as written in the URL (lowercase), for Host and TLS
     port: int
-    address: _Address
+    address: Address
     path: str  # path + query
-
-
-def _public(address: _Address) -> bool:
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-        address = address.ipv4_mapped
-    return address.is_global and not address.is_multicast
-
-
-def _allowlisted(host: str, address: _Address, allowlist: list[str]) -> bool:
-    for entry in allowlist:
-        entry = entry.strip().lower()
-        if not entry:
-            continue
-        try:
-            if address in ipaddress.ip_network(entry, strict=False):
-                return True
-        except ValueError:
-            if host == entry:
-                return True
-    return False
-
-
-def _resolve(host: str, port: int) -> list[_Address]:
-    try:
-        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    except socket.gaierror as exc:
-        raise DestinationError(f"cannot resolve {host}", retryable=True) from exc
-    return [ipaddress.ip_address(info[4][0].split("%", 1)[0]) for info in infos]
 
 
 def check(url: str, allowlist: list[str]) -> Destination:
@@ -81,24 +46,14 @@ def check(url: str, allowlist: list[str]) -> Destination:
         port = parts.port or (443 if scheme == "https" else 80)
     except ValueError as exc:
         raise DestinationError("the URL has an invalid port") from exc
-    try:
-        addresses = [ipaddress.ip_address(host)]  # a literal address: no lookup
-    except ValueError:
-        addresses = _resolve(host, port)
-    if not addresses:
-        raise DestinationError(f"cannot resolve {host}", retryable=True)
-    private = [a for a in addresses if not _public(a)]
-    if private and not all(_allowlisted(host, a, allowlist) for a in private):
-        raise DestinationError(
-            f"{host} resolves to a non-public address ({private[0]}); allow it with "
-            "NOTIFY_ALLOWED_PRIVATE_HOSTS"
-        )
+    addresses = literal(host) or _resolve(host, port)
+    address, private = vet(host, addresses, allowlist, "NOTIFY_ALLOWED_PRIVATE_HOSTS")
     if scheme == "http" and not private:
         raise DestinationError("public destinations must use https://")
     path = parts.path or "/"
     if parts.query:
         path += f"?{parts.query}"
-    return Destination(scheme, host, port, addresses[0], path)
+    return Destination(scheme, host, port, address, path)
 
 
 def post(
