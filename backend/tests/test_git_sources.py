@@ -356,17 +356,6 @@ def test_upstream_changes_mark_removed_playbooks_and_revive_them(admin, tmp_path
     assert len(events) == 4
 
 
-def test_runs_from_git_are_not_available_before_4e2(admin, tmp_path) -> None:
-    repo = make_repo(tmp_path / "repo", {"site.yml": PLAY})
-    source = _create(admin, repo)
-    git_sync.sync_source(source["id"])
-    playbook = _playbooks(source["id"])["site.yml"]
-    run = admin.post(
-        "/api/runs", json={"playbook_id": playbook.id, "inventory_id": 1, "credential_id": 1}
-    )
-    assert run.status_code == 409
-
-
 def test_a_subdirectory_and_custom_patterns(admin, tmp_path) -> None:
     repo = make_repo(
         tmp_path / "repo",

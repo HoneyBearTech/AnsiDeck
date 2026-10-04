@@ -13,7 +13,7 @@ import logging
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Header, status
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
@@ -22,9 +22,10 @@ from app import audit, metrics
 from app.config import get_settings
 from app.db import get_db, get_sessionmaker
 from app.galaxy import try_start_install
+from app.git_sync import snapshot_path
 from app.hardening import FailureThrottle
 from app.jobs import build_job
-from app.models import Run, RunStatus
+from app.models import GitSnapshot, Run, RunStatus
 from app.notifications.events import run_finished
 from app.notify import notifier, run_topic
 from app.queue import QUEUE_TOPIC, Claim, claim_next, fail_run, hash_token, record_worker
@@ -252,6 +253,27 @@ def job(
     run.started_at = func.now()  # the worker launches ansible next
     db.commit()
     return payload
+
+
+@router.post("/runs/{run_id}/snapshot")
+def snapshot(
+    run_id: int,
+    x_claim_token: str = Header(max_length=200),
+    db: Session = Depends(get_db),
+) -> Any:
+    """The repository snapshot (a tar) a run of a synced playbook executes in. Its path comes
+    from the run's row; the worker checks size and hash against its job."""
+    run = _locked_run(db, run_id, x_claim_token)
+    if run is None:
+        return _gone()
+    snapshot_row = db.get(GitSnapshot, run.git_snapshot_id) if run.git_snapshot_id else None
+    db.commit()
+    if snapshot_row is None:
+        return JSONResponse({"detail": "This run has no repository snapshot"}, 404)
+    path = snapshot_path(snapshot_row)
+    if not path.is_file():
+        return JSONResponse({"detail": "The repository snapshot is gone"}, 404)
+    return FileResponse(path, media_type="application/x-tar")
 
 
 @router.post("/runs/{run_id}/events")

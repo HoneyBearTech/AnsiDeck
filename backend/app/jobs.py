@@ -9,8 +9,9 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.crypto import decrypt_secret
+from app.git_sync import snapshot_path, vars_texts
 from app.inventory_render import render_inventory_yaml
-from app.models import Credential, Inventory, InventoryGroup, Run, VaultPassword
+from app.models import Credential, GitSnapshot, Inventory, InventoryGroup, Run, VaultPassword
 from app.scrub import collect_secrets
 
 
@@ -30,6 +31,8 @@ def unrunnable_reason(run: Run) -> str | None:
         return f"its inventory group '{run.group_name}' was deleted"
     if run.vault_password_name is not None and run.vault_password_id is None:
         return "its vault password was deleted"
+    if run.git_commit is not None and run.git_snapshot_id is None:
+        return "its git source (and the commit it was to run) was deleted"
     return None
 
 
@@ -41,6 +44,7 @@ UNRUNNABLE = or_(
     Run.credential_id.is_(None),
     Run.group_name.is_not(None) & Run.group_id.is_(None),
     Run.vault_password_name.is_not(None) & Run.vault_password_id.is_(None),
+    Run.git_commit.is_not(None) & Run.git_snapshot_id.is_(None),
 )
 
 
@@ -68,12 +72,29 @@ def build_job(db: Session, run: Run) -> dict:
     if group is not None and group.inventory_id != inventory.id:
         raise RuntimeError(f"run {run.id}: group is not in the run's inventory")
 
+    # A synced playbook runs inside its repository: the worker fetches the snapshot (a tar
+    # of the commit) and checks it against this size and hash.
+    project = None
+    repo_vars: list[str] = []
+    if run.git_snapshot_id is not None:
+        snapshot = db.get(GitSnapshot, run.git_snapshot_id)
+        tar = snapshot_path(snapshot)
+        if tar.stat().st_size != snapshot.size_bytes:
+            raise RuntimeError(f"run {run.id}: the git snapshot on disk changed")
+        project = {
+            "playbook": run.playbook_path,
+            "bytes": snapshot.size_bytes,
+            "sha256": snapshot.sha256,
+        }
+        repo_vars = vars_texts(snapshot)
+
     secrets = collect_secrets(
         ssh_key_pem=private_key_pem,
         vault_password=vault_password_plain,
         playbook_text=run.playbook_snapshot,
         extra_vars=run.extra_vars,
         host_vars=[host.vars or {} for host in inventory.hosts],
+        repo_vars_texts=repo_vars,
     )
 
     flags = []
@@ -96,4 +117,5 @@ def build_job(db: Session, run: Run) -> dict:
         "extravars": run.extra_vars or {},
         "timeout_seconds": run.timeout_seconds,
         "secrets": sorted(secrets),
+        "project": project,
     }

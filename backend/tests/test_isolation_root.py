@@ -54,11 +54,14 @@ def _shell(command: str) -> str:
     return "ansible.builtin.shell: |\n        " + command  # a literal block: no escaping
 
 
-def _run(playbook: str, slot: int, handle=None, run_id: int = 1, **env: str):
+def _run(
+    playbook: str, slot: int, handle=None, run_id: int = 1, repository: bytes | None = None, **env
+):
     events: list[dict] = []
     status, rc = run_in_worker(
         {
             "files": {"playbook": playbook, "inventory": INVENTORY},
+            "project": {"playbook": "site.yml"} if repository else None,
             "prefix": f"ansideck-run-{run_id}-",
             "own_home": True,
             "ssh_key": None,
@@ -71,6 +74,7 @@ def _run(playbook: str, slot: int, handle=None, run_id: int = 1, **env: str):
         events.append,
         handle,
         identity_for_slot(slot),
+        stdin_tail=repository,
     )
     stdout = [
         e["event_data"]["res"].get("stdout", "")
@@ -213,3 +217,40 @@ def test_a_home_another_slot_planted_in_is_replaced() -> None:
     status, [listing] = _run(_play(_shell("stat -c %a $HOME; ls -A $HOME")), slot=0)
     assert status == "successful"
     assert listing.split() == ["700", ".ansible"]  # this run's own ansible temp dir only
+
+
+def _repository(files: dict[str, tuple[bytes, int]]) -> bytes:
+    import io
+    import tarfile
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as tar:
+        for name, (data, mode) in files.items():
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(data), mode
+            tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
+
+
+def test_a_git_run_unpacks_its_repository_as_its_slot_user() -> None:
+    """The run's own process unpacks the repository (owned by the slot's user, setuid
+    stripped) and runs a playbook from it with the repository's role; nothing outlives it."""
+    repository = _repository(
+        {
+            "site.yml": (_play("ansible.builtin.include_role: {name: probe}").encode(), 0o644),
+            "roles/probe/tasks/main.yml": (
+                ("- " + _shell("id -u; stat -c '%u %a' site.yml tool; pwd") + "\n").encode(),
+                0o644,
+            ),
+            "tool": (b"#!/bin/sh\n", 0o4755),
+        }
+    )
+    status, outputs = _run("", slot=3, run_id=3, repository=repository)
+    assert status == "successful"
+    uid, site, tool, cwd = outputs[-1].splitlines()  # (include_role reports first)
+    assert uid == "20003"
+    assert site == "20003 644"
+    assert tool == "20003 755"  # setuid stripped
+    assert cwd.startswith("/tmp/ansideck-run-3-") and cwd.endswith("/project")
+    assert not Path(cwd).exists()
+    assert processes_of(20003) == []

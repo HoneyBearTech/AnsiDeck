@@ -147,8 +147,15 @@ minutes by default (per source; 0 = only on **Sync now**, which operators can pr
 the source's patterns (by default `*.yml`, `*.yaml`, `playbooks/*.yml` and `playbooks/*.yaml`, optionally
 inside a subdirectory) that is a playbook appears as a read-only playbook: change it in the repository. A
 file that disappears upstream is marked "removed upstream" (it keeps its id for CI, can't run, and can then
-be deleted); it comes back if the file does. Running synced playbooks inside the repository (with its
-roles, templates and vars, at the commit current when the run starts) arrives in the next release.
+be deleted); it comes back if the file does.
+
+A run of a synced playbook executes inside the repository (or its subdirectory) at the commit that was
+current when the run was triggered, so its roles, templates, files, `group_vars`, includes and `ansible.cfg`
+work; later pushes don't change a queued run. The run's page shows the commit (linked to your forge when the
+source has a web URL). Roles and collections are looked up in the repository's `roles/` and `collections/`
+(and the paths its `ansible.cfg` names inside the repository) before the Galaxy ones. Vaulted values in the
+repository's `group_vars`, `host_vars`, `vars` and role vars/defaults are scrubbed from the output like
+vaulted playbook variables.
 
 - **Remotes:** `https://` (public, or with a user name and token, stored encrypted and never shown again),
   or `ssh://` / `user@host:path` with an SSH key from the project's credentials as the deploy key. For an ssh

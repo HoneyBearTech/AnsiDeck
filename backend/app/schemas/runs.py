@@ -64,6 +64,11 @@ class RunOut(BaseModel):
     hosts_changed: int | None
     hosts_failed: int | None
     hosts_unreachable: int | None
+    # Runs of playbooks synced from git: where and at which commit they execute.
+    git_source_name: str | None = None
+    git_commit: str | None = None
+    playbook_path: str | None = None
+    commit_url: str | None = None
     # Why a queued run hasn't started (only on GET /runs/{id}; None otherwise).
     waiting_reason: str | None = None
 
