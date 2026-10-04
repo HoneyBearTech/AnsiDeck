@@ -27,9 +27,11 @@ from app.hardening import FailureThrottle
 from app.jobs import build_job
 from app.models import GitSnapshot, Run, RunStatus
 from app.notifications.events import run_finished
+from app.notifications.ops import secret_store_failed
 from app.notify import notifier, run_topic
 from app.queue import QUEUE_TOPIC, Claim, claim_next, fail_run, hash_token, record_worker
 from app.run_log import append_events
+from app.secret_store import OUTAGE_KINDS, SecretStoreError, explain
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +246,23 @@ def job(
         return _gone()
     try:
         payload = build_job(db, run)
+    except SecretStoreError as exc:
+        label = get_settings().secrets_store_label
+        subject = getattr(exc, "subject", "a secret")
+        fail_run(
+            run,
+            RunStatus.FAILED,
+            f"not run: could not read {subject} from {label}: {explain(exc.kind)}",
+        )
+        if exc.kind in OUTAGE_KINDS:
+            try:
+                with db.begin_nested():
+                    secret_store_failed(db, exc.kind, label)
+            except Exception:  # noqa: BLE001 - the run's failure is what matters
+                logger.exception("could not raise the secret store alert")
+        db.commit()
+        _finished(run_id)
+        return _gone()
     except Exception:  # noqa: BLE001 - never echo details that might hold secrets
         logger.exception("could not build the job for run %s", run_id)
         fail_run(run, RunStatus.FAILED, "could not prepare the job (see the server log)")

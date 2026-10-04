@@ -15,6 +15,7 @@ from app.notifications import (
     RESOLVED,
     RUN_FAILED,
     RUN_RECOVERED,
+    SECRETS_UNAVAILABLE,
     WORKER_OFFLINE,
     WORKER_UNISOLATED,
 )
@@ -55,7 +56,35 @@ def _link(public_url: str, path: str) -> str | None:
     return f"{public_url}{path}" if public_url else None
 
 
+_STORE_PROBLEMS = {
+    "unreachable": "can't be reached",
+    "sealed": "is sealed",
+    "tls": "has a TLS certificate AnsiDeck doesn't trust",
+    "auth_failed": "refuses AnsiDeck's login",
+}
+
+
+def _secrets(payload: dict, public_url: str) -> Message:
+    label = _clip(payload.get("label") or "The secret store", 60)
+    if payload.get("state") == RESOLVED:
+        return Message(
+            f"{label} works again",
+            "AnsiDeck can read its secrets again; runs that need them can start.",
+            _GREEN,
+            url=_link(public_url, "/workers"),
+        )
+    problem = _STORE_PROBLEMS.get(payload.get("kind"), "can't be used")
+    return Message(
+        f"{label} {problem}",
+        "Runs whose credentials or vault passwords live there fail until it works again.",
+        _RED,
+        url=_link(public_url, "/workers"),
+    )
+
+
 def _ops(event: str, payload: dict, public_url: str) -> Message:
+    if event == SECRETS_UNAVAILABLE:
+        return _secrets(payload, public_url)
     resolved = payload.get("state") == RESOLVED
     worker = _clip(payload.get("worker", "?"), 150)
     if event == WORKER_OFFLINE:
@@ -155,7 +184,7 @@ def build(event: str, payload: dict, public_url: str = "") -> Message:
             summary=f"This channel works (sent by {_clip(payload.get('sent_by', '?'), 150)}).",
             color=_BLUE,
         )
-    if event in (WORKER_OFFLINE, WORKER_UNISOLATED, QUEUE_STUCK):
+    if event in (WORKER_OFFLINE, WORKER_UNISOLATED, QUEUE_STUCK, SECRETS_UNAVAILABLE):
         return _ops(event, payload, public_url)
     if event in (LOGIN_ATTACK, ADMIN_CHANGE):
         return _security(event, payload, public_url)

@@ -985,6 +985,7 @@ def test_ops_and_security_events_are_for_global_channels_only(client) -> None:
         "worker.offline": "Operations",
         "worker.unisolated": "Operations",
         "queue.stuck": "Operations",
+        "secrets.unavailable": "Operations",
         "security.login_attack": "Security",
         "security.admin_change": "Security",
     }
@@ -1012,6 +1013,20 @@ def test_ops_and_security_events_are_for_global_channels_only(client) -> None:
             {"worker": "w1"},
             "Worker w1 runs playbooks without isolation",
             0xE5484D,
+            "/workers",
+        ),
+        (
+            "secrets.unavailable",
+            {"kind": "sealed", "label": "OpenBao"},
+            "OpenBao is sealed",
+            0xE5484D,
+            "/workers",
+        ),
+        (
+            "secrets.unavailable",
+            {"state": "resolved", "label": "OpenBao"},
+            "OpenBao works again",
+            0x30A46C,
             "/workers",
         ),
         (

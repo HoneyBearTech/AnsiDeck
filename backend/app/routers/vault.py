@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.crypto import decrypt_secret
 from app.db import get_db
 from app.hardening import client_ip
 from app.models import User, VaultPassword
@@ -14,6 +13,7 @@ from app.schemas.vault import (
     VaultEncryptResponse,
 )
 from app.scoping import get_scoped
+from app.secret_store import SecretStoreError, explain, resolve_vault_password
 from app.vault import VaultError, decrypt_vault_text, encrypt_to_vault_envelope, to_yaml_block
 
 router = APIRouter()
@@ -29,7 +29,13 @@ def _load_password(
     vault_password = get_scoped(
         db, user, request, VaultPassword, vault_password_id, permission, "Vault password not found"
     )
-    return vault_password, decrypt_secret(vault_password.encrypted_password).decode()
+    try:
+        return vault_password, resolve_vault_password(vault_password)
+    except SecretStoreError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Could not read the vault password from the secret store: {explain(exc.kind)}",
+        ) from None
 
 
 def _audit_use(db: Session, action: str, actor: User, request: Request, vp: VaultPassword) -> None:

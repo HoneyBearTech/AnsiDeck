@@ -23,7 +23,18 @@ def test_create_list_delete_vault_password(client: TestClient) -> None:
     )
     assert create_response.status_code == 201
     body = create_response.json()
-    assert set(body.keys()) == {"id", "name", "description", "project_id", "created_at"}
+    assert set(body.keys()) == {
+        "id",
+        "name",
+        "description",
+        "project_id",
+        "created_at",
+        "store",
+        "store_path",
+        "store_key",
+        "store_location",
+    }
+    assert body["store"] == "ansideck" and body["store_path"] is None
     vault_password_id = body["id"]
 
     list_response = client.get("/api/vault-passwords")
@@ -35,6 +46,10 @@ def test_create_list_delete_vault_password(client: TestClient) -> None:
         "description",
         "project_id",
         "created_at",
+        "store",
+        "store_path",
+        "store_key",
+        "store_location",
     }
 
     assert client.delete(f"/api/vault-passwords/{vault_password_id}").status_code == 204

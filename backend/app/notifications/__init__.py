@@ -18,6 +18,7 @@ RUN_RECOVERED = "run.recovered"
 WORKER_OFFLINE = "worker.offline"
 WORKER_UNISOLATED = "worker.unisolated"
 QUEUE_STUCK = "queue.stuck"
+SECRETS_UNAVAILABLE = "secrets.unavailable"
 LOGIN_ATTACK = "security.login_attack"
 ADMIN_CHANGE = "security.admin_change"
 # Data "state" of an all-clear: sent on the same event as its alert (worker back online,
@@ -60,6 +61,13 @@ EVENTS: dict[str, EventInfo] = {
     QUEUE_STUCK: EventInfo(
         "Queue stuck",
         "Runs have waited too long for a worker (and again when the queue moves).",
+        project=False,
+        group="Operations",
+    ),
+    SECRETS_UNAVAILABLE: EventInfo(
+        "Secret store unavailable",
+        "AnsiDeck can't read from the secret store (unreachable, sealed, or its login fails), "
+        "so runs needing its secrets fail (and again when it works).",
         project=False,
         group="Operations",
     ),

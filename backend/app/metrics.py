@@ -131,6 +131,19 @@ GIT_SYNC_DURATION = Histogram(
 )
 for _outcome in ("ok", "unchanged", "failed"):
     GIT_SYNCS.labels(_outcome)
+SECRET_STORE_READS = Counter(
+    "ansideck_secret_store_reads",
+    "Reads from the secret store, by outcome (ok or the error kind)",
+    ["outcome"],
+    registry=REGISTRY,
+)
+SECRET_STORE_UP = Gauge(
+    "ansideck_secret_store_up",
+    "1 if the last secret store check worked (only reported when a store is configured)",
+    registry=REGISTRY,
+)
+for _outcome in ("ok", "unreachable", "denied", "not_found", "auth_failed", "sealed"):
+    SECRET_STORE_READS.labels(_outcome)
 
 _METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
 _ACTION = re.compile(r"^[a-z_]{1,30}\.[a-z_]{1,40}$")
@@ -194,6 +207,14 @@ def run_finished(db: Session, project_id: int, status: str, started_at: datetime
 
 def run_claimed(wait_seconds: float) -> None:
     QUEUE_WAIT.observe(max(wait_seconds, 0.0))
+
+
+def secret_store_read(outcome: str) -> None:
+    SECRET_STORE_READS.labels(outcome[:20]).inc()
+
+
+def secret_store_up(up: bool) -> None:
+    SECRET_STORE_UP.set(1 if up else 0)
 
 
 def git_sync_finished(outcome: str, seconds: float) -> None:

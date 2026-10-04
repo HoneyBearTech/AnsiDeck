@@ -310,3 +310,33 @@ def test_rendered_inventory_parses_back_to_exactly_the_input(
     # plain YAML parser and Ansible's own loader read back exactly the input.
     assert yaml.safe_load(rendered) == expected
     assert AnsibleLoader(rendered).get_single_data() == expected
+
+
+_PATH_PIECES = st.sampled_from(
+    ["a", "web", "..", ".", "", "%2e", "-x", "_k", "ö", "a.b", "\x00", " "]
+)
+
+
+@given(
+    st.one_of(
+        st.text(max_size=120),
+        st.lists(_PATH_PIECES, max_size=20).map("/".join),
+    )
+)
+@example("../8/x")
+@example("a/../../8")
+@example("a//b")
+def test_store_references_never_leave_their_project(path: str) -> None:
+    """Any reference path is either refused, or read from under the project's own subtree
+    with no dot or empty segments (which the store or httpx would collapse)."""
+    from app import secret_store
+    from app.secret_store import SecretStoreError
+
+    try:
+        segments = secret_store.check_path(path)
+    except SecretStoreError:
+        return
+    built = secret_store._api_path("secret", "data", "ansideck", "7", *segments)
+    assert built.startswith("/v1/secret/data/ansideck/7/")
+    assert all(part not in ("", ".", "..") for part in built.split("/")[1:])
+    assert "%" not in built  # nothing needed encoding: no way to smuggle a separator

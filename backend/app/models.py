@@ -5,6 +5,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -140,22 +141,39 @@ class ApiKey(Base):
 
 class Credential(Base):
     __tablename__ = "credentials"
+    __table_args__ = (
+        CheckConstraint(
+            "(encrypted_private_key IS NULL) <> (store_path IS NULL)", name="one_secret"
+        ),
+        CheckConstraint("(store_path IS NULL) = (store_key IS NULL)", name="store_ref"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(150), unique=True)
     description: Mapped[str | None] = mapped_column(String(500), default=None)
-    encrypted_private_key: Mapped[bytes] = mapped_column(LargeBinary)
+    # Either encrypted here, or a reference into the secret store (app.secret_store): a path
+    # under the project's own subtree and a key. Never both (a CHECK constraint).
+    encrypted_private_key: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
+    store_path: Mapped[str | None] = mapped_column(String(400), default=None)
+    store_key: Mapped[str | None] = mapped_column(String(100), default=None)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class VaultPassword(Base):
     __tablename__ = "vault_passwords"
+    __table_args__ = (
+        CheckConstraint("(encrypted_password IS NULL) <> (store_path IS NULL)", name="one_secret"),
+        CheckConstraint("(store_path IS NULL) = (store_key IS NULL)", name="store_ref"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(150), unique=True)
     description: Mapped[str | None] = mapped_column(String(500), default=None)
-    encrypted_password: Mapped[bytes] = mapped_column(LargeBinary)
+    # Encrypted here, or a reference into the secret store (see Credential).
+    encrypted_password: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
+    store_path: Mapped[str | None] = mapped_column(String(400), default=None)
+    store_key: Mapped[str | None] = mapped_column(String(100), default=None)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

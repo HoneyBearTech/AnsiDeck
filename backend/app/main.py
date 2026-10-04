@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from psycopg.errors import NumericValueOutOfRange
 from sqlalchemy.exc import DataError
 
-from app import audit, metrics
+from app import audit, metrics, secret_store
 from app.bootstrap import refuse_to_start_over_legacy_data, seed_fresh_install
 from app.config import get_settings
 from app.db import get_sessionmaker, init_db
@@ -21,6 +21,7 @@ from app.hardening import OriginCheckMiddleware
 from app.internal_api import internal_app
 from app.metrics_api import metrics_app
 from app.notifications.dispatch import dispatch_forever
+from app.notifications.ops import secret_store_failed, secret_store_ok
 from app.notify import notifier
 from app.process_hardening import disable_process_inspection
 from app.reaper import INTERVAL_SECONDS, reap_once
@@ -45,10 +46,14 @@ from app.routers import (
 from app.routers import (
     audit as audit_router,
 )
+from app.routers import (
+    secret_store as secret_store_router,
+)
 from app.storage import galaxy_collections_dir, galaxy_roles_dir
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+SECRET_STORE_PROBE_SECONDS = 60
 
 
 class _EmbeddedServer(uvicorn.Server):
@@ -102,6 +107,32 @@ async def _git_sync_forever() -> None:
         executor.shutdown(wait=False, cancel_futures=True)
 
 
+def _probe_secret_store() -> None:
+    """Checks the secret store and raises or clears its ops alert."""
+    result = secret_store.probe()
+    label = settings.secrets_store_label
+    db = get_sessionmaker()()
+    try:
+        if result["ok"]:
+            secret_store_ok(db, label)
+        elif result["error_kind"] in secret_store.OUTAGE_KINDS:
+            secret_store_failed(db, result["error_kind"], label)
+        db.commit()
+    finally:
+        db.close()
+
+
+async def _secret_store_probe_forever() -> None:
+    if not settings.secrets_store_enabled:
+        return
+    while True:
+        try:
+            await asyncio.to_thread(_probe_secret_store)
+        except Exception:  # noqa: BLE001 - the next probe tries again
+            logger.exception("secret store probe failed")
+        await asyncio.sleep(SECRET_STORE_PROBE_SECONDS)
+
+
 async def _reap_forever() -> None:
     while True:
         try:
@@ -129,6 +160,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     reaper = asyncio.create_task(_reap_forever())
     dispatcher = asyncio.create_task(dispatch_forever())
     syncer = asyncio.create_task(_git_sync_forever())
+    prober = asyncio.create_task(_secret_store_probe_forever())
     servers: list[_EmbeddedServer] = []
     if settings.internal_api_enabled:
         servers.append(
@@ -143,9 +175,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         reaper.cancel()
         dispatcher.cancel()
         syncer.cancel()
+        prober.cancel()
         for server in servers:
             server.should_exit = True  # graceful: in-flight worker calls finish
-        await asyncio.gather(reaper, dispatcher, syncer, *serving, return_exceptions=True)
+        await asyncio.gather(reaper, dispatcher, syncer, prober, *serving, return_exceptions=True)
 
 
 app = FastAPI(title="AnsiDeck API", version="0.1.0", lifespan=lifespan)
@@ -190,6 +223,7 @@ app.include_router(
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(audit_router.router, prefix="/api/audit", tags=["audit"])
 app.include_router(workers.router, prefix="/api/workers", tags=["workers"])
+app.include_router(secret_store_router.router, prefix="/api/secret-store", tags=["secret-store"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
 app.include_router(
     notifications.project_router,

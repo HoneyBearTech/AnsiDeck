@@ -31,8 +31,22 @@ jobs:
           --health-interval 2s
           --health-timeout 5s
           --health-retries 30
+      # A dev-mode OpenBao for the secret store tests (tests/test_secret_store_openbao.py).
+      openbao:
+        image: openbao/openbao:2.7.1@sha256:6d2b93856e3fcf7b18ad855a0b51eaba474dc8b79cf554379ea32034797d2acf
+        env:
+          BAO_DEV_ROOT_TOKEN_ID: ci-openbao-root
+        ports:
+          - 8200:8200
+        options: >-
+          --health-cmd "BAO_ADDR=http://127.0.0.1:8200 bao status"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     env:
       TEST_DATABASE_URL: postgresql+psycopg://ansideck:ansideck@localhost:5432/ansideck_test
+      TEST_OPENBAO_ADDR: http://127.0.0.1:8200
+      TEST_OPENBAO_ROOT_TOKEN: ci-openbao-root
     defaults:
       run:
         working-directory: backend
