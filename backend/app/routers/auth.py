@@ -90,9 +90,12 @@ def _raise_if_throttled(ip: str, username: str, message: str) -> None:
         )
 
 
-def _record_login_failure(ip: str, username: str) -> None:
+def _record_login_failure(ip: str, username: str) -> bool:
+    """Counts a failed attempt; True if it locked the user name or the address out (the
+    audit event says so, and app.notifications reports it as a login attack)."""
     user_login_throttle.record_failure(_login_key(ip, username))
     ip_login_throttle.record_failure(ip)
+    return user_login_throttle.blocked(_login_key(ip, username)) or ip_login_throttle.blocked(ip)
 
 
 def _check_current_password(
@@ -106,14 +109,17 @@ def _check_current_password(
         ip, user.username, "Too many failed password attempts. Try again in a few minutes."
     )
     if not verify_password(password, user.password_hash):
-        _record_login_failure(ip, user.username)
+        locked_out = _record_login_failure(ip, user.username)
         audit.record(
             db,
             action,
             outcome="failure",
             actor=user,
             ip=ip,
-            detail={"reason": "wrong current password"},
+            detail={
+                "reason": "wrong current password",
+                **({"locked_out": True} if locked_out else {}),
+            },
         )
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Current password is incorrect")
     user_login_throttle.reset(_login_key(ip, user.username))
@@ -136,10 +142,19 @@ def _check_second_factor(
     db.refresh(user, with_for_update=True)
     method = totp.use_second_factor(user, code=code, recovery_code=recovery_code)
     if method is None:
-        _record_login_failure(ip, user.username)
+        locked_out = _record_login_failure(ip, user.username)
         totp_user_throttle.record_failure(user.id)
+        locked_out = locked_out or totp_user_throttle.blocked(user.id)
         audit.record(
-            db, action, outcome="failure", actor=user, ip=ip, detail={"reason": "bad second factor"}
+            db,
+            action,
+            outcome="failure",
+            actor=user,
+            ip=ip,
+            detail={
+                "reason": "bad second factor",
+                **({"locked_out": True} if locked_out else {}),
+            },
         )
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "That code is not valid")
     return method
@@ -174,7 +189,7 @@ def login(
         payload.password, user.password_hash if user else _get_dummy_hash()
     )
     if user is None or not password_ok or not user.is_active:
-        _record_login_failure(ip, payload.username)
+        locked_out = _record_login_failure(ip, payload.username)
         # Only real usernames are recorded verbatim, so attackers can't fill the
         # audit table with arbitrary strings; writes are bounded by the IP throttle.
         audit.record(
@@ -183,7 +198,10 @@ def login(
             outcome="failure",
             actor_username=user.username if user else "(unknown user)",
             ip=ip,
-            detail={"reason": "inactive" if user and password_ok else "bad credentials"},
+            detail={
+                "reason": "inactive" if user and password_ok else "bad credentials",
+                **({"locked_out": True} if locked_out else {}),
+            },
         )
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid username or password")
 

@@ -291,6 +291,7 @@ export interface NotificationEvent {
   description: string;
   // Available to project channels (global channels can take every event).
   project: boolean;
+  group: string; // Runs, Operations, Security
 }
 
 export interface NotificationCatalog {

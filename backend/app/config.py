@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     # non-public addresses are refused unless their host name, address or CIDR is listed here
     # (comma-separated), e.g. "ntfy.lan,192.168.1.0/24" for a self-hosted service.
     notify_allowed_private_hosts: str = ""
+    # Ops notifications: a worker is reported offline after this long without a heartbeat
+    # (it shows offline after 30 s; this rides out restarts), and the queue as stuck once a
+    # run has waited this long for a worker or a galaxy install.
+    notify_worker_offline_seconds: int = Field(120, ge=31)
+    notify_queue_stuck_minutes: int = Field(10, ge=1)
     # Email notifications go through this one SMTP server; email channels hold recipients
     # only. Unset: no email channels.
     smtp_host: str = ""

@@ -144,6 +144,19 @@ webhook), a generic webhook, email, Pushbullet or Pushover. Each channel picks i
   tasks and their hosts.
 - **Run recovered**: a playbook succeeded on an inventory after its previous run there failed.
 
+Global channels can also take operations and security events:
+
+- **Worker offline**: a worker sent no heartbeat for `NOTIFY_WORKER_OFFLINE_SECONDS` (120 by
+  default), and again when it is back online.
+- **Worker not isolated**: a worker runs playbooks without per-slot users (once per worker).
+- **Queue stuck**: a run has waited `NOTIFY_QUEUE_STUCK_MINUTES` (10 by default) for a worker or
+  a Galaxy install, and again when the queue moves. Waiting behind another run on the same
+  inventory never counts.
+- **Login attack**: failed sign-ins locked out an address or user, or something used a wrong
+  `WORKER_TOKEN` (at most once per address and kind every 15 minutes).
+- **Admin change**: a global admin was created or promoted, a user's two-factor login was reset
+  or turned off, or a global admin signed in with SSO.
+
 Project admins manage their project's channels. Global admins manage global channels, which
 get run events from every project. Use **Send test** to check a channel, and its **History**
 to see what was sent; failed deliveries are retried for up to about 1 h 45 min.

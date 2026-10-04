@@ -461,3 +461,15 @@ class NotificationDelivery(Base):
     last_error: Mapped[str | None] = mapped_column(String(300), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+
+class NotificationAlert(Base):
+    """An ops alert that is currently raised (a worker offline, the queue stuck): its row makes
+    the alert fire once per episode and its deletion send exactly one all-clear, across
+    restarts."""
+
+    __tablename__ = "notification_alerts"
+
+    key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    raised_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    data: Mapped[dict | None] = mapped_column(JSON, default=None)

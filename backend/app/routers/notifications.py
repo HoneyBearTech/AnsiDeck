@@ -301,7 +301,13 @@ def _deliveries(db: Session, project_id: int | None, channel_id: int) -> list[di
 def catalog(_user: User = Depends(_any_manager)) -> dict:
     return {
         "events": [
-            {"name": name, "label": i.label, "description": i.description, "project": i.project}
+            {
+                "name": name,
+                "label": i.label,
+                "description": i.description,
+                "project": i.project,
+                "group": i.group,
+            }
             for name, i in EVENTS.items()
         ],
         "kinds": list(KINDS),

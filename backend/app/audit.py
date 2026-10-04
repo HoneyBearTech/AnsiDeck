@@ -64,10 +64,41 @@ def record(
                 detail=_clean_detail(detail),
             )
         )
+        _notify(db, action, outcome, actor, actor_username, target_name, ip, detail)
         db.commit()
     except Exception:  # noqa: BLE001
         db.rollback()
         logger.exception("failed to write audit event %s", action)
+
+
+def _notify(
+    db: Session,
+    action: str,
+    outcome: str,
+    actor: User | None,
+    actor_username: str | None,
+    target_name: str | None,
+    ip: str | None,
+    detail: dict[str, Any] | None,
+) -> None:
+    """Security notifications (login attacks, admin changes) read off the audit trail, in a
+    savepoint: a notification problem must never lose the audit event."""
+    from app.notifications.security import from_audit  # imports app.notifications.events
+
+    try:
+        with db.begin_nested():
+            from_audit(
+                db,
+                action,
+                outcome=outcome,
+                actor=actor,
+                actor_username=actor_username,
+                target_name=target_name,
+                ip=ip,
+                detail=detail,
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception("could not queue notifications for audit event %s", action)
 
 
 def prune(db: Session, retention_days: int) -> int:
