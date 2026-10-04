@@ -71,13 +71,19 @@ jobs:
             [ "$(docker inspect -f '{{.State.Health.Status}}' smoke-db)" = healthy ] && break
             sleep 2
           done
+          # In a file and with a named /data volume: the secret store step restarts it.
+          cat > "$RUNNER_TEMP/smoke.env" <<'ENV'
+          AUTH_SECRET_KEY=ci-test
+          ADMIN_PASSWORD=ci-test
+          INTERNAL_API_HOST=0.0.0.0
+          WORKER_TOKEN=ci-test-worker-token-0123456789abcdef
+          METRICS_HOST=0.0.0.0
+          METRICS_TOKEN=ci-test-metrics-token-0123456789abcdef
+          CREDENTIAL_ENCRYPTION_KEY=8JQKBeSl5G-WvrMG3wRXlVUrowrX3qAkZq0Nycsd9qc=
+          DATABASE_URL=postgresql+psycopg://ansideck:ci-test@smoke-db:5432/ansideck
+          ENV
           docker run -d --name smoke --network smoke-net -p 8000:8000 -p 127.0.0.1:8002:8002 \
-            -e AUTH_SECRET_KEY=ci-test -e ADMIN_PASSWORD=ci-test \
-            -e INTERNAL_API_HOST=0.0.0.0 -e WORKER_TOKEN=ci-test-worker-token-0123456789abcdef \
-            -e METRICS_HOST=0.0.0.0 -e METRICS_TOKEN=ci-test-metrics-token-0123456789abcdef \
-            -e CREDENTIAL_ENCRYPTION_KEY=8JQKBeSl5G-WvrMG3wRXlVUrowrX3qAkZq0Nycsd9qc= \
-            -e DATABASE_URL=postgresql+psycopg://ansideck:ci-test@smoke-db:5432/ansideck \
-            ansideck-backend:runtime
+            --env-file "$RUNNER_TEMP/smoke.env" -v smoke-data:/data ansideck-backend:runtime
           for i in $(seq 1 15); do
             curl -sf http://localhost:8000/api/health && break
             sleep 2
@@ -214,6 +220,55 @@ jobs:
               --expect-data "Finished runs by status" --expect-data Workers \
               --expect-data "Sign-ins by outcome and method" \
             || { docker logs smoke-grafana 2>&1 | tail -40; exit 1; }
+
+      - name: Smoke test the secret store with the backend runtime image
+        if: matrix.service == 'backend' && matrix.target == 'runtime'
+        # An OpenBao dev server set up by backend/scripts/openbao_dev_setup.py (as the compose
+        # openbao profile is; piped in, it isn't part of the image) keeps the smoke key. A run
+        # uses it and AnsiDeck stores it nowhere; with the store down the next run fails with
+        # its reason and raises the secrets.unavailable alert.
+        run: |
+          docker run -d --name smoke-bao --network smoke-net \
+            -e BAO_DEV_ROOT_TOKEN_ID=ci-smoke-root -e BAO_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
+            -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN=ci-smoke-root \
+            openbao/openbao:2.7.1@sha256:6d2b93856e3fcf7b18ad855a0b51eaba474dc8b79cf554379ea32034797d2acf
+          for i in $(seq 1 15); do
+            docker exec smoke-bao bao status > /dev/null && break
+            sleep 2
+          done
+          docker exec -i -e OPENBAO_ROOT_TOKEN=ci-smoke-root smoke python - --url http://smoke-bao:8200 \
+            < backend/scripts/openbao_dev_setup.py
+          docker exec -i smoke-bao bao kv put -mount=secret ansideck/1/smoke/ssh private_key=- \
+            < "$RUNNER_TEMP/smoke_key"
+          cat > "$RUNNER_TEMP/store.env" <<'ENV'
+          SECRETS_STORE_URL=http://smoke-bao:8200
+          SECRETS_STORE_AUTH=approle
+          SECRETS_STORE_ROLE_ID=ansideck-dev
+          SECRETS_STORE_SECRET_ID_FILE=/data/openbao/secret_id
+          SECRETS_STORE_PROJECT_POLICY=ansideck-project-{project_id}
+          ENV
+          docker rm -f smoke
+          docker run -d --name smoke --network smoke-net -p 8000:8000 -p 127.0.0.1:8002:8002 \
+            --env-file "$RUNNER_TEMP/smoke.env" --env-file "$RUNNER_TEMP/store.env" \
+            -v smoke-data:/data ansideck-backend:runtime
+          for i in $(seq 1 15); do
+            curl -sf http://localhost:8000/api/health > /dev/null && break
+            sleep 2
+          done
+          python3 backend/scripts/smoke_run.py http://localhost:8000 ci-test --store-path smoke/ssh \
+            || { docker logs smoke-worker; docker logs smoke; exit 1; }
+          marker=$(sed -n 2p "$RUNNER_TEMP/smoke_key")
+          if { docker exec smoke-db pg_dump -U ansideck ansideck; docker logs smoke 2>&1;
+               docker logs smoke-worker 2>&1; } | grep -qF -- "$marker"; then
+            echo "the stored key is in the database or the logs"; exit 1
+          fi
+          docker stop smoke-bao
+          python3 backend/scripts/smoke_run.py http://localhost:8000 ci-test --store-path smoke/ssh \
+            --expect-reason "from OpenBao: the secret store can't be reached" \
+            || { docker logs smoke; exit 1; }
+          alert=$(docker exec smoke-db psql -U ansideck -d ansideck -tAc \
+            "SELECT key FROM notification_alerts WHERE key = 'secrets.unavailable'")
+          [ "$alert" = "secrets.unavailable" ] || { echo "no secrets.unavailable alert"; exit 1; }
 
       - name: Smoke test frontend runtime image
         if: matrix.service == 'frontend' && matrix.target == 'runtime'

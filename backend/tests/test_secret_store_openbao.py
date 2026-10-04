@@ -147,6 +147,39 @@ def test_a_deleted_secret_is_not_found_and_a_revoked_token_logs_in_again(store) 
     assert error.value.kind == "not_found"
 
 
+def test_with_project_policies_a_revoked_or_outdated_token_logs_in_again(
+    store, monkeypatch
+) -> None:
+    monkeypatch.setenv("SECRETS_STORE_PROJECT_POLICY", "ansideck-test-p{project_id}")
+    get_settings.cache_clear()
+    put_secret(1, "relogin", {"k": "one"})
+    assert secret_store.read_secret(1, "relogin", "k") == "one"
+    with _admin() as bao:
+        token = secret_store._client._token.value
+        assert bao.post("/v1/auth/token/revoke", json={"token": token}).status_code == 204
+    assert secret_store.read_secret(1, "relogin", "k") == "one"  # the child token needs a login
+
+    # A project whose policy the role only gets after AnsiDeck logged in (the setup re-run).
+    put_secret(4, "relogin", {"k": "four"})
+    role = "/v1/auth/approle/role/ansideck-test"
+    with _admin() as bao:
+        policies = bao.get(role).json()["data"]["token_policies"]
+        rules = f'path "secret/data/{PREFIX}/4/*" {{ capabilities = ["read"] }}\n'
+        assert (
+            bao.put("/v1/sys/policies/acl/ansideck-test-p4", json={"policy": rules}).status_code
+            == 204
+        )
+        assert (
+            bao.post(role, json={"token_policies": [*policies, "ansideck-test-p4"]}).status_code
+            == 204
+        )
+    try:
+        assert secret_store.read_secret(4, "relogin", "k") == "four"
+    finally:
+        with _admin() as bao:
+            bao.post(role, json={"token_policies": policies})
+
+
 def _sentinel_rows(sentinel: str) -> list[str]:
     hits = []
     with get_engine().connect() as conn:

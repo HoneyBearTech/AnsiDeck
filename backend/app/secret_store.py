@@ -326,15 +326,20 @@ class _Client:
             *segments,
         )
         for attempt in range(2):
+            relogin = attempt == 0 and settings.secrets_store_auth == "approle"
             token = self.token(deadline)
             if settings.secrets_store_project_policy:
-                token = self._child_token(token, project_id, deadline)
+                try:
+                    token = self._child_token(token, project_id, deadline)
+                except SecretStoreError as exc:
+                    # A revoked token (403), or one from before the role was given this
+                    # project's policy (400): log in once more, as below.
+                    if relogin and exc.kind == "denied":
+                        self.forget_token()
+                        continue
+                    raise
             response = self._request("GET", api_path, deadline, token=token)
-            if (
-                response.status_code == 403
-                and attempt == 0
-                and settings.secrets_store_auth == "approle"
-            ):
+            if response.status_code == 403 and relogin:
                 # A revoked or expired token looks like a denial: log in once more.
                 self.forget_token()
                 continue

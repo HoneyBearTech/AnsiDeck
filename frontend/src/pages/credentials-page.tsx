@@ -13,14 +13,31 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  SecretCheckButton,
+  SecretLocation,
+  SecretSourcePicker,
+  type SourceMode,
+} from "@/components/secret-source";
 import { useAuth } from "@/context/auth-context";
-import { api, ApiError, type Credential } from "@/lib/api";
+import { api, ApiError, type Credential, type SecretStoreInfo } from "@/lib/api";
+import { useSecretStoreInfo } from "@/lib/secret-store";
 
-function CreateCredentialDialog({ onCreated }: { onCreated: () => void }) {
+function CreateCredentialDialog({
+  onCreated,
+  store,
+}: {
+  onCreated: () => void;
+  store: SecretStoreInfo | null;
+}) {
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [privateKey, setPrivateKey] = React.useState("");
+  const [mode, setMode] = React.useState<SourceMode>("ansideck");
+  const [storePath, setStorePath] = React.useState("");
+  const [storeKey, setStoreKey] = React.useState("private_key");
+  const external = mode === "external" && !!store?.enabled;
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
 
@@ -34,10 +51,17 @@ function CreateCredentialDialog({ onCreated }: { onCreated: () => void }) {
     setError(null);
     setSaving(true);
     try {
-      await api.createCredential(name, privateKey, description || undefined);
+      await api.createCredential(
+        name,
+        external
+          ? { kind: "external", path: storePath.trim(), key: storeKey.trim() }
+          : { kind: "ansideck", value: privateKey },
+        description || undefined,
+      );
       setName("");
       setDescription("");
       setPrivateKey("");
+      setStorePath("");
       setOpen(false);
       onCreated();
     } catch (err) {
@@ -69,33 +93,50 @@ function CreateCredentialDialog({ onCreated }: { onCreated: () => void }) {
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="credential-file">Upload private key file</Label>
-            <input
-              id="credential-file"
-              type="file"
-              onChange={handleFileUpload}
-              className="text-sm text-muted-foreground"
-            />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="credential-key">Private key (PEM)</Label>
-            <Textarea
-              id="credential-key"
-              value={privateKey}
-              onChange={(e) => setPrivateKey(e.target.value)}
-              className="min-h-40 font-mono"
-              spellCheck={false}
-              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
-            />
-            <p className="text-xs text-muted-foreground">
-              Passphrase-protected keys aren't supported yet — use an unencrypted key.
-            </p>
-          </div>
+          <SecretSourcePicker
+            info={store}
+            mode={mode}
+            onModeChange={setMode}
+            path={storePath}
+            onPathChange={setStorePath}
+            secretKey={storeKey}
+            onSecretKeyChange={setStoreKey}
+            idPrefix="credential"
+          />
+          {!external && (
+            <>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="credential-file">Upload private key file</Label>
+                <input
+                  id="credential-file"
+                  type="file"
+                  onChange={handleFileUpload}
+                  className="text-sm text-muted-foreground"
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="credential-key">Private key (PEM)</Label>
+                <Textarea
+                  id="credential-key"
+                  value={privateKey}
+                  onChange={(e) => setPrivateKey(e.target.value)}
+                  className="min-h-40 font-mono"
+                  spellCheck={false}
+                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Passphrase-protected keys aren't supported yet — use an unencrypted key.
+                </p>
+              </div>
+            </>
+          )}
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
         <DialogFooter>
-          <Button onClick={handleCreate} disabled={saving || !name || !privateKey}>
+          <Button
+            onClick={handleCreate}
+            disabled={saving || !name || (external ? !storePath.trim() || !storeKey.trim() : !privateKey)}
+          >
             {saving ? "Saving…" : "Create"}
           </Button>
         </DialogFooter>
@@ -107,6 +148,7 @@ function CreateCredentialDialog({ onCreated }: { onCreated: () => void }) {
 export function CredentialsPage() {
   const { can } = useAuth();
   const canManage = can("secrets:manage");
+  const store = useSecretStoreInfo();
   const [credentials, setCredentials] = React.useState<Credential[]>([]);
   const [loading, setLoading] = React.useState(true);
 
@@ -130,7 +172,7 @@ export function CredentialsPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Credentials</h1>
-        {canManage && <CreateCredentialDialog onCreated={refresh} />}
+        {canManage && <CreateCredentialDialog onCreated={refresh} store={store} />}
       </div>
 
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -147,11 +189,17 @@ export function CredentialsPage() {
                 {credential.description && (
                   <span className="text-xs text-muted-foreground">{credential.description}</span>
                 )}
+                <SecretLocation row={credential} label={store?.label} />
               </div>
               {canManage && (
-                <Button variant="outline" size="sm" onClick={() => handleDelete(credential.id)}>
-                  Delete
-                </Button>
+                <div className="flex items-center gap-2">
+                  {credential.store === "external" && (
+                    <SecretCheckButton check={() => api.checkCredential(credential.id)} />
+                  )}
+                  <Button variant="outline" size="sm" onClick={() => handleDelete(credential.id)}>
+                    Delete
+                  </Button>
+                </div>
               )}
             </CardContent>
           </Card>

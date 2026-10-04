@@ -1,5 +1,11 @@
 import * as React from "react";
 
+import {
+  SecretCheckButton,
+  SecretLocation,
+  SecretSourcePicker,
+  type SourceMode,
+} from "@/components/secret-source";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -15,13 +21,24 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/auth-context";
-import { api, ApiError, type VaultEncryptResult, type VaultPassword } from "@/lib/api";
+import { api, ApiError, type SecretStoreInfo, type VaultEncryptResult, type VaultPassword } from "@/lib/api";
+import { useSecretStoreInfo } from "@/lib/secret-store";
 
-function CreateVaultPasswordDialog({ onCreated }: { onCreated: () => void }) {
+function CreateVaultPasswordDialog({
+  onCreated,
+  store,
+}: {
+  onCreated: () => void;
+  store: SecretStoreInfo | null;
+}) {
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [mode, setMode] = React.useState<SourceMode>("ansideck");
+  const [storePath, setStorePath] = React.useState("");
+  const [storeKey, setStoreKey] = React.useState("password");
+  const external = mode === "external" && !!store?.enabled;
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
 
@@ -29,10 +46,17 @@ function CreateVaultPasswordDialog({ onCreated }: { onCreated: () => void }) {
     setError(null);
     setSaving(true);
     try {
-      await api.createVaultPassword(name, password, description || undefined);
+      await api.createVaultPassword(
+        name,
+        external
+          ? { kind: "external", path: storePath.trim(), key: storeKey.trim() }
+          : { kind: "ansideck", value: password },
+        description || undefined,
+      );
       setName("");
       setDescription("");
       setPassword("");
+      setStorePath("");
       setOpen(false);
       onCreated();
     } catch (err) {
@@ -64,24 +88,39 @@ function CreateVaultPasswordDialog({ onCreated }: { onCreated: () => void }) {
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="vault-password">Vault password</Label>
-            <Input
-              id="vault-password"
-              type="password"
-              autoComplete="off"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Stored encrypted and never shown again. It can only be used to run playbooks and to
-              encrypt/decrypt values here.
-            </p>
-          </div>
+          <SecretSourcePicker
+            info={store}
+            mode={mode}
+            onModeChange={setMode}
+            path={storePath}
+            onPathChange={setStorePath}
+            secretKey={storeKey}
+            onSecretKeyChange={setStoreKey}
+            idPrefix="vault"
+          />
+          {!external && (
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="vault-password">Vault password</Label>
+              <Input
+                id="vault-password"
+                type="password"
+                autoComplete="off"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Stored encrypted and never shown again. It can only be used to run playbooks and to
+                encrypt/decrypt values here.
+              </p>
+            </div>
+          )}
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
         <DialogFooter>
-          <Button onClick={handleCreate} disabled={saving || !name || !password}>
+          <Button
+            onClick={handleCreate}
+            disabled={saving || !name || (external ? !storePath.trim() || !storeKey.trim() : !password)}
+          >
             {saving ? "Saving…" : "Create"}
           </Button>
         </DialogFooter>
@@ -292,6 +331,7 @@ export function VaultPage() {
   const canManage = can("secrets:manage");
   const canEncrypt = can("vault:encrypt");
   const canDecrypt = can("vault:decrypt");
+  const store = useSecretStoreInfo();
   const [vaultPasswords, setVaultPasswords] = React.useState<VaultPassword[]>([]);
   const [loading, setLoading] = React.useState(true);
 
@@ -315,7 +355,7 @@ export function VaultPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Vault</h1>
-        {canManage && <CreateVaultPasswordDialog onCreated={refresh} />}
+        {canManage && <CreateVaultPasswordDialog onCreated={refresh} store={store} />}
       </div>
 
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -334,11 +374,17 @@ export function VaultPage() {
                 {vaultPassword.description && (
                   <span className="text-xs text-muted-foreground">{vaultPassword.description}</span>
                 )}
+                <SecretLocation row={vaultPassword} label={store?.label} />
               </div>
               {canManage && (
-                <Button variant="outline" size="sm" onClick={() => handleDelete(vaultPassword.id)}>
-                  Delete
-                </Button>
+                <div className="flex items-center gap-2">
+                  {vaultPassword.store === "external" && (
+                    <SecretCheckButton check={() => api.checkVaultPassword(vaultPassword.id)} />
+                  )}
+                  <Button variant="outline" size="sm" onClick={() => handleDelete(vaultPassword.id)}>
+                    Delete
+                  </Button>
+                </div>
               )}
             </CardContent>
           </Card>

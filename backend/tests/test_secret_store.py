@@ -39,6 +39,7 @@ def store(monkeypatch, tmp_path):
         "requests": [],
         "secrets": {"/v1/secret/data/ansideck/7/web/ssh": {"private_key": VALUE, "n": 5}},
         "status": {},
+        "once": {},  # like status, for one request only
         "token_file": token_file,
         "tmp": tmp_path,
     }
@@ -46,6 +47,9 @@ def store(monkeypatch, tmp_path):
     def handler(request: httpx.Request) -> httpx.Response:
         state["requests"].append(request)
         path = request.url.raw_path.decode()
+        if path in state["once"]:
+            code, body = state["once"].pop(path)
+            return httpx.Response(code, json=body)
         if path in state["status"]:
             code, body = state["status"][path]
             return httpx.Response(code, json=body)
@@ -233,6 +237,43 @@ def test_the_project_policy_reads_through_a_one_use_child_token(store, monkeypat
         "display_name": "ansideck-project-7",
     }
     assert store["requests"][-1].headers["X-Vault-Token"] == "child-token"
+
+
+@pytest.mark.parametrize(
+    ("code", "why"),
+    [(403, "a revoked token"), (400, "a token from before the role got this project's policy")],
+)
+def test_approle_logs_in_again_once_when_a_child_token_is_refused(
+    store, monkeypatch, code, why
+) -> None:
+    _approle(monkeypatch, store)
+    monkeypatch.setenv("SECRETS_STORE_PROJECT_POLICY", "ansideck-project-{project_id}")
+    get_settings.cache_clear()
+    secret_store.read_secret(7, "web/ssh", "private_key")
+    store["once"]["/v1/auth/token/create"] = (code, {"errors": [why]})
+    assert secret_store.read_secret(7, "web/ssh", "private_key") == VALUE
+    assert store["logins"] == 2
+    assert store["requests"][-1].headers["X-Vault-Token"] == "child-token"
+
+
+def test_a_child_token_refused_after_a_fresh_login_stays_denied(store, monkeypatch) -> None:
+    _approle(monkeypatch, store)
+    monkeypatch.setenv("SECRETS_STORE_PROJECT_POLICY", "ansideck-project-{project_id}")
+    get_settings.cache_clear()
+    store["status"]["/v1/auth/token/create"] = (400, {"errors": ["policies not a subset"]})
+    with pytest.raises(SecretStoreError, match="'ansideck-project-7' is not available") as error:
+        secret_store.read_secret(7, "web/ssh", "private_key")
+    assert error.value.kind == "denied" and store["logins"] == 2
+
+
+def test_a_token_file_does_not_retry_a_refused_child_token(store, monkeypatch) -> None:
+    monkeypatch.setenv("SECRETS_STORE_PROJECT_POLICY", "ansideck-project-{project_id}")
+    get_settings.cache_clear()
+    store["status"]["/v1/auth/token/create"] = (400, {"errors": ["policies not a subset"]})
+    with pytest.raises(SecretStoreError):
+        secret_store.read_secret(7, "web/ssh", "private_key")
+    creates = [r for r in store["requests"] if r.url.path == "/v1/auth/token/create"]
+    assert len(creates) == 1
 
 
 def test_the_namespace_header_is_sent(store, monkeypatch) -> None:
