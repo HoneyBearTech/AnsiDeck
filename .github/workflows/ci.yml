@@ -44,6 +44,9 @@ jobs:
         with:
           version: "latest"
           enable-cache: true
+          # The images' Python line; 3.12.11+ for tarfile's fixed "data" filter (the runner's
+          # own 3.12 is older, so uv fetches a current 3.12).
+          python-version: ">=3.12.11,<3.13"
       - run: uv lock --check
       - run: uv sync --all-groups
       - run: uv run ruff check .

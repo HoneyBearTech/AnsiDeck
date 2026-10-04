@@ -48,8 +48,8 @@ jobs:
         with:
           version: "latest"
           enable-cache: true
-          # Atheris ships wheels for CPython 3.12-3.14 only.
-          python-version: "3.12"
+          # Atheris ships wheels for CPython 3.12-3.14 only; the backend needs 3.12.11+.
+          python-version: ">=3.12.11,<3.13"
       - run: uv sync --frozen --group fuzz
       - name: Fuzz
         env:
