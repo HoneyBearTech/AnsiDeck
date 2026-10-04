@@ -6,11 +6,12 @@ import { useAuth } from "@/context/auth-context";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, type PlaybookDetail } from "@/lib/api";
 
 export function PlaybookDetailPage() {
   const { can } = useAuth();
-  const canWrite = can("content:write");
+  const [synced, setSynced] = React.useState<PlaybookDetail | null>(null);
+  const canWrite = can("content:write") && synced === null;
   const params = useParams<{ id: string }>();
   const navigate = useNavigate();
   const isNew = params.id === undefined;
@@ -27,6 +28,7 @@ export function PlaybookDetailPage() {
     api.getPlaybook(playbookId).then((playbook) => {
       setName(playbook.name);
       setContent(playbook.content);
+      setSynced(playbook.source_id !== null ? playbook : null);
       setLoading(false);
     });
   }, [playbookId]);
@@ -65,6 +67,21 @@ export function PlaybookDetailPage() {
       <h1 className="text-xl font-semibold">
         {isNew ? "New Playbook" : canWrite ? "Edit Playbook" : "Playbook"}
       </h1>
+
+      {synced && (
+        <p className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+          Synced from the git source <span className="font-medium text-foreground">{synced.source_name}</span>{" "}
+          (<span className="font-mono">{synced.repo_path}</span>
+          {synced.commit && (
+            <>
+              {" "}
+              at <span className="font-mono">{synced.commit.slice(0, 8)}</span>
+            </>
+          )}
+          ). It is read-only here: change it in the repository.
+          {synced.missing_at && " It has been removed from the repository, so it can no longer run."}
+        </p>
+      )}
 
       <div className="flex flex-col gap-2">
         <Label htmlFor="playbook-name">Name</Label>
