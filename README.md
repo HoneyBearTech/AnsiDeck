@@ -218,7 +218,7 @@ Give Grafana a database role of its own. AnsiDeck never creates roles; create on
 for example with `docker compose exec postgres psql -U ansideck ansideck`:
 
 ```sql
-CREATE ROLE grafana_ro LOGIN PASSWORD '<a long random password>' NOINHERIT CONNECTION LIMIT 5;
+CREATE ROLE grafana_ro LOGIN PASSWORD '<a long random password>' NOINHERIT CONNECTION LIMIT 10;
 ALTER ROLE grafana_ro SET default_transaction_read_only = on;
 ALTER ROLE grafana_ro SET statement_timeout = '30s';
 ALTER ROLE grafana_ro SET search_path = analytics;
@@ -241,7 +241,14 @@ from the SQL above. Run `analytics-check grafana_ro` again after upgrades or rol
 over a private network (the dev compose stack publishes Postgres on `127.0.0.1:5433` only, which a Grafana
 container on the same machine reaches as `host.docker.internal:5433`). Anyone who can edit dashboards or use
 Explore in Grafana can read everything in these views, so give that access only to people you would let read
-the audit log.
+the audit log. In Grafana, set the data source's **Max open connections** below the role's `CONNECTION LIMIT`
+(Grafana's default allows 100).
+
+### Dashboards
+
+[grafana/](grafana/README.md) has three importable dashboards (overview & runs; execution, queue & workers;
+security & access) that use both data sources, provisioning examples for the data sources and dashboards, and
+optional Grafana alert rules for trends that AnsiDeck's own notifications don't cover.
 
 ## Triggering runs from CI
 

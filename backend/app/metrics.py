@@ -106,6 +106,17 @@ NOTIFICATION_DELIVERIES = Counter(
     registry=REGISTRY,
 )
 
+# A labelled counter only exists from its first increment, and Prometheus' increase() can't
+# see that first step: start the ones security dashboards and alerts watch at zero.
+for _action, _outcome in (
+    ("auth.login", "failure"),
+    ("apikey.auth", "failure"),
+    ("worker.auth_failed", "failure"),
+    ("metrics.auth_failed", "failure"),
+    ("permission.denied", "denied"),
+):
+    AUDIT_EVENTS.labels(_action, _outcome)
+
 _METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
 _ACTION = re.compile(r"^[a-z_]{1,30}\.[a-z_]{1,40}$")
 _OUTCOMES = frozenset({"success", "failure", "denied"})
@@ -134,6 +145,17 @@ def _observe_committed(session: Session) -> None:
 def _forget_uncommitted(session: Session, transaction: SessionTransaction) -> None:
     if transaction.parent is None:  # the outermost transaction (savepoints don't count)
         session.info.pop(_PENDING, None)
+
+
+def project_series(project_ids) -> None:
+    """Starts every project's run counters at zero (called with the projects at each scrape),
+    so the first run of a project or status isn't lost to increase()."""
+    for project_id in map(str, project_ids):
+        for status in ("success", "failed", "cancelled", "timed_out"):
+            RUNS_FINISHED.labels(project_id, status)
+        for trigger in ("user", "api_key"):
+            RUNS_QUEUED.labels(project_id, trigger)
+        RUN_DURATION.labels(project_id)
 
 
 def run_queued(project_id: int, via_api_key: bool) -> None:
