@@ -11,6 +11,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { FilePicker } from "@/components/ui/file-picker";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -112,9 +113,7 @@ function CreateCredentialDialog({
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
 
-  async function handleFileUpload(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  async function handleFile(file: File) {
     setPrivateKey(await file.text());
   }
 
@@ -217,15 +216,7 @@ function CreateCredentialDialog({
           {kind === "env" && !external && <EnvRows rows={envRows} onChange={setEnvRows} />}
           {kind === "ssh" && !external && (
             <>
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="credential-file">Upload private key file</Label>
-                <input
-                  id="credential-file"
-                  type="file"
-                  onChange={handleFileUpload}
-                  className="text-sm text-muted-foreground"
-                />
-              </div>
+              <FilePicker id="credential-file" label="Upload private key file" onFile={handleFile} />
               <div className="flex flex-col gap-2">
                 <Label htmlFor="credential-key">Private key (PEM)</Label>
                 <Textarea

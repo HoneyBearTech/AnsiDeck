@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { reply } from "@/test/fake-api";
 import { credential, inventory, inventorySource, refresh, targets, viewerUser } from "@/test/fixtures";
 import { choose, renderApp } from "@/test/render";
+import { editorText } from "@/test/editor";
 
 const SNAPSHOT = {
   id: 1,
@@ -237,7 +238,7 @@ describe("dynamic inventory sources", () => {
     let dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Name"), "gen");
     await user.click(dialog.getByRole("button", { name: "generator" }));
-    expect((dialog.getByLabelText("Plugin config (YAML)") as HTMLTextAreaElement).value).toContain("ansible.builtin.generator");
+    expect(editorText(dialog.getByLabelText("Plugin config (YAML)"))).toContain("ansible.builtin.generator");
     await choose(user, dialog.getByRole("combobox", { name: "Credential" }), "netbox-token (NETBOX_TOKEN)");
     api.set({ "GET /inventories/:id/sources": [inventorySource({ name: "gen", credential_id: 2, credential_name: "netbox-token" })] });
     await user.click(dialog.getByRole("button", { name: "Save" }));

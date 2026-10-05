@@ -6,6 +6,7 @@ import type {
   InventoryRefresh,
   InventorySource,
   InventoryTargets,
+  LintJob,
   NotificationCatalog,
   NotificationChannel,
   PlaybookDetail,
@@ -221,6 +222,41 @@ export function run(overrides: Partial<Run> = {}): Run {
     ...overrides,
   };
 }
+
+export function lintJob(overrides: Partial<LintJob> = {}): LintJob {
+  return {
+    id: 11,
+    status: "success",
+    target: "playbook.yml",
+    playbook_id: 1,
+    commit: null,
+    queued_at: NOW,
+    started_at: NOW,
+    finished_at: NOW,
+    wait_reason: null,
+    error: null,
+    findings: [],
+    total: 0,
+    truncated: false,
+    external: 0,
+    repo_config: false,
+    scrubbed: false,
+    ansible_lint_version: "26.9.0",
+    ...overrides,
+  };
+}
+
+export const FQCN_FINDING = {
+  rule: "fqcn[action-core]",
+  level: "error" as const,
+  message: "Use FQCN for builtin module actions (shell).",
+  details: "Use `ansible.builtin.shell` or `ansible.legacy.shell` instead.",
+  path: "playbook.yml",
+  line: 2,
+  column: 3,
+  url: "https://docs.ansible.com/projects/lint/rules/fqcn/",
+  in_target: true,
+};
 
 export function runTemplate(overrides: Partial<RunTemplate> = {}): RunTemplate {
   return {

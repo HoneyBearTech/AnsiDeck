@@ -87,7 +87,7 @@ describe("playbook editor", () => {
     });
     expect(await screen.findByRole("heading", { name: "Playbook" })).toBeInTheDocument();
     expect(screen.getByText(/removed from the repository/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Content")).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("Content")).toHaveAttribute("aria-readonly", "true");
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
 });

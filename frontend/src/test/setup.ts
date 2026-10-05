@@ -18,6 +18,11 @@ Element.prototype.hasPointerCapture ??= () => false;
 Element.prototype.setPointerCapture ??= () => {};
 Element.prototype.releasePointerCapture ??= () => {};
 globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+// The code editor (CodeMirror) measures text ranges; jsdom has no layout, so they measure as empty.
+Range.prototype.getClientRects ??= function getClientRects() {
+  return Object.assign([], { item: () => null }) as unknown as DOMRectList;
+};
+Range.prototype.getBoundingClientRect ??= () => new DOMRect();
 
 afterEach(() => {
   cleanup();

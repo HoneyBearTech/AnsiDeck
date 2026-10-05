@@ -112,7 +112,7 @@ Content is grouped into projects, and a `Default` project exists on first start.
 2. **Inventories**: define hosts and groups. Host names are exactly what ansible connects to: no port
    (`db:5432`; set `ansible_port` instead) and no ranges (`web[1:3]`). Group names use letters, digits, `.`,
    `_` and `-`, and `all` and `ungrouped` are ansible's own.
-3. **Playbooks**: paste a playbook or import a YAML file.
+3. **Playbooks**: write or paste a playbook, or import a YAML file, and **Check** it with ansible-lint.
 4. **Runs → New Run**: pick the playbook, inventory, target and credential. Optionally add a vault password, a
    host limit, check or diff mode, and extra variables as JSON. The output streams live, and finished runs stay
    in the run history.

@@ -18,7 +18,7 @@ with Grafana dashboards.
 guides for every feature, upgrade and backup/restore guides, and a changelog, together with frontend tests
 behind a coverage floor, stricter compiler and lint settings, and an accessibility pass on every page. The
 most recent release is the supported version. Since then, on `main`: saved run templates (also for CI
-keys), running a run again, and downloading run output.
+keys), running a run again, downloading run output, and a code editor with ansible-lint checks.
 
 ## Over the following year
 
@@ -27,7 +27,7 @@ keys), running a run again, and downloading run output.
 - Managed SSH `known_hosts` per inventory, so host keys are checked without custom arguments.
 
 **Authoring**
-- A playbook editor with syntax highlighting and inline `ansible-lint` (run in a worker).
+- More from the editor: completion of module names and options, and ansible-lint's fixes offered as edits.
 
 **Layout and visualisation**
 - A layout that works on phones and tablets, and a visual graph of inventory groups and hosts.

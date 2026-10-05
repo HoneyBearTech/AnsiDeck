@@ -463,6 +463,43 @@ export interface RunTemplate {
 
 export type RunLogFormat = "text" | "jsonl";
 
+export interface LintFinding {
+  rule: string;
+  level: "error" | "warning";
+  message: string;
+  details: string | null;
+  path: string;
+  line: number;
+  column: number | null;
+  url: string | null;
+  // In the file that was checked (else a role or tasks file it includes).
+  in_target: boolean;
+}
+
+/** A playbook check (ansible-lint in a worker), private to whoever started it. */
+export interface LintJob {
+  id: number;
+  status: "queued" | "running" | "success" | "failed" | "timed_out" | "cancelled";
+  target: string;
+  playbook_id: number | null;
+  commit: string | null;
+  queued_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  wait_reason: string | null;
+  error: string | null;
+  findings: LintFinding[];
+  total: number;
+  truncated: boolean;
+  // Findings in installed collections, left out.
+  external: number;
+  // The repository's own ansible-lint config was used (else the default rules).
+  repo_config: boolean;
+  // A secret's value appeared in a finding and was redacted.
+  scrubbed: boolean;
+  ansible_lint_version: string | null;
+}
+
 export type GitAuthKind = "none" | "ssh_key" | "https_token";
 
 export interface GitSource {
@@ -751,6 +788,15 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   deletePlaybook: (id: number) => request<void>(`/playbooks/${id}`, { method: "DELETE" }),
+  /** Checks text with ansible-lint (unsaved, even invalid YAML), in `projectId` or the active project. */
+  lintContent: (content: string, projectId?: number) =>
+    request<LintJob>("/playbooks/lint", {
+      method: "POST",
+      body: JSON.stringify({ content, project_id: projectId ?? activeProjectId ?? undefined }),
+    }),
+  /** Checks a saved playbook; a synced one inside its repository. */
+  lintPlaybook: (id: number) => request<LintJob>(`/playbooks/${id}/lint`, { method: "POST" }),
+  getLintJob: (id: number) => request<LintJob>(`/lint-jobs/${id}`),
 
   listInventories: () => request<InventorySummary[]>(scoped("/inventories")),
   getInventory: (id: number) => request<InventoryDetail>(`/inventories/${id}`),

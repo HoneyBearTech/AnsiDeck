@@ -2,7 +2,19 @@ import { waitFor } from "@testing-library/react";
 import axe from "axe-core";
 import { describe, expect, it } from "vitest";
 
-import { CATALOG, credential, gitSource, inventory, playbook, run, runTemplate, targets, vaultPassword } from "./fixtures";
+import {
+  CATALOG,
+  credential,
+  FQCN_FINDING,
+  gitSource,
+  inventory,
+  lintJob,
+  playbook,
+  run,
+  runTemplate,
+  targets,
+  vaultPassword,
+} from "./fixtures";
 import { renderApp } from "./render";
 
 // Enough data for every page to render its full content.
@@ -67,6 +79,21 @@ describe("accessibility (axe)", () => {
   it.each(PAGES)("%s has no violations", async (path, heading) => {
     const { screen } = renderApp(path, { routes: ROUTES });
     await screen.findByRole("heading", { level: 1, name: heading });
+    expect(await violations(document.body)).toEqual([]);
+  });
+
+  it("a playbook with check results has no violations", async () => {
+    const { screen, user } = renderApp("/playbooks/1", {
+      routes: {
+        ...ROUTES,
+        "POST /playbooks/lint": lintJob({
+          findings: [FQCN_FINDING, { ...FQCN_FINDING, level: "warning", path: "roles/x/tasks/main.yml", in_target: false }],
+          total: 2,
+        }),
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "Check" }));
+    await screen.findByRole("heading", { level: 2, name: "Check results" });
     expect(await violations(document.body)).toEqual([]);
   });
 
