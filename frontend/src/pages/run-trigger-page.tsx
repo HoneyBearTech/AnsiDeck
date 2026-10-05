@@ -153,9 +153,9 @@ export function RunTriggerPage() {
       <h1 className="text-xl font-semibold">New Run</h1>
 
       <div className="flex flex-col gap-2">
-        <Label>Playbook</Label>
+        <Label htmlFor="run-playbook">Playbook</Label>
         <Select value={playbookId} onValueChange={handlePlaybookChange}>
-          <SelectTrigger>
+          <SelectTrigger id="run-playbook">
             <SelectValue placeholder="Select a playbook" />
           </SelectTrigger>
           <SelectContent>
@@ -172,9 +172,9 @@ export function RunTriggerPage() {
       </div>
 
       <div className="flex flex-col gap-2">
-        <Label>Inventory</Label>
+        <Label htmlFor="run-inventory">Inventory</Label>
         <Select value={inventoryId} onValueChange={setInventoryId}>
-          <SelectTrigger>
+          <SelectTrigger id="run-inventory">
             <SelectValue placeholder="Select an inventory" />
           </SelectTrigger>
           <SelectContent>
@@ -189,9 +189,9 @@ export function RunTriggerPage() {
 
       {selectedInventory && (
         <div className="flex flex-col gap-2">
-          <Label>Target</Label>
+          <Label htmlFor="run-target">Target</Label>
           <Select value={groupId} onValueChange={setGroupId}>
-            <SelectTrigger>
+            <SelectTrigger id="run-target">
               <SelectValue placeholder="All hosts" />
             </SelectTrigger>
             <SelectContent>
@@ -208,9 +208,9 @@ export function RunTriggerPage() {
       )}
 
       <div className="flex flex-col gap-2">
-        <Label>Credential</Label>
+        <Label htmlFor="run-credential">Credential</Label>
         <Select value={credentialId} onValueChange={setCredentialId}>
-          <SelectTrigger>
+          <SelectTrigger id="run-credential">
             <SelectValue placeholder="Select a credential" />
           </SelectTrigger>
           <SelectContent>
@@ -224,9 +224,9 @@ export function RunTriggerPage() {
       </div>
 
       <div className="flex flex-col gap-2">
-        <Label>Vault password (optional)</Label>
+        <Label htmlFor="run-vault-password">Vault password (optional)</Label>
         <Select value={vaultPasswordId} onValueChange={setVaultPasswordId}>
-          <SelectTrigger>
+          <SelectTrigger id="run-vault-password">
             <SelectValue placeholder="None" />
           </SelectTrigger>
           <SelectContent>
@@ -301,6 +301,7 @@ export function RunTriggerPage() {
               <p className="text-xs text-muted-foreground">Escalates privileges on the target host(s).</p>
             </div>
             <Switch
+              aria-label="Run as admin (become root)"
               checked={become}
               onCheckedChange={(checked) => {
                 setBecome(checked);

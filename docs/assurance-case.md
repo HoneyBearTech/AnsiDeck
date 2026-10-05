@@ -115,7 +115,9 @@ Mapped to the [OWASP Top 10 (2021)](https://owasp.org/Top10/) and the
 - **Automated tests** on every pull request: over 900 backend tests on Postgres with a CI-enforced
   branch-coverage floor of 80% (`backend/scripts/check_branch_coverage.py`), including authorization
   matrices, cross-project tests, real `ansible-playbook` and `ansible-inventory` runs, and isolation
-  tests run as root in the worker image.
+  tests run as root in the worker image; and frontend tests (Vitest and Testing Library) that drive every
+  page through the real routing and permission checks against a fake API, with a CI-enforced statement
+  coverage floor of 80%.
 - **Static analysis**: CodeQL (Python and TypeScript) on every pull request and weekly; ruff with security (bandit), correctness and style rules; TypeScript in strict mode with extra checks; oxlint with correctness, suspicious, React and accessibility rules; warnings fail CI, and the test suite treats Python warnings as errors.
 - **Fuzzing**: Atheris drives the Hypothesis properties for secret scrubbing, vault encryption, inventory
   rendering and secret collection on every pull request that touches the backend (`backend/fuzz/`).

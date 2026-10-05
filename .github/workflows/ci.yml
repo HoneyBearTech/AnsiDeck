@@ -100,4 +100,13 @@ jobs:
         run: npm audit --audit-level=high
       - run: npm run lint
       - run: npm run typecheck
+      # Vitest with v8 coverage; vite.config.ts fails the run under 80% of statements.
+      - name: Tests with coverage
+        run: npm run coverage
       - run: npm run build
+      # Building again from the same sources must give the same files, byte for byte.
+      - name: The build is reproducible
+        run: |
+          mv dist "$RUNNER_TEMP/dist-first"
+          npm run build
+          diff -r "$RUNNER_TEMP/dist-first" dist

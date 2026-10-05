@@ -31,7 +31,8 @@
       {
         "allow": [
           "**/*.css",
-          "@fontsource/**"
+          "@fontsource/**",
+          "@testing-library/jest-dom/vitest"
         ]
       }
     ],
