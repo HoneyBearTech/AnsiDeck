@@ -93,8 +93,16 @@ def test_stopping_the_worker_fails_its_runs(client, tmp_path) -> None:
 def test_a_reaped_run_is_stopped_and_not_overwritten(client, tmp_path) -> None:
     run_id = _trigger(client, tmp_path)
     _wait_for_status(client, run_id, "running")
-    _set(run_id, lease_expires_at=text("now() - interval '1 second'"))
-    assert reap_once() == [run_id]
+    # The worker's heartbeat may renew the lease between the two calls (it is still alive);
+    # expire it again until the reaper sees it expired.
+    reaped: list[int] = []
+    for _ in range(20):
+        _set(run_id, lease_expires_at=text("now() - interval '1 second'"))
+        reaped = reap_once()
+        if reaped:
+            break
+        time.sleep(0.05)
+    assert reaped == [run_id]
     deadline = time.monotonic() + 3
     while client.worker.active_run_ids() and time.monotonic() < deadline:
         time.sleep(0.1)
