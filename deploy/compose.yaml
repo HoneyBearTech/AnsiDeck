@@ -1,0 +1,113 @@
+# AnsiDeck from the published, signed images: see docs/installing.md.
+# Secrets are files in ./secrets (Docker secrets); settings that aren't secret go in .env next to this
+# file (copy .env.example). Put a TLS-terminating reverse proxy in front of the frontend's port.
+
+name: ansideck
+
+services:
+  postgres:
+    image: postgres:18-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+    environment:
+      POSTGRES_USER: ansideck
+      POSTGRES_DB: ansideck
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      # Byte-order text sorting, independent of the host's glibc/ICU.
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8
+    secrets: [postgres_password]
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks: [db]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ansideck -d ansideck"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    image: ghcr.io/honeybeartech/ansideck-backend:${ANSIDECK_VERSION:-0.1.0}
+    environment:
+      ENVIRONMENT: production
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+      INTERNAL_API_HOST: 0.0.0.0
+      # Also needed by the workers, which can't read secret files safely (see docs/installing.md).
+      WORKER_TOKEN: ${WORKER_TOKEN:?set WORKER_TOKEN in .env}
+    # Read from /run/secrets/<name> (SECRETS_DIR).
+    secrets: [auth_secret_key, credential_encryption_key, admin_password, database_url]
+    volumes:
+      - backend-data:/data
+    networks: [default, db, workers]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    image: ghcr.io/honeybeartech/ansideck-backend:${ANSIDECK_VERSION:-0.1.0}
+    command: ["python", "-m", "app.worker"]
+    # Root with only these capabilities, so it can run each slot's playbooks as a user of its own.
+    user: "0"
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, CHOWN, KILL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp]
+    pids_limit: 1024
+    environment:
+      ENVIRONMENT: production
+      ANSIDECK_API_URL: http://backend:8001
+      WORKER_TOKEN: ${WORKER_TOKEN:?set WORKER_TOKEN in .env}
+      WORKER_SLOTS: ${WORKER_SLOTS:-2}
+      GALAXY_DIR: /galaxy
+    volumes:
+      - type: volume
+        source: backend-data
+        target: /galaxy
+        read_only: true
+        volume:
+          subpath: galaxy
+    # Only the API's internal port: no database, no keys.
+    networks: [workers]
+    healthcheck:
+      disable: true # the image's check is the API's
+    stop_grace_period: 60s
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/honeybeartech/ansideck-frontend:${ANSIDECK_VERSION:-0.1.0}
+    ports:
+      # Loopback by default: publish it through your reverse proxy.
+      - "${ANSIDECK_BIND:-127.0.0.1:8080}:8080"
+    networks: [default]
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  database_url:
+    file: ./secrets/database_url
+  auth_secret_key:
+    file: ./secrets/auth_secret_key
+  credential_encryption_key:
+    file: ./secrets/credential_encryption_key
+  admin_password:
+    file: ./secrets/admin_password
+
+networks:
+  default:
+  # Nothing on the database network needs the outside world.
+  db:
+    internal: true
+  # Not internal: playbooks and inventory refreshes reach your hosts and APIs from here.
+  workers:
+
+volumes:
+  postgres-data:
+  backend-data:
