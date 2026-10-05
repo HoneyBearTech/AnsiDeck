@@ -30,6 +30,7 @@ function detail(overrides = {}) {
 
 describe("inventories list", () => {
   it("creates and deletes inventories", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     const { api, user, screen } = renderApp("/inventories", {
       routes: {
         "GET /inventories": [],
@@ -66,6 +67,7 @@ describe("inventories list", () => {
 
 describe("inventory detail", () => {
   it("adds groups and hosts, edits and deletes them", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     const { api, user, screen } = renderApp("/inventories/1", {
       routes: detail({
         "POST /inventories/:id/groups": { id: 2, name: "db" },
@@ -221,6 +223,7 @@ describe("dynamic inventory sources", () => {
   });
 
   it("adds a source from an example with a credential, edits, toggles and deletes it", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     const { api, user, screen } = renderApp("/inventories/1", {
       routes: detail({
         "GET /credentials": [credential({ id: 2, name: "netbox-token", kind: "env", env_names: ["NETBOX_TOKEN"] })],

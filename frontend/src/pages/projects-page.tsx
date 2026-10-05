@@ -184,7 +184,11 @@ function MembersPanel({ project }: { project: ProjectSummary }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => run(() => api.removeProjectMember(project.id, member.user_id))}
+                  onClick={() => {
+                    if (window.confirm(`Remove ${member.username} from ${project.name}? They lose access to it at once.`)) {
+                      run(() => api.removeProjectMember(project.id, member.user_id));
+                    }
+                  }}
                 >
                   Remove
                 </Button>

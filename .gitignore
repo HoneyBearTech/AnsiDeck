@@ -238,3 +238,7 @@ npm-debug.log*
 # per project owner's request 2026-09-18.
 .obsidian-docs/
 .DS_Store
+
+# Production deployment (deploy/compose.yaml): never commit its secrets or settings
+deploy/secrets/
+deploy/.env

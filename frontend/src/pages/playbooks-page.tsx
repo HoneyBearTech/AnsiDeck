@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/context/auth-context";
 import { api, type PlaybookSummary } from "@/lib/api";
 import { shortSha } from "@/lib/git";
+import { useConfirmedAction } from "@/lib/use-confirmed-action";
 
 export function PlaybooksPage() {
   const { can, activeProject } = useAuth();
@@ -27,10 +28,7 @@ export function PlaybooksPage() {
     refresh();
   }, [refresh]);
 
-  async function handleDelete(id: number) {
-    await api.deletePlaybook(id);
-    refresh();
-  }
+  const deletion = useConfirmedAction(refresh);
 
   return (
     <div className="flex flex-col gap-6">
@@ -51,6 +49,7 @@ export function PlaybooksPage() {
         </p>
       )}
 
+      {deletion.error && <p className="text-sm text-destructive">{deletion.error}</p>}
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
       {!loading && playbooks.length === 0 && (
         <p className="text-sm text-muted-foreground">No playbooks yet.</p>
@@ -85,7 +84,12 @@ export function PlaybooksPage() {
                     </Button>
                   )}
                   {canWrite && (!synced || missing) && (
-                    <Button variant="outline" size="sm" onClick={() => handleDelete(playbook.id)}>
+                    <Button variant="outline" size="sm" onClick={() =>
+                        deletion.run(
+                          `Delete the playbook "${playbook.name}"? This can't be undone; its run history stays.`,
+                          () => api.deletePlaybook(playbook.id),
+                        )
+                      }>
                       Delete
                     </Button>
                   )}

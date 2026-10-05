@@ -339,6 +339,14 @@ class Settings(BaseSettings):
         return self
 
 
+# Docker secrets (or any directory of files): a file named after a setting, such as
+# /run/secrets/credential_encryption_key, provides its value when the environment doesn't. Only the
+# API reads these; workers take WORKER_TOKEN from their environment, which they then scrub, because
+# compose makes secret files readable to every user in a container, playbook runs included.
+DEFAULT_SECRETS_DIR = "/run/secrets"
+
+
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    secrets_dir = os.environ.get("SECRETS_DIR", DEFAULT_SECRETS_DIR)
+    return Settings(_secrets_dir=secrets_dir if os.path.isdir(secrets_dir) else None)

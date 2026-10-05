@@ -23,6 +23,7 @@ import {
 import { useAuth } from "@/context/auth-context";
 import { api, ApiError, type Credential, type CredentialKind, type SecretStoreInfo } from "@/lib/api";
 import { useSecretStoreInfo } from "@/lib/secret-store";
+import { useConfirmedAction } from "@/lib/use-confirmed-action";
 
 type EnvRow = { id: number; name: string; value: string };
 
@@ -282,10 +283,7 @@ export function CredentialsPage() {
     refresh();
   }, [refresh]);
 
-  async function handleDelete(id: number) {
-    await api.deleteCredential(id);
-    refresh();
-  }
+  const deletion = useConfirmedAction(refresh);
 
   return (
     <div className="flex flex-col gap-6">
@@ -294,6 +292,7 @@ export function CredentialsPage() {
         {canManage && <CreateCredentialDialog onCreated={refresh} store={store} />}
       </div>
 
+      {deletion.error && <p className="text-sm text-destructive">{deletion.error}</p>}
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
       {!loading && credentials.length === 0 && (
         <p className="text-sm text-muted-foreground">No credentials yet.</p>
@@ -323,7 +322,14 @@ export function CredentialsPage() {
                   {credential.store === "external" && (
                     <SecretCheckButton check={() => api.checkCredential(credential.id)} />
                   )}
-                  <Button variant="outline" size="sm" onClick={() => handleDelete(credential.id)}>
+                  <Button variant="outline" size="sm" onClick={() =>
+                      deletion.run(
+                        credential.store === "external"
+                          ? `Delete the credential "${credential.name}"? AnsiDeck forgets the reference; the secret stays in ${store?.label ?? "the secret store"}.`
+                          : `Delete the credential "${credential.name}"? Its secret is deleted for good and can't be recovered.`,
+                        () => api.deleteCredential(credential.id),
+                      )
+                    }>
                     Delete
                   </Button>
                 </div>

@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { useAuth } from "@/context/auth-context";
 import { Textarea } from "@/components/ui/textarea";
 import { api, ApiError, type InventoryDetail, type InventoryHost } from "@/lib/api";
+import { useConfirmedAction } from "@/lib/use-confirmed-action";
 
 function GroupDialog({ inventoryId, onCreated }: { inventoryId: number; onCreated: () => void }) {
   const [open, setOpen] = React.useState(false);
@@ -178,6 +179,7 @@ export function InventoryDetailPage() {
   const refresh = React.useCallback(() => {
     api.getInventory(inventoryId).then(setInventory);
   }, [inventoryId]);
+  const deletion = useConfirmedAction(refresh);
 
   React.useEffect(() => {
     refresh();
@@ -185,16 +187,6 @@ export function InventoryDetailPage() {
 
   if (!inventory) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
-  }
-
-  async function handleDeleteGroup(groupId: number) {
-    await api.deleteGroup(inventoryId, groupId);
-    refresh();
-  }
-
-  async function handleDeleteHost(hostId: number) {
-    await api.deleteHost(inventoryId, hostId);
-    refresh();
   }
 
   function groupName(groupId: number): string {
@@ -210,6 +202,8 @@ export function InventoryDetailPage() {
 
       <InventorySourcesPanel inventoryId={inventoryId} projectId={inventory.project_id} />
 
+      {deletion.error && <p className="text-sm text-destructive">{deletion.error}</p>}
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Groups</CardTitle>
@@ -221,7 +215,11 @@ export function InventoryDetailPage() {
             <div key={group.id} className="flex items-center justify-between">
               <span className="text-sm">{group.name}</span>
               {canWrite && (
-                <Button variant="outline" size="sm" onClick={() => handleDeleteGroup(group.id)}>
+                <Button variant="outline" size="sm" onClick={() =>
+                    deletion.run(`Delete the group "${group.name}"? Its hosts stay in the inventory.`, () =>
+                      api.deleteGroup(inventoryId, group.id),
+                    )
+                  }>
                   Delete
                 </Button>
               )}
@@ -257,7 +255,11 @@ export function InventoryDetailPage() {
                     host={host}
                     onSaved={refresh}
                   />
-                  <Button variant="outline" size="sm" onClick={() => handleDeleteHost(host.id)}>
+                  <Button variant="outline" size="sm" onClick={() =>
+                      deletion.run(`Delete the host "${host.hostname}" and its vars?`, () =>
+                        api.deleteHost(inventoryId, host.id),
+                      )
+                    }>
                     Delete
                   </Button>
                 </div>

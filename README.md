@@ -8,8 +8,17 @@
 
 Self-hosted web UI for running Ansible playbooks against target systems, packaged in Docker.
 
+> [!WARNING]
+> **Runs change real systems**: every run executes `ansible-playbook` on the hosts you pick, and what it
+> changes stays changed, even if you cancel it. Start with check mode and a narrow limit. **Deletes are
+> permanent**: AnsiDeck asks first, but there is no undo. Keep [backups](docs/upgrading.md#back-up).
+
 ## Documentation
 
+- [Quick start](docs/quick-start.md), [installing a release](docs/installing.md),
+  [upgrading and backups](docs/upgrading.md) and [verifying releases](docs/verifying-releases.md).
+- The [user guide](docs/user-guide/README.md): every page of the UI, from projects and credentials to runs
+  and notifications. The [documentation index](docs/README.md) lists everything.
 - [Architecture](docs/architecture.md): the components and how a run flows through them.
 - [Security requirements](docs/security.md): what AnsiDeck does and doesn't protect against, and the
   [assurance case](docs/assurance-case.md) behind it.
@@ -45,7 +54,9 @@ need Docker with Compose.
 4. Open <http://localhost:5173> and sign in as `ADMIN_USERNAME` (default `admin`) with `ADMIN_PASSWORD`.
    The backend's interactive API docs are at <http://localhost:8000/docs>.
 
-The bundled `docker-compose.yml` is the development stack (hot reload). The database lives in the
+The bundled `docker-compose.yml` is the development stack (hot reload). To run a release in production,
+use the signed images and [`deploy/compose.yaml`](deploy/compose.yaml) as described in
+[docs/installing.md](docs/installing.md). The database lives in the
 `postgres-data` volume; playbook files, run logs and Galaxy content live in the `backend-data` volume, mounted
 at `/data`. Playbooks run in the `worker` service, not in the backend: add workers with
 `docker compose up --scale worker=3`, and set how many runs each executes at once with `WORKER_SLOTS`.
@@ -129,6 +140,10 @@ they are.
 
 - Set `ENVIRONMENT=production`. The app then refuses to start while `AUTH_SECRET_KEY` or `ADMIN_PASSWORD` still
   hold their insecure defaults.
+- Keep the API's secrets in files rather than environment variables: a file in `SECRETS_DIR` (default
+  `/run/secrets`, where Docker secrets appear) named after a setting, such as `credential_encryption_key`,
+  `auth_secret_key`, `admin_password` or `database_url`, provides its value when the environment doesn't.
+  Workers take `WORKER_TOKEN` from their environment only. `deploy/compose.yaml` does this.
 - Serve it over HTTPS through a reverse proxy, set `COOKIE_SECURE=true`, and make sure the proxy forwards
   WebSocket upgrades (live run output needs them). If the browser's origin differs from the `Host` the backend
   sees, add it to `CORS_ORIGINS`. The frontend container already sends a Content-Security-Policy and other
@@ -276,6 +291,8 @@ webhook), a generic webhook, email, Pushbullet or Pushover. Each channel picks i
 - **Run failed**: a run failed, timed out, or lost its worker. The message names the failed
   tasks and their hosts.
 - **Run recovered**: a playbook succeeded on an inventory after its previous run there failed.
+- **Inventory refresh failed**: a dynamic inventory's refresh failed (once per failing streak),
+  and again when it works.
 
 Global channels can also take operations and security events:
 
@@ -285,6 +302,8 @@ Global channels can also take operations and security events:
 - **Queue stuck**: a run has waited `NOTIFY_QUEUE_STUCK_MINUTES` (10 by default) for a worker or
   a Galaxy install, and again when the queue moves. Waiting behind another run on the same
   inventory never counts.
+- **Secret store unavailable**: AnsiDeck can't reach or read the secret store, and again when it
+  is back.
 - **Login attack**: failed sign-ins locked out an address or user, or something used a wrong
   `WORKER_TOKEN` (at most once per address and kind every 15 minutes).
 - **Admin change**: a global admin was created or promoted, a user's two-factor login was reset

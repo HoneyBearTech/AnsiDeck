@@ -20,7 +20,7 @@ Please keep the details private until the advisory is published, or for 90 days 
 
 ## Supported Versions
 
-Security fixes go into `main` and the most recent release. Until the first tagged release exists, only `main` is supported. Older releases are not patched: upgrading to the latest release is the supported path, and the release notes say when an upgrade needs extra steps.
+Security fixes go into `main` and the most recent release (see the [releases](https://github.com/HoneyBearTech/AnsiDeck/releases) and [CHANGELOG.md](CHANGELOG.md)). Older releases are not patched: upgrading to the latest release is the supported path ([docs/upgrading.md](docs/upgrading.md)), and the release notes say when an upgrade needs extra steps.
 
 ## Scope
 

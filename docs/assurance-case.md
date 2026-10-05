@@ -122,7 +122,10 @@ Mapped to the [OWASP Top 10 (2021)](https://owasp.org/Top10/) and the
 - **Fuzzing**: Atheris drives the Hypothesis properties for secret scrubbing, vault encryption, inventory
   rendering and secret collection on every pull request that touches the backend (`backend/fuzz/`).
 - **Supply chain**: OpenSSF Scorecard weekly; dependency audits in CI; Dependabot; digest-pinned images and
-  hash-pinned actions; secret scanning with push protection on the repository.
+  hash-pinned actions; secret scanning with push protection on the repository. Releases are built by a
+  workflow that refuses images with fixable HIGH or CRITICAL vulnerabilities (Trivy), attaches SBOM and SLSA
+  provenance, and signs images and checksums keylessly with cosign ([verifying-releases.md](verifying-releases.md));
+  the frontend build is reproducible.
 - **End-to-end checks** in CI against the runtime images (`.github/workflows/docker-build.yml`): startup
   refusals, metrics, analytics roles, Grafana dashboards, secret-store outages and inventory refreshes.
 - **Process**: protected `main` with required checks; security-sensitive changes called out in pull

@@ -9,6 +9,7 @@ const SOURCES = "GET /projects/:id/git-sources";
 
 describe("playbooks list", () => {
   it("lists manual and synced playbooks; only manual or removed ones can be deleted", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     const { api, user, screen } = renderApp("/playbooks", {
       routes: {
         [SOURCES]: [],

@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/context/auth-context";
 import { api, ApiError, type InventorySummary } from "@/lib/api";
+import { useConfirmedAction } from "@/lib/use-confirmed-action";
 
 export function InventoriesPage() {
   const { can } = useAuth();
@@ -50,10 +51,7 @@ export function InventoriesPage() {
     }
   }
 
-  async function handleDelete(id: number) {
-    await api.deleteInventory(id);
-    refresh();
-  }
+  const deletion = useConfirmedAction(refresh);
 
   return (
     <div className="flex flex-col gap-6">
@@ -93,6 +91,7 @@ export function InventoriesPage() {
         )}
       </div>
 
+      {deletion.error && <p className="text-sm text-destructive">{deletion.error}</p>}
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
       {!loading && inventories.length === 0 && (
         <p className="text-sm text-muted-foreground">No inventories yet.</p>
@@ -109,7 +108,12 @@ export function InventoriesPage() {
                 )}
               </Link>
               {canWrite && (
-                <Button variant="outline" size="sm" onClick={() => handleDelete(inventory.id)}>
+                <Button variant="outline" size="sm" onClick={() =>
+                    deletion.run(
+                      `Delete the inventory "${inventory.name}" with its hosts, groups and sources? This can't be undone; its run history stays.`,
+                      () => api.deleteInventory(inventory.id),
+                    )
+                  }>
                   Delete
                 </Button>
               )}

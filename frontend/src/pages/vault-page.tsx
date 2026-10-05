@@ -23,6 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/auth-context";
 import { api, ApiError, type SecretStoreInfo, type VaultEncryptResult, type VaultPassword } from "@/lib/api";
 import { useSecretStoreInfo } from "@/lib/secret-store";
+import { useConfirmedAction } from "@/lib/use-confirmed-action";
 
 function CreateVaultPasswordDialog({
   onCreated,
@@ -351,10 +352,7 @@ export function VaultPage() {
     refresh();
   }, [refresh]);
 
-  async function handleDelete(id: number) {
-    await api.deleteVaultPassword(id);
-    refresh();
-  }
+  const deletion = useConfirmedAction(refresh);
 
   return (
     <div className="flex flex-col gap-6">
@@ -363,6 +361,7 @@ export function VaultPage() {
         {canManage && <CreateVaultPasswordDialog onCreated={refresh} store={store} />}
       </div>
 
+      {deletion.error && <p className="text-sm text-destructive">{deletion.error}</p>}
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
       {!loading && vaultPasswords.length === 0 && (
         <p className="text-sm text-muted-foreground">
@@ -386,7 +385,14 @@ export function VaultPage() {
                   {vaultPassword.store === "external" && (
                     <SecretCheckButton check={() => api.checkVaultPassword(vaultPassword.id)} />
                   )}
-                  <Button variant="outline" size="sm" onClick={() => handleDelete(vaultPassword.id)}>
+                  <Button variant="outline" size="sm" onClick={() =>
+                      deletion.run(
+                        vaultPassword.store === "external"
+                          ? `Delete the vault password "${vaultPassword.name}"? AnsiDeck forgets the reference; the password stays in ${store?.label ?? "the secret store"}.`
+                          : `Delete the vault password "${vaultPassword.name}"? It is deleted for good; values encrypted with it can only be decrypted if you have the password elsewhere.`,
+                        () => api.deleteVaultPassword(vaultPassword.id),
+                      )
+                    }>
                     Delete
                   </Button>
                 </div>
