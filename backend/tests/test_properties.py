@@ -14,8 +14,7 @@ from ansible.parsing.yaml.loader import AnsibleLoader
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
-from app.inventory_render import render_inventory_yaml
-from app.models import Inventory, InventoryGroup, InventoryHost
+from app.inventory_render import hostname_problem, merge, render, target_hosts
 from app.scrub import REDACTED, Scrubber, _PlaybookLoader, collect_secrets
 from app.vault import VaultError, decrypt_vault_text, encrypt_to_vault_envelope, to_yaml_block
 
@@ -279,37 +278,148 @@ def test_vault_round_trips_and_rejects_tampering(
 # --- inventory renderer -----------------------------------------------------------
 
 
-@given(
-    st.dictionaries(st.text(), st.dictionaries(st.text(), json_values(), max_size=3), max_size=4),
-    st.none() | st.text(),
-)
-def test_rendered_inventory_parses_back_to_exactly_the_input(
-    hosts: dict[str, dict], group_name: str | None
+class _UnsafeAwareLoader(yaml.SafeLoader):
+    pass
+
+
+_UnsafeAwareLoader.add_constructor("!unsafe", lambda loader, node: loader.construct_scalar(node))
+
+
+def _plain(value):
+    """The merged inventory as plain data (Unsafe strings as str)."""
+    if isinstance(value, dict):
+        return {str(k): _plain(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_plain(v) for v in value]
+    return str(value) if isinstance(value, str) else value
+
+
+def _expected_tree(graph: dict, target: str | None) -> dict:
+    keep = target_hosts(graph, target) if target is not None else None
+    block: dict = {}
+    if graph["vars"]:
+        block["vars"] = _plain(graph["vars"])
+    hosts = {h: (_plain(v) or None) for h, v in graph["hosts"].items() if keep is None or h in keep}
+    if hosts:
+        block["hosts"] = hosts
+    children = {}
+    for name, group in graph["groups"].items():
+        entry: dict = {}
+        members = {h: None for h in group["hosts"] if keep is None or h in keep}
+        if members:
+            entry["hosts"] = members
+        if group["children"]:
+            entry["children"] = dict.fromkeys(group["children"])
+        if group["vars"]:
+            entry["vars"] = _plain(group["vars"])
+        children[name] = entry or None
+    if children:
+        block["children"] = children
+    return {"all": block or None}
+
+
+_ANY_NAME = st.text()
+_ANY_VALUE = json_values()
+
+
+@st.composite
+def inventories(draw, names=_ANY_NAME, values=_ANY_VALUE):
+    """(static data, a source snapshot or None, a target group or None)."""
+    host_names = draw(st.lists(names, max_size=4, unique=True))
+    static_hosts = {h: draw(st.dictionaries(names, values, max_size=2)) for h in host_names}
+    group_names = draw(st.lists(names, max_size=3, unique=True))
+    static_groups = {
+        g: draw(st.lists(st.sampled_from(host_names), unique=True)) if host_names else []
+        for g in group_names
+    }
+    static = {"hosts": static_hosts, "groups": static_groups}
+    snapshot = None
+    if draw(st.booleans()):
+        source_hosts = {
+            h: draw(st.dictionaries(names, values, max_size=2))
+            for h in draw(st.lists(names, max_size=4, unique=True))
+        }
+        source_group_names = draw(st.lists(names, max_size=3, unique=True))
+        all_hosts = list(source_hosts)
+        snapshot = {
+            "vars": draw(st.dictionaries(names, values, max_size=2)),
+            "static_hosts": draw(st.lists(st.sampled_from(host_names), unique=True))
+            if host_names
+            else [],
+            "hosts": source_hosts,
+            "groups": {
+                g: {
+                    "hosts": draw(st.lists(st.sampled_from(all_hosts), unique=True))
+                    if all_hosts
+                    else [],
+                    # earlier groups only: no cycles
+                    "children": draw(st.lists(st.sampled_from(source_group_names[:i]), unique=True))
+                    if i
+                    else [],
+                    "vars": draw(st.dictionaries(names, values, max_size=2)),
+                }
+                for i, g in enumerate(source_group_names)
+            },
+        }
+    graph = merge(static, snapshot)
+    target = draw(st.none() | st.sampled_from(sorted(graph["groups"]))) if graph["groups"] else None
+    return static, snapshot, target
+
+
+@given(inventories())
+def test_rendered_inventory_parses_back_to_exactly_the_merged_inventory(case) -> None:
+    """Whatever the names and values (even ones the API refuses), the YAML holds exactly the
+    merged inventory: nothing can inject keys or structure, for PyYAML or Ansible's loader."""
+    static, snapshot, target = case
+    graph = merge(static, snapshot)
+    rendered = render(graph, target)
+    expected = _expected_tree(graph, target)
+    assert yaml.load(rendered, Loader=_UnsafeAwareLoader) == expected  # noqa: S506
+    assert _plain(AnsibleLoader(rendered).get_single_data()) == expected
+
+
+_HOST = st.from_regex(r"[a-z][a-z0-9]{0,6}", fullmatch=True).filter(lambda n: n != "all")
+_SCALARS = st.none() | st.booleans() | st.integers() | st.text(max_size=12)
+
+
+@settings(max_examples=40, deadline=None)
+@given(case=inventories(names=_HOST.filter(lambda n: n != "ungrouped"), values=_SCALARS))
+def test_ansible_sees_the_merged_inventory_and_never_templates_source_strings(
+    case, tmp_path_factory
 ) -> None:
-    inventory = Inventory(id=1, name="inv")
-    host_rows = [
-        InventoryHost(id=i, inventory_id=1, hostname=h, vars=v)
-        for i, (h, v) in enumerate(hosts.items())
-    ]
-    group = None
-    if group_name is None:
-        inventory.hosts = host_rows
-    else:
-        group = InventoryGroup(id=1, inventory_id=1, name=group_name)
-        group.hosts = host_rows
+    from ansible._internal._datatag._tags import TrustedAsTemplate
+    from ansible.inventory.manager import InventoryManager
+    from ansible.parsing.dataloader import DataLoader
 
-    rendered = render_inventory_yaml(inventory, group)
+    static, snapshot, target = case
+    graph = merge(static, snapshot)
+    path = tmp_path_factory.mktemp("inv") / "hosts.yml"
+    path.write_text(render(graph, target))
+    inventory = InventoryManager(loader=DataLoader(), sources=[str(path)])
+    keep = target_hosts(graph, target) if target is not None else set(graph["hosts"])
 
-    block = {h: (v or None) for h, v in hosts.items()}
-    expected = (
-        {"all": {"hosts": block}}
-        if group is None
-        else {"all": {"children": {group_name: {"hosts": block}}}}
-    )
-    # No hostname, group name or var can inject keys or structure: both the
-    # plain YAML parser and Ansible's own loader read back exactly the input.
-    assert yaml.safe_load(rendered) == expected
-    assert AnsibleLoader(rendered).get_single_data() == expected
+    assert {h.name for h in inventory.get_hosts()} == keep
+    for name, group in graph["groups"].items():
+        assert {h.name for h in inventory.groups[name].hosts} == set(group["hosts"]) & keep
+    for name in keep:
+        seen = inventory.get_host(name).vars
+        for key, value in graph["hosts"][name].items():
+            assert seen[key] == value
+            if not isinstance(value, str):
+                continue
+            trusted = TrustedAsTemplate.is_tagged_on(seen[key])
+            if key in static["hosts"].get(name, {}):
+                assert trusted  # a static string stays a template
+            elif "{" in value or value.startswith("#jinja2:"):
+                assert not trusted  # a source string that could be one never is
+
+
+@given(st.text(max_size=40) | st.from_regex(r"[a-z0-9.:\[\]%_-]{1,20}", fullmatch=True))
+def test_an_accepted_hostname_is_exactly_one_host_to_ansible(name: str) -> None:
+    from ansible.plugins.inventory import BaseInventoryPlugin
+
+    if hostname_problem(name) is None:
+        assert BaseInventoryPlugin()._expand_hostpattern(name) == ([name], None)
 
 
 _PATH_PIECES = st.sampled_from(

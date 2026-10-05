@@ -3,6 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.inventory_render import group_problem, hostname_problem
 from app.models import Inventory, InventoryGroup, InventoryHost, User
 from app.permissions import SAFE_METHODS, Permission, Scope, guard
 from app.schemas.inventories import (
@@ -158,6 +159,16 @@ def delete_inventory(
     db.commit()
 
 
+def _check_group_name(name: str) -> None:
+    if problem := group_problem(name):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Group name {problem}")
+
+
+def _check_hostname(name: str) -> None:
+    if problem := hostname_problem(name):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Host name {problem}")
+
+
 @router.post(
     "/{inventory_id}/groups",
     response_model=GroupOut,
@@ -171,6 +182,7 @@ def create_group(
     db: Session = Depends(get_db),
 ) -> InventoryGroup:
     _get_inventory_or_404(db, user, request, inventory_id)
+    _check_group_name(payload.name)
     group = InventoryGroup(inventory_id=inventory_id, name=payload.name)
     db.add(group)
     try:
@@ -195,6 +207,7 @@ def update_group(
 ) -> InventoryGroup:
     _get_inventory_or_404(db, user, request, inventory_id)
     group = _get_group_or_404(db, inventory_id, group_id)
+    _check_group_name(payload.name)
     group.name = payload.name
     try:
         db.commit()
@@ -230,6 +243,7 @@ def create_host(
     db: Session = Depends(get_db),
 ) -> HostOut:
     _get_inventory_or_404(db, user, request, inventory_id)
+    _check_hostname(payload.hostname)
     groups = _resolve_groups(db, inventory_id, payload.group_ids)
     host = InventoryHost(
         inventory_id=inventory_id, hostname=payload.hostname, vars=payload.vars, groups=groups
@@ -258,6 +272,7 @@ def update_host(
     _get_inventory_or_404(db, user, request, inventory_id)
     host = _get_host_or_404(db, inventory_id, host_id)
     if payload.hostname is not None:
+        _check_hostname(payload.hostname)
         host.hostname = payload.hostname
     if payload.vars is not None:
         host.vars = payload.vars

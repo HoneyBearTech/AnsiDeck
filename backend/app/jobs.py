@@ -5,12 +5,14 @@ Only the API can build it (it alone holds the encryption key); a worker receives
 the internal API, with a one-time token.
 """
 
+import hashlib
+
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.git_sync import snapshot_path, vars_texts
-from app.inventory_render import render_inventory_yaml
-from app.models import Credential, GitSnapshot, Inventory, InventoryGroup, Run, VaultPassword
+from app.inventory_render import all_vars_dicts, merge, render, static_data
+from app.models import Credential, GitSnapshot, Inventory, Run, VaultPassword
 from app.scrub import collect_secrets
 from app.secret_store import (
     SecretStoreError,
@@ -32,7 +34,7 @@ def unrunnable_reason(run: Run) -> str | None:
         return "its inventory was deleted"
     if run.credential_id is None:
         return "its credential was deleted"
-    if run.group_name is not None and run.group_id is None:
+    if run.group_name is not None and run.group_id is None and run.inventory_static is None:
         return f"its inventory group '{run.group_name}' was deleted"
     if run.vault_password_name is not None and run.vault_password_id is None:
         return "its vault password was deleted"
@@ -47,7 +49,8 @@ UNRUNNABLE = or_(
     Run.playbook_id.is_(None),
     Run.inventory_id.is_(None),
     Run.credential_id.is_(None),
-    Run.group_name.is_not(None) & Run.group_id.is_(None),
+    # A pinned run (4G) carries its target group in the pin: it may be a source's group.
+    Run.group_name.is_not(None) & Run.group_id.is_(None) & Run.inventory_static.is_(None),
     Run.vault_password_name.is_not(None) & Run.vault_password_id.is_(None),
     Run.git_commit.is_not(None) & Run.git_snapshot_id.is_(None),
 )
@@ -66,6 +69,8 @@ def build_job(db: Session, run: Run) -> dict:
     deadline = new_deadline()
     credential = db.get(Credential, run.credential_id)
     assert_same_project(run, credential, "credential")
+    if credential.kind != "ssh":
+        raise RuntimeError(f"run {run.id}: its credential is not an SSH key")
     try:
         private_key_pem = resolve_credential(credential, deadline)
     except SecretStoreError as exc:
@@ -84,9 +89,13 @@ def build_job(db: Session, run: Run) -> dict:
 
     inventory = db.get(Inventory, run.inventory_id)
     assert_same_project(run, inventory, "inventory")
-    group = db.get(InventoryGroup, run.group_id) if run.group_id else None
-    if group is not None and group.inventory_id != inventory.id:
-        raise RuntimeError(f"run {run.id}: group is not in the run's inventory")
+    # Pinned when triggered; runs queued before 4G see the inventory as it is now.
+    static = run.inventory_static if run.inventory_static is not None else static_data(inventory)
+    graph = merge(static)
+    if run.group_name is not None and run.group_name not in graph["groups"]:
+        raise RuntimeError(f"run {run.id}: group {run.group_name!r} is not in its inventory")
+    inventory_text = render(graph, run.group_name)
+    run.inventory_sha256 = hashlib.sha256(inventory_text.encode()).hexdigest()
 
     # A synced playbook runs inside its repository: the worker fetches the snapshot (a tar
     # of the commit) and checks it against this size and hash.
@@ -109,7 +118,7 @@ def build_job(db: Session, run: Run) -> dict:
         vault_password=vault_password_plain,
         playbook_text=run.playbook_snapshot,
         extra_vars=run.extra_vars,
-        host_vars=[host.vars or {} for host in inventory.hosts],
+        host_vars=all_vars_dicts(graph),
         repo_vars_texts=repo_vars,
     )
 
@@ -125,7 +134,7 @@ def build_job(db: Session, run: Run) -> dict:
 
     return {
         "playbook": run.playbook_snapshot,
-        "inventory": render_inventory_yaml(inventory, group),
+        "inventory": inventory_text,
         "ssh_key": private_key_pem,
         "vault_password": vault_password_plain,
         "cmdline": " ".join(flags) or None,

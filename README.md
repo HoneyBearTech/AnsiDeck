@@ -85,11 +85,21 @@ the result. (In the production image, which has no `uv`, run `python -m app.cli 
 Content is grouped into projects, and a `Default` project exists on first start. A typical run:
 
 1. **Credentials**: add the SSH private key AnsiDeck should use to connect. It is stored encrypted.
-2. **Inventories**: define hosts and groups.
+2. **Inventories**: define hosts and groups. Host names are exactly what ansible connects to: no port
+   (`db:5432`; set `ansible_port` instead) and no ranges (`web[1:3]`). Group names use letters, digits, `.`,
+   `_` and `-`, and `all` and `ungrouped` are ansible's own.
 3. **Playbooks**: paste a playbook or import a YAML file.
 4. **Runs → New Run**: pick the playbook, inventory, target and credential. Optionally add a vault password, a
    host limit, check or diff mode, and extra variables as JSON. The output streams live, and finished runs stay
    in the run history.
+
+A run sees the inventory's whole group tree, so a play with `hosts: web` runs on the `web` group whatever the
+target. Picking a group as the target narrows the run to that group's hosts (like `--limit web`); every group
+still exists, holding only those hosts. A run uses the inventory as it was when it was started: edits made while
+it waits in the queue don't change what it runs.
+
+Credentials are SSH keys, or **environment variables** (named values such as an API token, stored encrypted or
+read from the secret store) for dynamic inventory sources. Only SSH keys can run playbooks.
 
 Runs wait in a queue until a worker is free; a queued run's page says what it is waiting for (a free
 worker, the run ahead of it on the same inventory, a Galaxy install, or no worker being online). Runs against

@@ -201,13 +201,23 @@ export interface SecretRef {
   store_location: string | null;
 }
 
+export type CredentialKind = "ssh" | "env";
+
 export interface Credential extends SecretRef {
   id: number;
   name: string;
   description: string | null;
   project_id: number;
   created_at: string;
+  // "ssh": a private key (runs, git deploy keys); "env": named variables for inventory plugins.
+  kind: CredentialKind;
+  // An env credential's variable names (never values); null when they live in the store.
+  env_names: string[] | null;
 }
+
+/** An env credential's variables: entered here, or every key of one secret in the store. */
+export type EnvSource =
+  { kind: "ansideck"; env: Record<string, string> } | { kind: "external"; path: string };
 
 export interface VaultPassword extends SecretRef {
   id: number;
@@ -220,6 +230,7 @@ export interface VaultPassword extends SecretRef {
 export interface SecretCheck {
   ok: boolean;
   version: number | null;
+  env_names?: string[] | null;
   error_kind: string | null;
   error: string | null;
 }
@@ -674,7 +685,23 @@ export const api = {
       method: "DELETE",
     }),
 
-  listCredentials: () => request<Credential[]>(scoped("/credentials")),
+  listCredentials: (kind?: CredentialKind) => {
+    const query = new URLSearchParams();
+    if (activeProjectId !== null) query.set("project_id", String(activeProjectId));
+    if (kind) query.set("kind", kind);
+    return request<Credential[]>(`/credentials${query.size ? `?${query}` : ""}`);
+  },
+  createEnvCredential: (name: string, source: EnvSource, description?: string) =>
+    request<Credential>("/credentials", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        description,
+        kind: "env",
+        ...(source.kind === "ansideck" ? { env: source.env } : { store_path: source.path }),
+        project_id: activeProjectId ?? undefined,
+      }),
+    }),
   createCredential: (name: string, source: SecretSource, description?: string) =>
     request<Credential>("/credentials", {
       method: "POST",
@@ -745,6 +772,7 @@ export const api = {
     playbook_id: number;
     inventory_id: number;
     group_id?: number | null;
+    group_name?: string | null;
     credential_id: number;
     vault_password_id?: number | null;
     become: boolean;

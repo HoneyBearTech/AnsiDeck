@@ -20,6 +20,8 @@ import {
 } from "@/lib/api";
 
 const ALL_HOSTS = "__all__";
+// Targets are group names (a source's groups have no id); prefixed so none can be ALL_HOSTS.
+const GROUP_PREFIX = "group:";
 const NO_VAULT = "__none__";
 // Mirrors the API: 2 h by default, at most 24 h.
 const DEFAULT_TIMEOUT_MINUTES = 120;
@@ -53,7 +55,7 @@ export function RunTriggerPage() {
   React.useEffect(() => {
     api.listPlaybooks().then(setPlaybooks);
     api.listInventories().then(setInventories);
-    api.listCredentials().then(setCredentials);
+    api.listCredentials("ssh").then(setCredentials);
     api.listVaultPasswords().then(setVaultPasswords);
   }, []);
 
@@ -108,7 +110,7 @@ export function RunTriggerPage() {
       const run = await api.createRun({
         playbook_id: Number(playbookId),
         inventory_id: Number(inventoryId),
-        group_id: groupId === ALL_HOSTS ? null : Number(groupId),
+        group_name: groupId === ALL_HOSTS ? null : groupId.slice(GROUP_PREFIX.length),
         credential_id: Number(credentialId),
         vault_password_id: vaultPasswordId === NO_VAULT ? null : Number(vaultPasswordId),
         become,
@@ -175,7 +177,7 @@ export function RunTriggerPage() {
             <SelectContent>
               <SelectItem value={ALL_HOSTS}>All hosts ({selectedInventory.hosts.length})</SelectItem>
               {selectedInventory.groups.map((group) => (
-                <SelectItem key={group.id} value={String(group.id)}>
+                <SelectItem key={group.id} value={GROUP_PREFIX + group.name}>
                   Group: {group.name}
                 </SelectItem>
               ))}

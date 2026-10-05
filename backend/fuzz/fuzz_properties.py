@@ -34,7 +34,7 @@ TARGETS = {
     "collect_secrets": "test_collect_secrets_never_raises_on_any_playbook_text",
     "vault_decrypt": "test_decrypt_raises_only_vault_error",
     "vault_encrypt": "test_encrypt_raises_only_vault_error",
-    "inventory_render": "test_rendered_inventory_parses_back_to_exactly_the_input",
+    "inventory_render": "test_rendered_inventory_parses_back_to_exactly_the_merged_inventory",
 }
 
 

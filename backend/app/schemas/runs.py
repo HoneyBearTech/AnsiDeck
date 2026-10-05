@@ -11,6 +11,8 @@ class RunCreate(BaseModel):
     playbook_id: int
     inventory_id: int
     group_id: int | None = None
+    # A target group by name: one of the inventory's own groups or a source's (Phase 4G).
+    group_name: str | None = Field(None, max_length=255)
     credential_id: int
     vault_password_id: int | None = None
     become: bool = False

@@ -1,9 +1,11 @@
+import pytest
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import IntegrityError
 
 from app.db import Base, alembic_config, get_engine
 from tests.conftest import TEST_DATABASE_URL
@@ -293,6 +295,57 @@ def test_0009_adds_git_sources_and_downgrades_with_the_0008_view() -> None:
             )
             assert "source_id" not in playbook_columns
         migrate(command.upgrade, "0009")
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        admin.dispose()
+
+
+def test_0011_gives_credentials_a_kind_and_refuses_to_drop_env_credentials() -> None:
+    url = make_url(TEST_DATABASE_URL)
+    scratch = url.database.removesuffix("_test") + "_migration_test"
+    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{scratch}"'))
+    engine = create_engine(url.set(database=scratch))
+    config = alembic_config()
+
+    def migrate(step, revision: str) -> None:
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            step(config, revision)
+
+    def insert(conn, columns: str, values: str) -> None:
+        conn.execute(text(f"INSERT INTO credentials (name, project_id, {columns}) VALUES {values}"))
+
+    try:
+        migrate(command.upgrade, "0010")
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO projects (name, description) VALUES ('P', '')"))
+            insert(conn, "encrypted_private_key", "('old', 1, 'x')")
+        migrate(command.upgrade, "0011")
+        with engine.begin() as conn:
+            assert conn.execute(text("SELECT kind FROM credentials")).scalar() == "ssh"
+            insert(conn, "kind, encrypted_env, env_names", "('env', 1, 'env', 'x', '[\"T\"]')")
+            insert(conn, "kind, store_path", "('env-ref', 1, 'env', 'web/netbox')")
+        for columns, values in [
+            ("kind, encrypted_private_key", "('bad1', 1, 'env', 'x')"),  # a key in an env one
+            ("kind, store_path, store_key", "('bad2', 1, 'env', 'p', 'k')"),
+            ("kind, encrypted_private_key, encrypted_env", "('bad3', 1, 'ssh', 'x', 'y')"),
+            ("kind, encrypted_env", "('bad4', 1, 'other', 'x')"),
+        ]:
+            with engine.begin() as conn, pytest.raises(IntegrityError):
+                insert(conn, columns, values)
+        with pytest.raises(RuntimeError, match="Environment-variable credentials exist"):
+            migrate(command.downgrade, "0010")
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM credentials WHERE kind = 'env'"))
+        migrate(command.downgrade, "0010")
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT name FROM credentials")).scalars().all() == ["old"]
+        migrate(command.upgrade, "0011")
     finally:
         engine.dispose()
         with admin.connect() as conn:

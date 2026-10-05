@@ -139,21 +139,38 @@ class ApiKey(Base):
     revoked_by: Mapped[str | None] = mapped_column(String(150), default=None)
 
 
+CREDENTIAL_KINDS = ("ssh", "env")
+
+
 class Credential(Base):
     __tablename__ = "credentials"
     __table_args__ = (
+        CheckConstraint("kind IN ('ssh', 'env')", name="kind"),
         CheckConstraint(
-            "(encrypted_private_key IS NULL) <> (store_path IS NULL)", name="one_secret"
+            "CASE kind"
+            " WHEN 'ssh' THEN encrypted_env IS NULL"
+            " AND (encrypted_private_key IS NULL) <> (store_path IS NULL)"
+            " AND (store_path IS NULL) = (store_key IS NULL)"
+            " WHEN 'env' THEN encrypted_private_key IS NULL AND store_key IS NULL"
+            " AND (encrypted_env IS NULL) <> (store_path IS NULL)"
+            " ELSE false END",
+            name="secret_by_kind",
         ),
-        CheckConstraint("(store_path IS NULL) = (store_key IS NULL)", name="store_ref"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(150), unique=True)
     description: Mapped[str | None] = mapped_column(String(500), default=None)
+    # "ssh": a private key for runs and git deploy keys. "env": named variables (an API
+    # token) for inventory plugins (app.env_credentials).
+    kind: Mapped[str] = mapped_column(String(10), default="ssh", server_default="ssh")
     # Either encrypted here, or a reference into the secret store (app.secret_store): a path
-    # under the project's own subtree and a key. Never both (a CHECK constraint).
+    # under the project's own subtree and, for a key, the key in that secret (an env
+    # credential takes every key). Never both (a CHECK constraint).
     encrypted_private_key: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
+    encrypted_env: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
+    # An env credential's variable names (not secret), for display.
+    env_names: Mapped[list | None] = mapped_column(JSON, default=None)
     store_path: Mapped[str | None] = mapped_column(String(400), default=None)
     store_key: Mapped[str | None] = mapped_column(String(100), default=None)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
@@ -393,6 +410,12 @@ class Run(Base):
     # The playbook as it was when the run was triggered: later edits don't change what a
     # queued run executes. NULL only for runs from before the job queue.
     playbook_snapshot: Mapped[str | None] = mapped_column(Text, default=None)
+    # The inventory's own hosts and groups as they were when the run was triggered
+    # (app.inventory_render.static_data), so edits while it waits don't change what it runs;
+    # NULL for runs queued before 4G (rendered from the live inventory). The rendered
+    # inventory's hash is recorded when the job is built.
+    inventory_static: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
+    inventory_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
     playbook_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
     timeout_seconds: Mapped[int] = mapped_column(
         Integer,

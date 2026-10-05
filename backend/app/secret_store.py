@@ -103,14 +103,14 @@ def check_path(path: str) -> list[str]:
         not path
         or len(path) > MAX_PATH
         or len(segments) > MAX_SEGMENTS
-        or not all(SEGMENT.match(s) for s in segments)
+        or not all(SEGMENT.fullmatch(s) for s in segments)
     ):
         raise SecretStoreError("invalid")
     return segments
 
 
 def check_key(key: str) -> str:
-    if not SEGMENT.match(key or ""):
+    if not SEGMENT.fullmatch(key or ""):
         raise SecretStoreError("invalid")
     return key
 
@@ -121,8 +121,9 @@ def base_path(project_id: int) -> str:
     return f"{settings.secrets_store_kv_mount}/{settings.secrets_store_path_prefix}/{project_id}/"
 
 
-def location(project_id: int, path: str, key: str) -> str:
-    return f"{base_path(project_id)}{path}#{key}"
+def location(project_id: int, path: str, key: str | None) -> str:
+    """Where a reference points; without a key, the whole secret (an env credential)."""
+    return f"{base_path(project_id)}{path}" + (f"#{key}" if key is not None else "")
 
 
 def _api_path(*segments: str) -> str:
@@ -315,9 +316,19 @@ class _Client:
 
     def read(self, project_id: int, path: str, key: str, deadline: float) -> tuple[str, int]:
         """(value, version) of one key of a project's secret."""
+        check_key(key)
+        data, version = self.read_data(project_id, path, deadline)
+        if key not in data:
+            raise SecretStoreError("missing_key")
+        value = data[key]
+        if not isinstance(value, str) or not value:
+            raise SecretStoreError("bad_value")
+        return value, version
+
+    def read_data(self, project_id: int, path: str, deadline: float) -> tuple[dict, int]:
+        """(every key of a project's secret, version)."""
         settings = get_settings()
         segments = check_path(path)
-        check_key(key)
         api_path = _api_path(
             settings.secrets_store_kv_mount,
             "data",
@@ -354,12 +365,9 @@ class _Client:
             raise SecretStoreError("bad_response") from None
         if data is None:  # a deleted or destroyed version
             raise SecretStoreError("not_found")
-        if not isinstance(data, dict) or key not in data:
-            raise SecretStoreError("missing_key")
-        value = data[key]
-        if not isinstance(value, str) or not value:
-            raise SecretStoreError("bad_value")
-        return value, version
+        if not isinstance(data, dict):
+            raise SecretStoreError("bad_response")
+        return data, version
 
     def health(self, deadline: float) -> dict:
         """For the probe: reachable, sealed, version, token TTL (seconds) or the error."""
@@ -414,6 +422,21 @@ def read_versioned(
         raise SecretStoreError("disabled")
     try:
         result = _client.read(project_id, path, key, deadline or _deadline())
+    except SecretStoreError as exc:
+        metrics.secret_store_read(exc.kind)
+        raise
+    metrics.secret_store_read("ok")
+    return result
+
+
+def read_all_versioned(
+    project_id: int, path: str, deadline: float | None = None
+) -> tuple[dict, int]:
+    """Every key of one secret (an env credential: each key becomes a variable)."""
+    if not enabled():
+        raise SecretStoreError("disabled")
+    try:
+        result = _client.read_data(project_id, path, deadline or _deadline())
     except SecretStoreError as exc:
         metrics.secret_store_read(exc.kind)
         raise
