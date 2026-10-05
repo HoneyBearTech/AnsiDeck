@@ -130,7 +130,8 @@ they are.
   hold their insecure defaults.
 - Serve it over HTTPS through a reverse proxy, set `COOKIE_SECURE=true`, and make sure the proxy forwards
   WebSocket upgrades (live run output needs them). If the browser's origin differs from the `Host` the backend
-  sees, add it to `CORS_ORIGINS`.
+  sees, add it to `CORS_ORIGINS`. The frontend container already sends a Content-Security-Policy and other
+  browser hardening headers; set `Strict-Transport-Security` on the proxy, and don't strip those headers.
 - AnsiDeck is not designed to be exposed directly to the public internet. See [docs/security.md](docs/security.md).
 - Back up both the database (for example
   `docker compose exec -T postgres pg_dump -U ansideck -Fc ansideck > ansideck.dump`, restored with

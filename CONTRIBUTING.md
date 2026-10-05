@@ -74,11 +74,13 @@ Contributions must follow these style guides; CI enforces them, and a pull reque
 merged.
 
 - **Python** (`backend/`): [PEP 8](https://peps.python.org/pep-0008/) as enforced by
-  [ruff](https://docs.astral.sh/ruff/) with the rule set in `backend/pyproject.toml`, and formatting by
-  `ruff format` (line length 100). Write docstrings for modules and for functions whose purpose isn't
+  [ruff](https://docs.astral.sh/ruff/) with the rule set in `backend/pyproject.toml` (including its security
+  rules), and formatting by `ruff format` (line length 100). The test suite turns Python warnings into
+  errors. Write docstrings for modules and for functions whose purpose isn't
   obvious from their name, following [PEP 257](https://peps.python.org/pep-0257/). Use type hints.
-- **TypeScript and React** (`frontend/`): the TypeScript compiler settings in `frontend/tsconfig*.json`
-  and the [oxlint](https://oxc.rs/docs/guide/usage/linter) rules in the frontend's configuration. Follow the
+- **TypeScript and React** (`frontend/`): TypeScript in strict mode with the extra checks in
+  `frontend/tsconfig*.json`, and the [oxlint](https://oxc.rs/docs/guide/usage/linter) rules in
+  `frontend/.oxlintrc.json` (warnings fail the lint). Follow the
   existing component patterns (Radix primitives in `src/components/ui/`, Tailwind tokens in `src/index.css`).
 - **Exceptions** are rare: suppress a single finding on its own line (`# noqa: <rule>` or
   `// oxlint-disable-next-line <rule>`) with a short reason, never a whole file or rule without one.
