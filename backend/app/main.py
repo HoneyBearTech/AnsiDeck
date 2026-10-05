@@ -33,6 +33,7 @@ from app.routers import (
     git_sources,
     health,
     inventories,
+    inventory_sources,
     notifications,
     playbooks,
     projects,
@@ -210,6 +211,9 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(sso.router, prefix="/api/auth", tags=["auth"])
 app.include_router(playbooks.router, prefix="/api/playbooks", tags=["playbooks"])
 app.include_router(inventories.router, prefix="/api/inventories", tags=["inventories"])
+app.include_router(
+    inventory_sources.router, prefix="/api/inventories/{inventory_id}", tags=["inventories"]
+)
 app.include_router(credentials.router, prefix="/api/credentials", tags=["credentials"])
 app.include_router(vault_passwords.router, prefix="/api/vault-passwords", tags=["vault-passwords"])
 app.include_router(vault.router, prefix="/api/vault", tags=["vault"])

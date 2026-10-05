@@ -221,6 +221,15 @@ jobs:
               --expect-data "Sign-ins by outcome and method" \
             || { docker logs smoke-grafana 2>&1 | tail -40; exit 1; }
 
+      - name: Smoke test dynamic inventory sources with the backend runtime image
+        if: matrix.service == 'backend' && matrix.target == 'runtime'
+        # The isolated worker above refreshes generator and constructed sources over a static
+        # host (ansible-inventory as a slot user); a run reaches the host through a group only
+        # constructed made, and a broken source fails the refresh with its reason.
+        run: |
+          python3 backend/scripts/smoke_inventory.py http://localhost:8000 ci-test "$RUNNER_TEMP/smoke_key" \
+            || { docker logs smoke-worker 2>&1 | tail -40; docker logs smoke 2>&1 | tail -40; exit 1; }
+
       - name: Smoke test the secret store with the backend runtime image
         if: matrix.service == 'backend' && matrix.target == 'runtime'
         # An OpenBao dev server set up by backend/scripts/openbao_dev_setup.py (as the compose

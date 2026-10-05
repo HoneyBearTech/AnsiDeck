@@ -298,9 +298,20 @@ class Inventory(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
     description: Mapped[str | None] = mapped_column(String(500), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Dynamic sources (Phase 4G): refreshed every this many seconds (0: only on demand), and
+    # the snapshot runs use now (the newest good refresh).
+    refresh_interval_seconds: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    current_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("inventory_snapshots.id", ondelete="SET NULL", use_alter=True), default=None
+    )
 
     groups: Mapped[list["InventoryGroup"]] = relationship(
         back_populates="inventory", cascade="all, delete-orphan"
+    )
+    sources: Mapped[list["InventorySource"]] = relationship(
+        back_populates="inventory",
+        cascade="all, delete-orphan",
+        order_by="InventorySource.position",
     )
     hosts: Mapped[list["InventoryHost"]] = relationship(
         back_populates="inventory", cascade="all, delete-orphan"
@@ -336,6 +347,121 @@ class InventoryHost(Base):
     groups: Mapped[list["InventoryGroup"]] = relationship(
         secondary=host_group, back_populates="hosts"
     )
+
+
+class InventorySource(Base):
+    """A dynamic inventory source: an inventory plugin's config (YAML with a `plugin:` key),
+    run by ansible-inventory in an isolated worker when the inventory is refreshed."""
+
+    __tablename__ = "inventory_sources"
+    __table_args__ = (UniqueConstraint("inventory_id", "name", name="uq_inventory_source_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    inventory_id: Mapped[int] = mapped_column(
+        ForeignKey("inventories.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    plugin: Mapped[str] = mapped_column(String(200))  # from the config, for display
+    config: Mapped[str] = mapped_column(Text)
+    # An env credential (app.env_credentials) the plugin reads its API token from.
+    credential_id: Mapped[int | None] = mapped_column(
+        ForeignKey("credentials.id", ondelete="RESTRICT"), index=True, default=None
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_by: Mapped[str] = mapped_column(String(150))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    inventory: Mapped["Inventory"] = relationship(back_populates="sources")
+
+
+class InventoryRefresh(Base):
+    """One refresh of an inventory's sources: queued, claimed by a worker (like a run, with a
+    lease and one-time tokens), and ended with a snapshot or an error."""
+
+    __tablename__ = "inventory_refreshes"
+    __table_args__ = (
+        # One queued and one running refresh per inventory: repeated requests merge.
+        Index(
+            "ux_inventory_refreshes_queued",
+            "inventory_id",
+            unique=True,
+            postgresql_where=text("status = 'queued'"),
+        ),
+        Index(
+            "ux_inventory_refreshes_running",
+            "inventory_id",
+            unique=True,
+            postgresql_where=text("status = 'running'"),
+        ),
+        Index(
+            "ix_inventory_refreshes_queue",
+            "queued_at",
+            "id",
+            postgresql_where=text("status = 'queued'"),
+        ),
+        Index(
+            "ix_inventory_refreshes_lease",
+            "lease_expires_at",
+            postgresql_where=text("status = 'running'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    inventory_id: Mapped[int] = mapped_column(
+        ForeignKey("inventories.id", ondelete="CASCADE"), index=True
+    )
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    status: Mapped[str] = mapped_column(String(20), default=RunStatus.QUEUED.value)
+    # manual | schedule | sources_changed | static_changed
+    trigger: Mapped[str] = mapped_column(String(20))
+    requested_by: Mapped[str | None] = mapped_column(String(150), default=None)
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    timeout_seconds: Mapped[int] = mapped_column(Integer)
+    worker_id: Mapped[str | None] = mapped_column(String(255), default=None)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    claim_token_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    job_token_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    job_token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    # What it ran: {"sources": [{"id", "name", "plugin", "sha256"}] (never the configs),
+    # "static_hosts": [the inventory's own hosts it fed to the plugins]}.
+    sources: Mapped[dict | None] = mapped_column(JSON, default=None)
+    output_bytes: Mapped[int | None] = mapped_column(Integer, default=None)
+    error: Mapped[str | None] = mapped_column(String(1000), default=None)
+    snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("inventory_snapshots.id", ondelete="SET NULL"), default=None
+    )
+
+
+class InventorySnapshot(Base):
+    """What a refresh found, normalised (app.inventory_sources.normalise): {"vars", "hosts",
+    "groups", "static_hosts"}. Runs pin the current one when they are triggered."""
+
+    __tablename__ = "inventory_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    inventory_id: Mapped[int] = mapped_column(
+        ForeignKey("inventories.id", ondelete="CASCADE"), index=True
+    )
+    refresh_id: Mapped[int | None] = mapped_column(Integer, default=None)
+    data: Mapped[dict] = mapped_column(JSON)
+    sha256: Mapped[str] = mapped_column(String(64))
+    host_count: Mapped[int] = mapped_column(Integer)
+    group_count: Mapped[int] = mapped_column(Integer)
+    warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    sources: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # When a newer refresh replaced it; pruned once no queued or running run pins it.
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
 
 class Run(Base):
@@ -416,6 +542,10 @@ class Run(Base):
     # inventory's hash is recorded when the job is built.
     inventory_static: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
     inventory_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
+    # The sources' snapshot it runs with (Phase 4G), pinned with the static data.
+    inventory_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("inventory_snapshots.id", ondelete="SET NULL"), default=None
+    )
     playbook_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
     timeout_seconds: Mapped[int] = mapped_column(
         Integer,

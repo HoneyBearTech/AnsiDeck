@@ -171,6 +171,77 @@ def _own_home() -> str:
     return home
 
 
+# A refresh fails if any source fails to parse (by default ansible only warns, and a run would
+# quietly see fewer hosts), reads plugin configs and YAML only, and never asks a cloud
+# metadata service for the worker host's own identity.
+INVENTORY_ENV = {
+    "ANSIBLE_INVENTORY_ENABLED": "auto,yaml",
+    "ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED": "True",
+    "ANSIBLE_INVENTORY_UNPARSED_FAILED": "True",
+    "AWS_EC2_METADATA_DISABLED": "true",
+}
+_OUTPUT_CHUNK = 512 * 1024
+_STDERR_TAIL = 16 * 1024
+
+
+def run_inventory(job: dict, emit) -> None:
+    """An inventory refresh: ansible-inventory --list --export over the job's files (sources,
+    the inventory's own hosts, constructed sources), its output sent back in "output"
+    messages, then {"type": "inventory_result", "rc", "stderr" (the end of it)} and the usual
+    "result". The plugins run in a grandchild that can't reach the message pipe."""
+    import subprocess
+
+    base = "/tmp" if os.path.isdir("/tmp") else None
+    pdd = Path(tempfile.mkdtemp(prefix=job.get("prefix", "ansideck-refresh-"), dir=base))
+    emit({"type": "started", "private_data_dir": str(pdd)})
+    try:
+        if job.get("own_home"):
+            os.environ["HOME"] = _own_home()
+        inventory = pdd / "inventory"
+        inventory.mkdir(mode=0o700)
+        paths = []
+        for item in job["files"]:
+            name = item["name"]
+            if "/" in name or name.startswith("."):
+                raise RuntimeError(f"invalid file name {name!r}")
+            path = inventory / name
+            path.write_text(item["text"])
+            path.chmod(0o600)
+            paths.append(str(path))
+        (pdd / "tmp").mkdir(mode=0o700)
+        env = {
+            **os.environ,
+            "ANSIBLE_HOME": str(pdd / "ansible"),
+            "TMPDIR": str(pdd / "tmp"),
+            **job.get("env", {}),
+            **INVENTORY_ENV,
+        }
+        output, stderr = pdd / "out.json", pdd / "stderr.txt"
+        command = [str(Path(sys.executable).parent / "ansible-inventory")]
+        for path in paths:
+            command += ["-i", path]
+        command += ["--list", "--export", "--output", str(output)]
+        with open(stderr, "wb") as err:
+            rc = subprocess.run(
+                command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
+                env=env, cwd=pdd, check=False,
+            ).returncode  # fmt: skip
+        with open(stderr, "rb") as err:
+            err.seek(max(0, err.seek(0, os.SEEK_END) - _STDERR_TAIL))
+            tail = err.read().decode("utf-8", "replace")
+        size = output.stat().st_size if rc == 0 and output.exists() else 0
+        if size > job.get("max_output_bytes", 32 * 1024 * 1024):
+            rc, tail = 1, f"the output is larger than {job['max_output_bytes']} bytes"
+        elif rc == 0:
+            with open(output, encoding="utf-8") as out:
+                while chunk := out.read(_OUTPUT_CHUNK):
+                    emit({"type": "output", "data": chunk})
+        emit({"type": "inventory_result", "rc": rc, "stderr": tail})
+        emit({"type": "result", "status": "successful" if rc == 0 else "failed", "rc": rc})
+    finally:
+        shutil.rmtree(pdd, ignore_errors=True)
+
+
 def run(job: dict) -> None:
     event_fd = job.pop("event_fd")
     # Not inherited by anything the playbook spawns, so it can't forge results.
@@ -180,6 +251,13 @@ def run(job: dict) -> None:
     def emit(message: dict) -> None:
         events.write(json.dumps(message) + "\n")
         events.flush()
+
+    if job.get("mode") == "inventory":
+        try:
+            run_inventory(job, emit)
+        except Exception as exc:  # noqa: BLE001 - reported, the refresh fails with this reason
+            emit({"type": "refused", "reason": str(exc)[:300]})
+        return
 
     # Must return None: ansible-runner writes its own unscrubbed job_events when the
     # handler returns truthy. Scrubbing happens in the parent, before anything is stored.

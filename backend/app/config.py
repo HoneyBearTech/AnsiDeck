@@ -119,6 +119,12 @@ class Settings(BaseSettings):
     # Test-only: allows file:// remotes. Production refuses to start with it.
     git_allow_local_sources: bool = False
 
+    # Dynamic inventory (app.inventory_sources): a refresh runs ansible-inventory in a worker.
+    inventory_refresh_timeout_seconds: int = Field(300, ge=10, le=3600)
+    inventory_max_output_mb: int = Field(32, ge=1, le=256)
+    inventory_max_hosts: int = Field(20_000, ge=1)
+    inventory_max_groups: int = Field(5_000, ge=1)
+
     # Secret store (app.secret_store): credentials and vault passwords may live in OpenBao or
     # HashiCorp Vault (KV v2) instead of AnsiDeck's database. Off unless the URL is set. Each
     # project's secrets live under <kv mount>/<path prefix>/<project id>/; AnsiDeck reads them

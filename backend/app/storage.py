@@ -69,3 +69,10 @@ def git_snapshot_dir(source_id: int) -> Path:
     path = git_dir() / "snapshots" / str(source_id)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def inventory_refresh_output_path(refresh_id: int) -> Path:
+    """A refresh's output while the worker uploads it (removed when the refresh ends)."""
+    path = Path(get_settings().data_dir) / "inventory-refreshes"
+    path.mkdir(parents=True, exist_ok=True)
+    return path / f"{refresh_id}.json"

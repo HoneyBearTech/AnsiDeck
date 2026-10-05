@@ -5,6 +5,7 @@ and one heartbeat thread for the whole worker (lease renewal, cancel, timeout, s
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 from collections import deque
@@ -15,11 +16,12 @@ from app.run_executor import (
     RunRefused,
     format_duration,
     host_counts,
+    inventory_in_worker,
     run_in_worker,
     sweep,
 )
 from app.run_isolation import RunIdentity, identity_for_slot
-from app.scrub import build_scrubber
+from app.scrub import Scrubber, build_scrubber, scrub_exact
 from app.subprocess_env import clean_env
 from app.worker.client import ApiClient, ApiRefused, ApiUnavailable
 
@@ -32,6 +34,10 @@ _TRUNCATED_STDOUT_CHARS = 64 * 1024
 _BATCH_DELAY_SECONDS = 0.2
 _FLUSH_TIMEOUT_SECONDS = 60.0
 _DIRTY_SLOT_RETRY_SECONDS = 30.0
+# A refresh's output goes up in chunks, well under the internal API's 4 MiB body limit.
+_REFRESH_CHUNK_BYTES = 2 * 1024 * 1024
+_ERROR_LINES = re.compile(r"^\[(ERROR|WARNING)\]: .*$", re.MULTILINE)
+_REFRESH_PATHS = re.compile(r"/\S*?/ansideck-refresh-\d+-[^/\s]*/inventory/")
 
 # Stop reasons (ExecutionHandle.stop_reason) and what they become.
 CANCELLED = "cancelled"
@@ -54,18 +60,39 @@ def _bounded(event: dict) -> dict:
     }
 
 
+def refresh_error(stderr: str, secrets: list[str], rc: int | None) -> str:
+    """Why ansible-inventory failed, from its stderr: its error lines (the config files named
+    without their temporary directory), scrubbed of the credentials' values."""
+    text = _REFRESH_PATHS.sub("", stderr)
+    errors = [m.group(0) for m in _ERROR_LINES.finditer(text) if m.group(1) == "ERROR"]
+    summary = "\n".join(errors) if errors else text.strip()[-800:]
+    summary = Scrubber(secrets).scrub_text(summary).strip()
+    return (summary or f"ansible-inventory failed (exit code {rc})")[-1000:]
+
+
 class RunTask:
-    def __init__(self, run_id: int, claim_token: str) -> None:
+    """A claimed run, or (kind "refresh") an inventory refresh: run_id is then its id."""
+
+    def __init__(self, run_id: int, claim_token: str, kind: str = "run") -> None:
         self.run_id = run_id
         self.claim_token = claim_token
+        self.kind = kind
         self.handle = ExecutionHandle()
         self.renewed = time.monotonic()  # the claim itself set the lease
         self.deadline: float | None = None
         self.timeout_seconds = 0
 
+    @property
+    def key(self) -> tuple[str, int]:
+        return (self.kind, self.run_id)
+
+    @property
+    def label(self) -> str:
+        return f"{self.kind} {self.run_id}"
+
     def stop(self, reason: str) -> None:
         if self.handle.stop(reason):
-            logger.info("run %s: stopping (%s)", self.run_id, reason)
+            logger.info("%s: stopping (%s)", self.label, reason)
 
 
 class EventSender:
@@ -197,7 +224,7 @@ class Worker:
         self.claim_wait_seconds = claim_wait_seconds
         self.heartbeat_seconds = heartbeat_seconds
         self.fence_seconds = fence_seconds
-        self._tasks: dict[int, RunTask] = {}
+        self._tasks: dict[tuple[str, int], RunTask] = {}
         self._lock = threading.Lock()
         self._stopping = threading.Event()
         self._heartbeat_stop = threading.Event()
@@ -224,7 +251,7 @@ class Worker:
         (they end as failed, "worker shut down"), and waits for every thread."""
         self._stopping.set()
         deadline = time.monotonic() + drain_seconds
-        while self.active_run_ids() and time.monotonic() < deadline:
+        while self._snapshot() and time.monotonic() < deadline:
             time.sleep(0.2)
         for task in self._snapshot():
             task.stop(SHUTDOWN)
@@ -236,7 +263,7 @@ class Worker:
 
     def active_run_ids(self) -> list[int]:
         with self._lock:
-            return list(self._tasks)
+            return [run_id for kind, run_id in self._tasks if kind == "run"]
 
     def active_pids(self) -> set[int]:
         return {pid for task in self._snapshot() if (pid := task.handle.pid)}
@@ -278,6 +305,7 @@ class Worker:
                         "slots": self.slots,
                         "isolated": self.isolated,
                         "wait_seconds": self.claim_wait_seconds,
+                        "kinds": ["run", "refresh"],
                     },
                     timeout=self.claim_wait_seconds + 15,
                 )
@@ -294,27 +322,31 @@ class Worker:
                 self._stopping.wait(5)
                 continue
             claim = response.json()
-            task = RunTask(claim["run_id"], claim["claim_token"])
+            task = RunTask(claim["run_id"], claim["claim_token"], claim.get("kind", "run"))
             with self._lock:
-                self._tasks[task.run_id] = task
+                self._tasks[task.key] = task
             if self._stopping.is_set():  # claimed while shutting down: end it at once
                 task.stop(SHUTDOWN)
             try:
-                self._execute(task, claim["job_token"], identity)
-            except Exception:  # noqa: BLE001 - one run's failure must not end the slot
-                logger.exception("run %s: the worker failed", task.run_id)
+                if task.kind == "refresh":
+                    self._execute_refresh(task, claim["job_token"], identity)
+                else:
+                    self._execute(task, claim["job_token"], identity)
+            except Exception:  # noqa: BLE001 - one job's failure must not end the slot
+                logger.exception("%s: the worker failed", task.label)
             finally:
                 dirty = True
                 with self._lock:
-                    self._tasks.pop(task.run_id, None)
+                    self._tasks.pop(task.key, None)
         if identity is not None and dirty:
             sweep(identity)
 
     def _fetch_job(self, task: RunTask, job_token: str) -> dict | None:
+        path = "refreshes" if task.kind == "refresh" else "runs"
         for delay in (1, 2, 4, 8, 16, None):
             try:
                 response = self.client.post(
-                    f"/internal/runs/{task.run_id}/job",
+                    f"/internal/{path}/{task.run_id}/job",
                     {"job_token": job_token},
                     claim_token=task.claim_token,
                 )
@@ -441,6 +473,121 @@ class Worker:
             outcome, why = "failed", f"not run: {refused}"
         self._complete(task, sender.last_seq, outcome, why, return_code, recap)
 
+    # ------------------------------------------------------------------ refreshes
+
+    def _execute_refresh(
+        self, task: RunTask, job_token: str, identity: RunIdentity | None = None
+    ) -> None:
+        """An inventory refresh: ansible-inventory in the slot's run process, its output
+        scrubbed of the credentials' values, uploaded in chunks, then the outcome."""
+        job = self._fetch_job(task, job_token)
+        if job is None:
+            return
+        task.timeout_seconds = job["timeout_seconds"]
+        task.deadline = time.monotonic() + task.timeout_seconds
+        secrets = job["secrets"]
+        logger.info("%s: starting", task.label)
+        rc: int | None = None
+        output, stderr, refused = "", "", None
+        try:
+            rc, output, stderr = inventory_in_worker(
+                {
+                    "files": job["files"],
+                    "env": job["env"],
+                    "prefix": f"ansideck-refresh-{task.run_id}-",
+                    "own_home": identity is not None,
+                    "max_output_bytes": job["max_output_bytes"],
+                },
+                clean_env(self._galaxy_env()),
+                task.handle,
+                identity,
+            )
+        except RunRefused as exc:
+            refused = str(exc)
+        except Exception:  # noqa: BLE001 - reported as a failed refresh below
+            if task.handle.stop_reason is None:
+                logger.exception("%s: could not run ansible-inventory", task.label)
+        finally:
+            del job
+
+        reason = task.handle.stop_reason
+        if reason == GONE:
+            return
+        if reason is not None:
+            outcome, why = self._outcome(task, reason, None, False)
+            self._complete_refresh(task, {"status": outcome, "error": why})
+        elif refused is not None:
+            self._complete_refresh(task, {"status": "failed", "error": f"not run: {refused}"})
+        elif rc != 0:
+            self._complete_refresh(
+                task, {"status": "failed", "error": refresh_error(stderr, secrets, rc)}
+            )
+        else:
+            self._upload_refresh(task, output, secrets)
+
+    def _upload_refresh(self, task: RunTask, output: str, secrets: list[str]) -> None:
+        try:
+            data = json.loads(output)
+        except (ValueError, RecursionError):
+            self._complete_refresh(
+                task, {"status": "failed", "error": "ansible-inventory's output is not JSON"}
+            )
+            return
+        data, scrubbed = scrub_exact(data, secrets)
+        body = json.dumps(data).encode()
+        offset = 0
+        deadline = time.monotonic() + _FLUSH_TIMEOUT_SECONDS
+        while offset < len(body) and time.monotonic() < deadline:
+            if task.handle.stop_reason:
+                return
+            try:
+                response = self.client.post_bytes(
+                    f"/internal/refreshes/{task.run_id}/output",
+                    body[offset : offset + _REFRESH_CHUNK_BYTES],
+                    claim_token=task.claim_token,
+                    headers={"X-Offset": str(offset)},
+                )
+            except ApiUnavailable as exc:
+                logger.warning("%s: upload failed (%s); retrying", task.label, exc)
+                time.sleep(1)
+                continue
+            if response.status_code == 200:
+                offset = response.json()["offset"]
+            elif response.status_code == 409:
+                offset = response.json()["expected_offset"]
+            else:
+                logger.error("%s: output refused (HTTP %s)", task.label, response.status_code)
+                return
+        if offset < len(body):
+            logger.error("%s: could not upload the output in time", task.label)
+            return
+        self._complete_refresh(
+            task,
+            {
+                "status": "success",
+                "bytes": len(body),
+                "sha256": hashlib.sha256(body).hexdigest(),
+                "scrubbed": scrubbed,
+            },
+        )
+
+    def _complete_refresh(self, task: RunTask, body: dict) -> None:
+        deadline = time.monotonic() + _FLUSH_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            try:
+                response = self.client.post(
+                    f"/internal/refreshes/{task.run_id}/complete",
+                    body,
+                    claim_token=task.claim_token,
+                )
+            except ApiUnavailable as exc:
+                logger.warning("%s: reporting failed (%s); retrying", task.label, exc)
+                time.sleep(1)
+                continue
+            logger.info("%s: %s (HTTP %s)", task.label, body["status"], response.status_code)
+            return
+        logger.error("%s: could not report the result in time", task.label)
+
     @staticmethod
     def _outcome(
         task: RunTask, reason: str | None, status: str | None, crashed: bool
@@ -510,7 +657,7 @@ class Worker:
         for task in tasks:
             if task.deadline is not None and now > task.deadline:
                 task.stop(TIMED_OUT)
-        by_id = {task.run_id: task for task in tasks}
+        by_key = {task.key: task for task in tasks}
         try:
             response = self.client.post(
                 "/internal/heartbeat",
@@ -518,7 +665,16 @@ class Worker:
                     "worker_id": self.worker_id,
                     "slots": self.slots,
                     "isolated": self.isolated,
-                    "runs": [{"run_id": t.run_id, "claim_token": t.claim_token} for t in tasks],
+                    "runs": [
+                        {"run_id": t.run_id, "claim_token": t.claim_token}
+                        for t in tasks
+                        if t.kind == "run"
+                    ],
+                    "refreshes": [
+                        {"refresh_id": t.run_id, "claim_token": t.claim_token}
+                        for t in tasks
+                        if t.kind == "refresh"
+                    ],
                 },
                 timeout=max(self.heartbeat_seconds, 2.0),
             )
@@ -526,8 +682,12 @@ class Worker:
             logger.warning("heartbeat failed (%s)", exc)
         else:
             if response.status_code == 200:
-                for answer in response.json()["runs"]:
-                    task = by_id.get(answer["run_id"])
+                answers = response.json()
+                for answer in answers.get("refreshes", []):
+                    answer["run_id"] = answer["refresh_id"]
+                    answer["kind"] = "refresh"
+                for answer in [*answers["runs"], *answers.get("refreshes", [])]:
+                    task = by_key.get((answer.get("kind", "run"), answer["run_id"]))
                     if task is None:
                         continue
                     if answer["state"] == "gone":

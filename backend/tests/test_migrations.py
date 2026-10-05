@@ -351,3 +351,39 @@ def test_0011_gives_credentials_a_kind_and_refuses_to_drop_env_credentials() -> 
         with admin.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
         admin.dispose()
+
+
+def test_0012_adds_inventory_sources_and_downgrades_cleanly() -> None:
+    url = make_url(TEST_DATABASE_URL)
+    scratch = url.database.removesuffix("_test") + "_migration_test"
+    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{scratch}"'))
+    engine = create_engine(url.set(database=scratch))
+    config = alembic_config()
+
+    def migrate(step, revision: str) -> None:
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            step(config, revision)
+
+    def exists(conn, name: str) -> bool:
+        return conn.execute(text("SELECT to_regclass(:n)"), {"n": name}).scalar() is not None
+
+    try:
+        migrate(command.upgrade, "0012")
+        with engine.connect() as conn:
+            for table in ("inventory_sources", "inventory_refreshes", "inventory_snapshots"):
+                assert exists(conn, table)
+            assert exists(conn, "analytics.inventory_refreshes")
+        migrate(command.downgrade, "0011")
+        with engine.connect() as conn:
+            assert not exists(conn, "inventory_snapshots")
+            assert not exists(conn, "analytics.inventory_refreshes")
+        migrate(command.upgrade, "0012")
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        admin.dispose()

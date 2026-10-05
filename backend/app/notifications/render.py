@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from app.notifications import (
     ADMIN_CHANGE,
+    INVENTORY_REFRESH_FAILED,
     LOGIN_ATTACK,
     QUEUE_STUCK,
     RESOLVED,
@@ -79,6 +80,32 @@ def _secrets(payload: dict, public_url: str) -> Message:
         "Runs whose credentials or vault passwords live there fail until it works again.",
         _RED,
         url=_link(public_url, "/workers"),
+    )
+
+
+def _inventory(payload: dict, public_url: str) -> Message:
+    name = _clip(payload.get("inventory", "?"), 150)
+    url = (
+        _link(public_url, f"/inventories/{payload['inventory_id']}")
+        if payload.get("inventory_id") is not None
+        else None
+    )
+    facts = [("Project", _clip(payload.get("project") or "?", 150))]
+    if payload.get("state") == RESOLVED:
+        return Message(
+            f"Inventory {name} refreshes again",
+            "Its dynamic sources were read successfully; runs use the new snapshot.",
+            _GREEN,
+            facts=facts,
+            url=url,
+        )
+    return Message(
+        f"Inventory {name}: refresh failed",
+        _clip(payload.get("error") or "Its dynamic sources could not be read.", 300)
+        + " Runs keep using the last good snapshot.",
+        _RED,
+        facts=facts,
+        url=url,
     )
 
 
@@ -188,6 +215,8 @@ def build(event: str, payload: dict, public_url: str = "") -> Message:
         return _ops(event, payload, public_url)
     if event in (LOGIN_ATTACK, ADMIN_CHANGE):
         return _security(event, payload, public_url)
+    if event == INVENTORY_REFRESH_FAILED:
+        return _inventory(payload, public_url)
     run_id = payload.get("run_id")
     target = _clip(payload.get("inventory", "?"), 150)
     if payload.get("group"):

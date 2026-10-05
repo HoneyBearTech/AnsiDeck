@@ -11,7 +11,7 @@ from app.crypto import encrypt_secret
 from app.db import get_db
 from app.env_credentials import encrypt_env, env_problem
 from app.hardening import FailureThrottle, client_ip
-from app.models import Credential, GitSource, User
+from app.models import Credential, GitSource, InventorySource, User
 from app.permissions import Permission, Scope, guard
 from app.schemas.credentials import CredentialCreate, CredentialOut, SecretCheck
 from app.scoping import get_scoped, readable_project_ids, resolve_write_project
@@ -318,6 +318,13 @@ def delete_credential(
     if source is not None:
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"Git source {source.name!r} uses this key as its deploy key"
+        )
+    used_by = (
+        db.query(InventorySource).filter(InventorySource.credential_id == credential_id).first()
+    )
+    if used_by is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Inventory source {used_by.name!r} uses this credential"
         )
     db.delete(credential)
     db.commit()

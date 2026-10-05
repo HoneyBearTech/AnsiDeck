@@ -8,8 +8,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import Run, RunStatus, Worker
+from app.models import Project, Run, RunStatus, Worker
 from app.notifications import (
+    INVENTORY_REFRESH_FAILED,
     QUEUE_STUCK,
     RESOLVED,
     SECRETS_UNAVAILABLE,
@@ -121,3 +122,32 @@ def secret_store_ok(db: Session, label: str) -> None:
         emit(
             db, SECRETS_UNAVAILABLE, project_id=None, data={"state": RESOLVED, "label": label[:60]}
         )
+
+
+def inventory_refresh_failed(db: Session, inventory, error: str) -> bool:
+    """A refresh of an inventory's sources failed: alert once per failure streak. True when
+    this one started the streak."""
+    data = _inventory_data(db, inventory) | {"error": error[:300]}
+    if raise_alert(db, f"{INVENTORY_REFRESH_FAILED}:{inventory.id}", data):
+        emit(db, INVENTORY_REFRESH_FAILED, project_id=inventory.project_id, data=data)
+        return True
+    return False
+
+
+def inventory_refresh_ok(db: Session, inventory) -> None:
+    if clear_alert(db, f"{INVENTORY_REFRESH_FAILED}:{inventory.id}"):
+        emit(
+            db,
+            INVENTORY_REFRESH_FAILED,
+            project_id=inventory.project_id,
+            data=_inventory_data(db, inventory) | {"state": RESOLVED},
+        )
+
+
+def _inventory_data(db: Session, inventory) -> dict:
+    project = db.get(Project, inventory.project_id)
+    return {
+        "inventory_id": inventory.id,
+        "inventory": inventory.name,
+        "project": project.name if project else None,
+    }

@@ -12,7 +12,14 @@ from sqlalchemy.orm import Session
 
 from app.git_sync import snapshot_path, vars_texts
 from app.inventory_render import all_vars_dicts, merge, render, static_data
-from app.models import Credential, GitSnapshot, Inventory, Run, VaultPassword
+from app.models import (
+    Credential,
+    GitSnapshot,
+    Inventory,
+    InventorySnapshot,
+    Run,
+    VaultPassword,
+)
 from app.scrub import collect_secrets
 from app.secret_store import (
     SecretStoreError,
@@ -91,7 +98,12 @@ def build_job(db: Session, run: Run) -> dict:
     assert_same_project(run, inventory, "inventory")
     # Pinned when triggered; runs queued before 4G see the inventory as it is now.
     static = run.inventory_static if run.inventory_static is not None else static_data(inventory)
-    graph = merge(static)
+    snapshot = None
+    if run.inventory_snapshot_id is not None:
+        snapshot = db.get(InventorySnapshot, run.inventory_snapshot_id)
+        if snapshot is None or snapshot.inventory_id != inventory.id:
+            raise RuntimeError(f"run {run.id}: its inventory snapshot is gone or elsewhere")
+    graph = merge(static, snapshot.data if snapshot is not None else None)
     if run.group_name is not None and run.group_name not in graph["groups"]:
         raise RuntimeError(f"run {run.id}: group {run.group_name!r} is not in its inventory")
     inventory_text = render(graph, run.group_name)
