@@ -11,6 +11,7 @@ import type {
   PlaybookDetail,
   ProjectAccess,
   Run,
+  RunTemplate,
   User,
   VaultPassword,
 } from "@/lib/api";
@@ -179,6 +180,10 @@ export function run(overrides: Partial<Run> = {}): Run {
   return {
     id: 7,
     project_id: 1,
+    playbook_id: 1,
+    inventory_id: 1,
+    credential_id: 1,
+    vault_password_id: null,
     playbook_name: "site.yml",
     inventory_name: "lab",
     group_name: null,
@@ -213,6 +218,36 @@ export function run(overrides: Partial<Run> = {}): Run {
     git_commit: null,
     playbook_path: null,
     commit_url: null,
+    ...overrides,
+  };
+}
+
+export function runTemplate(overrides: Partial<RunTemplate> = {}): RunTemplate {
+  return {
+    id: 3,
+    project_id: 1,
+    name: "Nightly patch",
+    description: "Patches the lab every night",
+    playbook_id: 1,
+    playbook_name: "site.yml",
+    inventory_id: 1,
+    inventory_name: "lab",
+    group_name: "web",
+    credential_id: 1,
+    credential_name: "deploy-key",
+    vault_password_id: null,
+    vault_password_name: null,
+    become: false,
+    check_mode: false,
+    diff_mode: true,
+    limit: null,
+    extra_vars: { greeting: "hi" },
+    timeout_seconds: 3600,
+    missing: [],
+    created_by: "admin",
+    updated_by: "admin",
+    created_at: NOW,
+    updated_at: NOW,
     ...overrides,
   };
 }

@@ -9,6 +9,17 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- **Run templates**: save a run's playbook, inventory and target, credential, vault password, options and
+  extra vars under a name, and start it again in one step from the new Templates page, with the limit and
+  check mode changeable per run. Operators and admins manage them (saving one that runs as root needs that
+  permission); a template whose items were deleted says so and won't run until edited. `trigger` API keys
+  can launch a project's templates (`POST /api/run-templates/{id}/launch`).
+- **Run again** and **Edit and run** on a run's page: start the same run at once (after a confirmation), or
+  open New Run with its settings filled in.
+- **Download a run's output** as plain text or JSON lines, from the run's page or
+  `GET /api/runs/{id}/log` (also with API keys).
+- The run API now returns the ids of the playbook, inventory, credential and vault password a run used
+  (null once deleted).
 - Releases carry SLSA build provenance for their files: a signed attestation stored by GitHub
   (`gh attestation verify`) and attached as `ansideck-<version>.intoto.jsonl`
   ([docs/verifying-releases.md](docs/verifying-releases.md#build-provenance-from-v011)).

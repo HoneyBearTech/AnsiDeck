@@ -369,6 +369,11 @@ export interface GalaxyInstalled {
 export interface Run {
   id: number;
   project_id: number;
+  // What the run used, to start it again; null once that item has been deleted.
+  playbook_id: number | null;
+  inventory_id: number | null;
+  credential_id: number | null;
+  vault_password_id: number | null;
   playbook_name: string;
   inventory_name: string;
   group_name: string | null;
@@ -407,6 +412,56 @@ export interface Run {
   playbook_path: string | null;
   commit_url: string | null;
 }
+
+/** What starts a run: POST /runs, and the definition a run template saves. */
+export interface RunRequest {
+  playbook_id: number;
+  inventory_id: number;
+  group_name: string | null;
+  credential_id: number;
+  vault_password_id: number | null;
+  become: boolean;
+  check_mode: boolean;
+  diff_mode: boolean;
+  limit: string | null;
+  extra_vars: Record<string, unknown> | null;
+  timeout_seconds: number;
+}
+
+export interface RunTemplateInput extends RunRequest {
+  name: string;
+  description: string | null;
+}
+
+export interface RunTemplate {
+  id: number;
+  project_id: number;
+  name: string;
+  description: string | null;
+  // Each id is null once its item has been deleted (listed in `missing`; no launch until edited).
+  playbook_id: number | null;
+  playbook_name: string | null;
+  inventory_id: number | null;
+  inventory_name: string | null;
+  group_name: string | null;
+  credential_id: number | null;
+  credential_name: string | null;
+  vault_password_id: number | null;
+  vault_password_name: string | null;
+  become: boolean;
+  check_mode: boolean;
+  diff_mode: boolean;
+  limit: string | null;
+  extra_vars: Record<string, unknown> | null;
+  timeout_seconds: number;
+  missing: string[];
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type RunLogFormat = "text" | "jsonl";
 
 export type GitAuthKind = "none" | "ssh_key" | "https_token";
 
@@ -883,6 +938,19 @@ export const api = {
     timeout_seconds?: number;
   }) => request<Run>("/runs", { method: "POST", body: JSON.stringify(payload) }),
   cancelRun: (id: number) => request<Run>(`/runs/${id}/cancel`, { method: "POST" }),
+  rerun: (id: number) => request<Run>(`/runs/${id}/rerun`, { method: "POST" }),
+  /** A link that downloads the run's output (what it has produced so far, if still going). */
+  runLogUrl: (id: number, format: RunLogFormat) => `${API_BASE_URL}/runs/${id}/log?format=${format}`,
+
+  listRunTemplates: () => request<RunTemplate[]>(scoped("/run-templates")),
+  getRunTemplate: (id: number) => request<RunTemplate>(`/run-templates/${id}`),
+  createRunTemplate: (input: RunTemplateInput) =>
+    request<RunTemplate>("/run-templates", { method: "POST", body: JSON.stringify(input) }),
+  updateRunTemplate: (id: number, input: RunTemplateInput) =>
+    request<RunTemplate>(`/run-templates/${id}`, { method: "PUT", body: JSON.stringify(input) }),
+  deleteRunTemplate: (id: number) => request<void>(`/run-templates/${id}`, { method: "DELETE" }),
+  launchRunTemplate: (id: number, overrides: { limit?: string | null; check_mode?: boolean } = {}) =>
+    request<Run>(`/run-templates/${id}/launch`, { method: "POST", body: JSON.stringify(overrides) }),
 
   listWorkers: () => request<WorkerInfo[]>("/workers"),
 

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LiveLogViewer } from "@/components/live-log-viewer";
 import { useAuth } from "@/context/auth-context";
 import { api, ApiError, type Run } from "@/lib/api";
+import { deletedItems, describeDeleted } from "@/lib/runs";
 
 const STATUS_VARIANT: Record<Run["status"], BadgeProps["variant"]> = {
   success: "ok",
@@ -107,6 +108,70 @@ function CancelButton({ run, onCancelled }: { run: Run; onCancelled: (run: Run) 
   );
 }
 
+/** "Run again" starts the same run at once (after a confirmation); "Edit and run" opens the form with
+ * its settings filled in. */
+function RunAgain({ run }: { run: Run }) {
+  const { canInProject } = useAuth();
+  const navigate = useNavigate();
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  if (!canInProject(run.project_id, "runs:trigger")) return null;
+  const missing = deletedItems(run);
+
+  async function handleRerun() {
+    const target = `${run.playbook_name} on ${run.inventory_name}${run.group_name ? ` / ${run.group_name}` : ""}`;
+    const root = run.become ? " It runs as root (become)." : "";
+    const question =
+      `Run ${target} again, with the same credential, options and extra vars?${root} ` +
+      "The playbook and inventory are used as they are now.";
+    if (!window.confirm(question)) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const next = await api.rerun(run.id);
+      navigate(`/runs/${next.id}`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={handleRerun} disabled={busy || missing.length > 0}>
+          {busy ? "Starting…" : "Run again"}
+        </Button>
+        <Button variant="outline" size="sm" asChild>
+          <Link to={`/runs/new?from_run=${run.id}`}>Edit and run</Link>
+        </Button>
+      </div>
+      {missing.length > 0 && (
+        <p className="text-xs text-muted-foreground">Can&apos;t run again as it was: {describeDeleted(missing)}.</p>
+      )}
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+function DownloadLog({ run }: { run: Run }) {
+  if (run.status === "queued") return null;
+  const link = "text-sm text-primary hover:underline";
+  return (
+    <p className="flex items-center gap-2 text-sm text-muted-foreground">
+      Download:
+      <a href={api.runLogUrl(run.id, "text")} download className={link}>
+        text
+      </a>
+      ·
+      <a href={api.runLogUrl(run.id, "jsonl")} download className={link}>
+        JSON lines
+      </a>
+    </p>
+  );
+}
+
 export function RunDetailPage() {
   const params = useParams<{ id: string }>();
   const runId = Number(params.id);
@@ -138,7 +203,7 @@ export function RunDetailPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold">
             {run.playbook_name} → {run.inventory_name}
@@ -172,7 +237,8 @@ export function RunDetailPage() {
           )}
           <StatusNote run={run} />
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-start justify-end gap-3">
+          <RunAgain run={run} />
           <CancelButton run={run} onCancelled={setRun} />
           <Badge variant={STATUS_VARIANT[run.status]}>{run.status.replace("_", " ")}</Badge>
         </div>
@@ -197,11 +263,12 @@ export function RunDetailPage() {
       )}
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
           <CardTitle>Live output</CardTitle>
+          <DownloadLog run={run} />
         </CardHeader>
         <CardContent>
-          <LiveLogViewer runId={runId} />
+          <LiveLogViewer key={runId} runId={runId} />
         </CardContent>
       </Card>
     </div>

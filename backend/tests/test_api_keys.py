@@ -290,6 +290,8 @@ def test_a_key_is_refused_on_every_served_operation_except_the_run_routes(world)
         ("POST", "/api/runs"),
         ("GET", "/api/runs/{run_id}"),
         ("POST", "/api/runs/{run_id}/cancel"),
+        ("GET", "/api/runs/{run_id}/log"),
+        ("POST", "/api/run-templates/{template_id}/launch"),
     }
     probed = 0
     for path, operations in app.openapi()["paths"].items():
@@ -313,6 +315,8 @@ def test_only_the_run_routes_are_enabled_for_api_keys() -> None:
         ("POST", "/api/runs"),
         ("GET", "/api/runs/{run_id}"),
         ("POST", "/api/runs/{run_id}/cancel"),
+        ("GET", "/api/runs/{run_id}/log"),
+        ("POST", "/api/run-templates/{template_id}/launch"),
     }
 
 

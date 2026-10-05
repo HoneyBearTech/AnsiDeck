@@ -11,6 +11,7 @@ and where it's specified. Which of these should be reachable from where is descr
 | Web UI | frontend container, port 8080 (behind your HTTPS proxy) | people, in a browser | session cookie after sign-in | the [user guide](user-guide/README.md) |
 | HTTP API | `/api/…` on the backend's port 8000, also proxied by the frontend | the web UI, CI/CD, scripts | session cookie, or `Authorization: Bearer <API key>` | [`api/openapi.json`](api/openapi.json) (OpenAPI 3) |
 | Run output stream | WebSocket `/api/runs/{id}/ws?from=<n>` | the web UI, CI/CD | as the HTTP API | [below](#run-output-stream) |
+| Run output download | `GET /api/runs/{id}/log?format=text\|jsonl` | people, CI/CD | as the HTTP API | [below](#run-output-download) |
 | Worker API | `/internal/…` on the backend's port 8001, never published | AnsiDeck's workers only | `WORKER_TOKEN`, plus a per-job claim token | [`api/internal-openapi.json`](api/internal-openapi.json) |
 | Metrics | `/metrics` on the backend's port 8002 (only with `METRICS_TOKEN`), never published | Prometheus | `Authorization: Bearer <METRICS_TOKEN>` | Prometheus text format; the metrics are listed in the README's [monitoring section](../README.md#monitoring-with-prometheus-and-grafana-optional) |
 | Analytics views | the `analytics` schema in Postgres | Grafana | a database role granted by `analytics-grant` | the README's [analytics section](../README.md#history-for-grafana-the-read-only-analytics-views) |
@@ -39,6 +40,14 @@ produces it. The server closes with code **1000** once the run has finished and 
 with **1008** when the caller may not read the run. Any other close cut the stream short: reconnect with
 `from` set to the number of messages received so far. Secret values known to AnsiDeck are removed from the
 output before it's stored or sent.
+
+### Run output download
+
+`GET /api/runs/{id}/log` returns the run's output as a file (`Content-Disposition: attachment`):
+`format=text` (the default) is each event's `stdout`, colour codes removed, as `text/plain`; `format=jsonl`
+is the stored events exactly as the WebSocket sends them, one JSON object per line, as
+`application/x-ndjson`. It holds what has been committed so far, so a running run's download grows on
+the next request. Secret values are removed as for the stream.
 
 ### Command line
 

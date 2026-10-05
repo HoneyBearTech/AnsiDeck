@@ -72,6 +72,16 @@ def _populate(admin: TestClient, project_id: int, tag: str) -> dict:
     )
     assert run.status_code == 201, run.text
     _wait_for_completion(admin, run.json()["id"])
+    template = admin.post(
+        "/api/run-templates",
+        json={
+            "name": f"tpl-{tag}",
+            "playbook_id": playbook.json()["id"],
+            "inventory_id": inv_id,
+            "credential_id": credential.json()["id"],
+        },
+    )
+    assert template.status_code == 201, template.text
     return {
         "project": project_id,
         "playbook": playbook.json()["id"],
@@ -81,6 +91,7 @@ def _populate(admin: TestClient, project_id: int, tag: str) -> dict:
         "credential": credential.json()["id"],
         "vault": vault.json()["id"],
         "run": run.json()["id"],
+        "template": template.json()["id"],
     }
 
 
@@ -92,6 +103,16 @@ def world(client: TestClient):
 
 
 # ---------------------------------------------------------------- IDOR
+
+
+def _template_body(p: dict, **extra) -> dict:
+    return {
+        "name": "t",
+        "playbook_id": p["playbook"],
+        "inventory_id": p["inventory"],
+        "credential_id": p["credential"],
+        **extra,
+    }
 
 
 def _idor_calls(b: dict) -> list[tuple[str, str, dict | None]]:
@@ -129,6 +150,13 @@ def _idor_calls(b: dict) -> list[tuple[str, str, dict | None]]:
         ("POST", f"/api/vault-passwords/{b['vault']}/check", None),
         ("GET", f"/api/runs/{run}", None),
         ("POST", f"/api/runs/{run}/cancel", None),
+        ("POST", f"/api/runs/{run}/rerun", None),
+        ("GET", f"/api/runs/{run}/log", None),
+        ("GET", f"/api/run-templates/{b['template']}", None),
+        ("PUT", f"/api/run-templates/{b['template']}", _template_body(b, name="hijack")),
+        ("DELETE", f"/api/run-templates/{b['template']}", None),
+        ("POST", f"/api/run-templates/{b['template']}/launch", None),
+        ("POST", "/api/run-templates", _template_body(b, name="planted")),
         (
             "POST",
             "/api/vault/encrypt",
@@ -160,6 +188,11 @@ def test_user_in_project_a_cannot_reach_anything_in_project_b(world) -> None:
     # nothing of B was touched
     assert admin.get(f"/api/playbooks/{b['playbook']}").json()["name"] == "pb-b"
     assert admin.get(f"/api/inventories/{b['inventory']}").status_code == 200
+    assert admin.get(f"/api/run-templates/{b['template']}").json()["name"] == "tpl-b"
+    assert {
+        r["id"] for r in admin.get("/api/runs", params={"project_id": b["project"]}).json()
+    } == {b["run"]}
+    assert [t["name"] for t in admin.get("/api/run-templates").json()] == ["tpl-a", "tpl-b"]
 
 
 def test_same_calls_work_against_their_own_project(world) -> None:
@@ -192,6 +225,7 @@ def test_lists_only_contain_the_callers_projects(world) -> None:
         assert ids == {a[key]}, path
         assert b[key] not in ids
     assert {r["id"] for r in only_a.get("/api/runs").json()} == {a["run"]}
+    assert {t["id"] for t in only_a.get("/api/run-templates").json()} == {a["template"]}
 
     # explicit filter on a project you don't belong to looks like a missing project
     assert only_a.get("/api/playbooks", params={"project_id": b["project"]}).status_code == 404
@@ -245,6 +279,12 @@ def test_every_project_scoped_route_with_an_id_is_covered_by_the_idor_matrix() -
         ("POST", "/api/vault-passwords/{vault_password_id}/check"),
         ("GET", "/api/runs/{run_id}"),
         ("POST", "/api/runs/{run_id}/cancel"),
+        ("POST", "/api/runs/{run_id}/rerun"),
+        ("GET", "/api/runs/{run_id}/log"),
+        ("GET", "/api/run-templates/{template_id}"),
+        ("PUT", "/api/run-templates/{template_id}"),
+        ("DELETE", "/api/run-templates/{template_id}"),
+        ("POST", "/api/run-templates/{template_id}/launch"),
     }
     # project + member routes are exercised by the projects API tests below
     covered |= {

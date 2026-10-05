@@ -87,4 +87,5 @@ without a user account.
    confirmation) stops a key at once.
 
 The README's [Triggering runs from CI](../../README.md#triggering-runs-from-ci) has `curl` examples for
-starting, polling and cancelling runs.
+starting runs (directly or from a [template](runs.md#run-templates)), polling, cancelling, and downloading
+their output.

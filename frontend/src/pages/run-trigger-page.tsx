@@ -1,8 +1,9 @@
 import * as React from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,8 +17,12 @@ import {
   type InventoryTargets,
   type InventorySummary,
   type PlaybookSummary,
+  type Run,
+  type RunRequest,
+  type RunTemplate,
   type VaultPassword,
 } from "@/lib/api";
+import { deletedItems, describeDeleted, hasMaskedValue } from "@/lib/runs";
 
 const ALL_HOSTS = "__all__";
 // Targets are group names (a source's groups have no id); prefixed so none can be ALL_HOSTS.
@@ -46,9 +51,75 @@ function SnapshotNote({ targets }: { targets: InventoryTargets }) {
   );
 }
 
+/** Name and description for a new template made of the form's settings. */
+function SaveTemplateDialog({
+  open,
+  onOpenChange,
+  onSave,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSave: (name: string, description: string | null) => Promise<string | null>;
+}) {
+  const [name, setName] = React.useState("");
+  const [description, setDescription] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+
+  async function handleSave() {
+    setSaving(true);
+    setError(await onSave(name.trim(), description.trim() || null));
+    setSaving(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Save as template</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-muted-foreground">
+            Saves this form&apos;s playbook, inventory, target, credential and options, extra vars included, to
+            start again in one step from the Templates page (or by a CI/CD key).
+          </p>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="template-name">Name</Label>
+            <Input id="template-name" value={name} maxLength={100} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="template-description">Description (optional)</Label>
+            <Input
+              id="template-description"
+              value={description}
+              maxLength={500}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </div>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button onClick={handleSave} disabled={saving || !name.trim()}>
+            {saving ? "Saving…" : "Save template"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function RunTriggerPage() {
   const navigate = useNavigate();
-  const { user, can } = useAuth();
+  const { user, can, canInProject } = useAuth();
+  // Filled in from a run (?from_run=, "Edit and run") or a template (?template=, to run or update it).
+  const [searchParams] = useSearchParams();
+  const fromRun = searchParams.get("from_run");
+  const fromTemplate = searchParams.get("template");
+  const [template, setTemplate] = React.useState<RunTemplate | null>(null);
+  const [notes, setNotes] = React.useState<string[]>([]);
+  // The target group to select once the prefilled inventory's targets have loaded.
+  const pendingGroup = React.useRef<string | null>(null);
+  const [saveOpen, setSaveOpen] = React.useState(false);
 
   const [playbooks, setPlaybooks] = React.useState<PlaybookSummary[]>([]);
   const [inventories, setInventories] = React.useState<InventorySummary[]>([]);
@@ -85,8 +156,66 @@ export function RunTriggerPage() {
       return;
     }
     setGroupId(ALL_HOSTS);
-    api.inventoryTargets(Number(inventoryId)).then(setSelectedInventory);
+    api.inventoryTargets(Number(inventoryId)).then((targets) => {
+      setSelectedInventory(targets);
+      const wanted = pendingGroup.current;
+      pendingGroup.current = null;
+      if (wanted === null) return;
+      if (targets.groups.some((group) => group.name === wanted)) setGroupId(GROUP_PREFIX + wanted);
+      else setNotes((current) => [...current, `The group ${wanted} is no longer in this inventory: pick a target.`]);
+    });
   }, [inventoryId]);
+
+  React.useEffect(() => {
+    if (!fromRun && !fromTemplate) return;
+    let active = true;
+
+    function prefill(from: Run | RunTemplate, missing: string[]) {
+      setPlaybookId(from.playbook_id === null ? "" : String(from.playbook_id));
+      pendingGroup.current = from.group_name;
+      setInventoryId(from.inventory_id === null ? "" : String(from.inventory_id));
+      setCredentialId(from.credential_id === null ? "" : String(from.credential_id));
+      setVaultPasswordId(from.vault_password_id === null ? NO_VAULT : String(from.vault_password_id));
+      setCheckMode(from.check_mode);
+      setDiffMode(from.diff_mode);
+      setLimit(from.limit ?? "");
+      setTimeoutMinutes(String(Math.max(1, Math.ceil(from.timeout_seconds / 60))));
+      setExtraVarsText(from.extra_vars ? JSON.stringify(from.extra_vars, null, 2) : "{}");
+      const found: string[] = [];
+      if (missing.length > 0) found.push(`Pick again: ${describeDeleted(missing)}.`);
+      if (from.become) {
+        if (canInProject(from.project_id, "runs:become")) setBecome(true);
+        else found.push("It ran as root (become), which you may not use: this run won't.");
+      }
+      if (hasMaskedValue(from.extra_vars)) {
+        found.push(
+          "Some extra vars show [REDACTED] or [HIDDEN] instead of their value: replace them before triggering " +
+            "the run.",
+        );
+      }
+      setNotes(found);
+    }
+
+    async function load() {
+      try {
+        if (fromTemplate) {
+          const loaded = await api.getRunTemplate(Number(fromTemplate));
+          if (!active) return;
+          setTemplate(loaded);
+          prefill(loaded, loaded.missing);
+        } else {
+          const loaded = await api.getRun(Number(fromRun));
+          if (active) prefill(loaded, deletedItems(loaded));
+        }
+      } catch (err) {
+        if (active) setError(err instanceof ApiError ? err.message : "Something went wrong");
+      }
+    }
+    load();
+    return () => {
+      active = false;
+    };
+  }, [fromRun, fromTemplate, canInProject]);
 
   // A run lives in exactly one project: the playbook's. Only offer that project's items.
   const playbookProjectId = playbooks.find((p) => String(p.id) === playbookId)?.project_id;
@@ -107,40 +236,96 @@ export function RunTriggerPage() {
   const canSubmit =
     playbookId !== "" && inventoryId !== "" && credentialId !== "" && (!become || becomeConfirmed);
 
-  async function handleSubmit() {
-    setError(null);
+  const canSaveTemplate =
+    playbookId !== "" &&
+    inventoryId !== "" &&
+    credentialId !== "" &&
+    playbookProjectId !== undefined &&
+    canInProject(playbookProjectId, "content:write");
+  const canUpdateTemplate = template !== null && canSaveTemplate && template.project_id === playbookProjectId;
 
+  /** The form as a run request, or an error message if part of it isn't valid. */
+  function buildRequest(): RunRequest | string {
     let extraVars: Record<string, unknown> | null;
     try {
       const parsed = JSON.parse(extraVarsText);
       extraVars = Object.keys(parsed).length > 0 ? parsed : null;
     } catch {
-      setError("Extra vars must be valid JSON");
-      return;
+      return "Extra vars must be valid JSON";
     }
 
     const minutes = Number(timeoutMinutes);
     if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_TIMEOUT_MINUTES) {
-      setError(`Timeout must be a whole number of minutes from 1 to ${MAX_TIMEOUT_MINUTES}`);
+      return `Timeout must be a whole number of minutes from 1 to ${MAX_TIMEOUT_MINUTES}`;
+    }
+
+    return {
+      playbook_id: Number(playbookId),
+      inventory_id: Number(inventoryId),
+      group_name: groupId === ALL_HOSTS ? null : groupId.slice(GROUP_PREFIX.length),
+      credential_id: Number(credentialId),
+      vault_password_id: vaultPasswordId === NO_VAULT ? null : Number(vaultPasswordId),
+      become,
+      check_mode: checkMode,
+      diff_mode: diffMode,
+      limit: limit.trim() || null,
+      extra_vars: extraVars,
+      timeout_seconds: minutes * 60,
+    };
+  }
+
+  async function handleSubmit() {
+    setError(null);
+    const request = buildRequest();
+    if (typeof request === "string") {
+      setError(request);
+      return;
+    }
+    if (hasMaskedValue(request.extra_vars)) {
+      setError(
+        "Extra vars still contain [REDACTED] or [HIDDEN]: enter the real values" +
+          (template ? ", or run the template from the Templates page, which keeps them." : "."),
+      );
       return;
     }
 
     setSubmitting(true);
     try {
-      const run = await api.createRun({
-        playbook_id: Number(playbookId),
-        inventory_id: Number(inventoryId),
-        group_name: groupId === ALL_HOSTS ? null : groupId.slice(GROUP_PREFIX.length),
-        credential_id: Number(credentialId),
-        vault_password_id: vaultPasswordId === NO_VAULT ? null : Number(vaultPasswordId),
-        become,
-        check_mode: checkMode,
-        diff_mode: diffMode,
-        limit: limit.trim() || null,
-        extra_vars: extraVars,
-        timeout_seconds: minutes * 60,
-      });
+      const run = await api.createRun(request);
       navigate(`/runs/${run.id}`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  /** Saves the form as a new template; returns the reason it couldn't, for the dialog. */
+  async function handleSaveTemplate(name: string, description: string | null): Promise<string | null> {
+    const request = buildRequest();
+    if (typeof request === "string") return request;
+    try {
+      await api.createRunTemplate({ ...request, name, description });
+    } catch (err) {
+      return err instanceof ApiError ? err.message : "Something went wrong";
+    }
+    navigate("/templates");
+    return null;
+  }
+
+  async function handleUpdateTemplate() {
+    if (!template) return;
+    setError(null);
+    const request = buildRequest();
+    if (typeof request === "string") {
+      setError(request);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      // Masked extra vars sent back unchanged keep their stored values.
+      await api.updateRunTemplate(template.id, { ...request, name: template.name, description: template.description });
+      navigate("/templates");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
     } finally {
@@ -150,7 +335,21 @@ export function RunTriggerPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-semibold">New Run</h1>
+      <div className="flex flex-col gap-1">
+        <h1 className="text-xl font-semibold">New Run</h1>
+        {template && (
+          <p className="text-sm text-muted-foreground">
+            From the template <span className="font-medium text-foreground">{template.name}</span>: change what you
+            need, then trigger the run or update the template.
+          </p>
+        )}
+        {fromRun && !template && <p className="text-sm text-muted-foreground">Filled in from run #{fromRun}.</p>}
+        {notes.map((note) => (
+          <p key={note} className="text-sm text-status-changed">
+            {note}
+          </p>
+        ))}
+      </div>
 
       <div className="flex flex-col gap-2">
         <Label htmlFor="run-playbook">Playbook</Label>
@@ -330,11 +529,22 @@ export function RunTriggerPage() {
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <div>
+      <div className="flex flex-wrap gap-3">
         <Button onClick={handleSubmit} disabled={!canSubmit || submitting}>
           {submitting ? "Starting…" : "Trigger Run"}
         </Button>
+        {canUpdateTemplate && (
+          <Button variant="outline" onClick={handleUpdateTemplate} disabled={submitting}>
+            Update template
+          </Button>
+        )}
+        {canSaveTemplate && (
+          <Button variant="outline" onClick={() => setSaveOpen(true)} disabled={submitting}>
+            Save as template
+          </Button>
+        )}
       </div>
+      <SaveTemplateDialog open={saveOpen} onOpenChange={setSaveOpen} onSave={handleSaveTemplate} />
     </div>
   );
 }

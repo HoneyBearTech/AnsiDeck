@@ -75,6 +75,12 @@ def test_a_run_past_its_timeout_is_stopped(client, tmp_path) -> None:
 def test_a_running_run_is_cancelled(client, tmp_path) -> None:
     run_id = _trigger(client, tmp_path)
     _wait_for_status(client, run_id, "running")
+    # "running" begins at the claim; the job (and ansible) starts a moment later, and a cancel
+    # before that is "cancelled before it started", the case tested elsewhere.
+    deadline = time.monotonic() + 15
+    while client.get(f"/api/runs/{run_id}").json()["started_at"] is None:
+        assert time.monotonic() < deadline, "the run never started"
+        time.sleep(0.05)
     _set(run_id, cancel_requested_at=text("now()"), cancel_requested_by="alice")
     started = time.monotonic()
     run = _wait_for_completion(client, run_id)
