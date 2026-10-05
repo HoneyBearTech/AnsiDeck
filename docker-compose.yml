@@ -22,6 +22,8 @@ services:
   backend:
     build:
       context: ./backend
+      additional_contexts:
+        repo: .
       target: dev
     env_file: .env
     environment:
@@ -58,6 +60,8 @@ services:
   worker:
     build:
       context: ./backend
+      additional_contexts:
+        repo: .
       target: dev
     # The worker itself is PID 1 (no init, no `uv run` wrapper): it hides its memory and
     # environment from playbooks and reaps orphans itself. A wrapper process would hold the
@@ -129,6 +133,8 @@ services:
   frontend:
     build:
       context: ./frontend
+      additional_contexts:
+        repo: .
       target: dev
     env_file: .env
     environment:

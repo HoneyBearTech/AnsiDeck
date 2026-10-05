@@ -47,6 +47,15 @@ RUN useradd --create-home --uid 1000 appuser \
     && chown appuser:appuser /data
 WORKDIR /app
 COPY --from=build /app /app
+# The license travels with the image (the named build context "repo" is the repository root:
+# docker-compose.yml, and build-contexts in the workflows).
+COPY --from=repo LICENSE /usr/share/licenses/ansideck/LICENSE
+LABEL org.opencontainers.image.title="AnsiDeck backend" \
+      org.opencontainers.image.description="AnsiDeck API and worker: run Ansible playbooks from a web UI" \
+      org.opencontainers.image.source="https://github.com/HoneyBearTech/AnsiDeck" \
+      org.opencontainers.image.url="https://github.com/HoneyBearTech/AnsiDeck" \
+      org.opencontainers.image.documentation="https://github.com/HoneyBearTech/AnsiDeck/tree/main/docs" \
+      org.opencontainers.image.licenses="MIT"
 ENV PATH="/app/.venv/bin:$PATH"
 USER appuser
 # 8000: the API. 8001: the internal worker API (workers only; never publish it).

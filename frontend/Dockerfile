@@ -15,4 +15,13 @@ RUN npm run build
 FROM nginxinc/nginx-unprivileged:1.31-alpine@sha256:26b0bf6fbf07297983cb341998d79c831508787de26627dd2a112321b9c3a4af AS runtime
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+# The license travels with the image (the named build context "repo" is the repository root:
+# docker-compose.yml, and build-contexts in the workflows).
+COPY --from=repo LICENSE /usr/share/licenses/ansideck/LICENSE
+LABEL org.opencontainers.image.title="AnsiDeck frontend" \
+      org.opencontainers.image.description="AnsiDeck web UI, served by nginx" \
+      org.opencontainers.image.source="https://github.com/HoneyBearTech/AnsiDeck" \
+      org.opencontainers.image.url="https://github.com/HoneyBearTech/AnsiDeck" \
+      org.opencontainers.image.documentation="https://github.com/HoneyBearTech/AnsiDeck/tree/main/docs" \
+      org.opencontainers.image.licenses="MIT"
 EXPOSE 8080
