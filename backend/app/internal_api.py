@@ -543,7 +543,7 @@ def _append_output(refresh_id: int, claim_token: str, offset: int, chunk: bytes)
         refresh = _locked_refresh(db, refresh_id, claim_token)
         if refresh is None:
             return _gone()
-        path = inventory_refresh_output_path(refresh_id)
+        path = inventory_refresh_output_path(refresh.id)  # the row's id, not the request's
         size = path.stat().st_size if path.exists() else 0
         if offset > size:
             return JSONResponse({"expected_offset": size}, status.HTTP_409_CONFLICT)
@@ -575,7 +575,7 @@ def refresh_complete(
     if body.status != RunStatus.SUCCESS.value:
         _end_refresh(db, refresh, body.status, body.error or body.status.replace("_", " "))
         return {}
-    path = inventory_refresh_output_path(refresh_id)
+    path = inventory_refresh_output_path(refresh.id)  # the row's id, not the request's
     raw = path.read_bytes() if path.exists() else b""
     if len(raw) != body.bytes or hashlib.sha256(raw).hexdigest() != body.sha256:
         return JSONResponse({"detail": "The output doesn't match its size and hash"}, 409)
