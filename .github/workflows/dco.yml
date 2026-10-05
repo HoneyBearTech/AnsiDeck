@@ -1,0 +1,39 @@
+name: DCO
+
+# Every commit in a pull request must carry a Developer Certificate of Origin sign-off
+# ("Signed-off-by: Name <email>", added by `git commit -s`); see CONTRIBUTING.md.
+# Dependabot's commits and merge commits (e.g. GitHub's "Update branch") are exempt.
+
+on: pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check that every commit is signed off
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          unsigned=$(gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '
+            .[]
+            | select((.author.login // "") != "dependabot[bot]")
+            | select((.parents | length) < 2)
+            | select(.commit.message | split("\n") | any(test("^Signed-off-by: [^<>]+ <[^<>]+>\\s*$")) | not)
+            | "\(.sha[0:12]) \(.commit.message | split("\n")[0])"')
+          if [ -n "$unsigned" ]; then
+            echo "These commits have no 'Signed-off-by: Name <email>' line:"
+            echo "$unsigned"
+            echo "Sign them off with 'git rebase --signoff <base>' and force-push; see CONTRIBUTING.md."
+            exit 1
+          fi
+          echo "Every commit is signed off."

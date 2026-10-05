@@ -8,6 +8,15 @@
 
 Self-hosted web UI for running Ansible playbooks against target systems, packaged in Docker.
 
+## Documentation
+
+- [Architecture](docs/architecture.md): the components and how a run flows through them.
+- [Security requirements](docs/security.md): what AnsiDeck does and doesn't protect against, and the
+  [assurance case](docs/assurance-case.md) behind it.
+- [Roadmap](docs/roadmap.md): where the project is going, and what it won't do.
+- [Contributing](CONTRIBUTING.md), [Code of Conduct](CODE_OF_CONDUCT.md), [Governance](GOVERNANCE.md) and
+  [reporting a vulnerability](SECURITY.md).
+
 ## Getting started
 
 AnsiDeck is a FastAPI backend, a React frontend and a PostgreSQL database, started with Docker Compose. You
@@ -122,7 +131,7 @@ they are.
 - Serve it over HTTPS through a reverse proxy, set `COOKIE_SECURE=true`, and make sure the proxy forwards
   WebSocket upgrades (live run output needs them). If the browser's origin differs from the `Host` the backend
   sees, add it to `CORS_ORIGINS`.
-- AnsiDeck is not designed to be exposed directly to the public internet. See [SECURITY.md](SECURITY.md).
+- AnsiDeck is not designed to be exposed directly to the public internet. See [docs/security.md](docs/security.md).
 - Back up both the database (for example
   `docker compose exec -T postgres pg_dump -U ansideck -Fc ansideck > ansideck.dump`, restored with
   `pg_restore`) and the `/data` volume, and keep `CREDENTIAL_ENCRYPTION_KEY` backed up separately: losing it
@@ -132,7 +141,7 @@ they are.
 - Give people the least role they need. Anyone who can run a playbook can run commands on the targets.
   Runs execute in worker containers that have no database access and no keys, each slot as a Linux user of
   its own, so a run can't reach the worker's token or other runs' files and processes. Runs still share the
-  worker's network and resources. Details, and what isn't isolated, are in [SECURITY.md](SECURITY.md).
+  worker's network and resources. Details, and what isn't isolated, are in [docs/security.md](docs/security.md).
 - With `ENVIRONMENT=production` the backend and the workers refuse the default `WORKER_TOKEN`. Anyone holding
   it can claim runs and receive their secrets, so treat it like `CREDENTIAL_ENCRYPTION_KEY`.
 - Global admins cannot use single sign-on unless you set `SSO_ALLOW_ADMIN=true`, so password login stays your
