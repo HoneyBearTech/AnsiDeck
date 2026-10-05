@@ -39,7 +39,10 @@ _DIRTY_SLOT_RETRY_SECONDS = 30.0
 _REFRESH_CHUNK_BYTES = 2 * 1024 * 1024
 # Deeper output is refused by the API anyway (app.inventory_sources.normalise).
 _MAX_OUTPUT_DEPTH = 64
-_ERROR_LINES = re.compile(r"^\[(ERROR|WARNING)\]: .*$", re.MULTILINE)
+# "[WARNING]: Failed to parse inventory with 'auto' plugin: <why>" carries the reason, the
+# "[ERROR]: Completely failed to parse inventory source <file>" after it the file.
+_PLUGIN_FAILED = re.compile(r"^\[WARNING\]: Failed to parse inventory with '([^']+)' plugin: (.*)$")
+_SOURCE_FAILED = re.compile(r"^\[ERROR\]: Completely failed to parse inventory source (.*)$")
 _REFRESH_PATHS = re.compile(r"/\S*?/ansideck-refresh-\d+-[^/\s]*/inventory/")
 
 # Stop reasons (ExecutionHandle.stop_reason) and what they become.
@@ -67,7 +70,17 @@ def refresh_error(stderr: str, secrets: list[str], rc: int | None) -> str:
     """Why ansible-inventory failed, from its stderr: its error lines (the config files named
     without their temporary directory), scrubbed of the credentials' values."""
     text = _REFRESH_PATHS.sub("", stderr)
-    errors = [m.group(0) for m in _ERROR_LINES.finditer(text) if m.group(1) == "ERROR"]
+    errors: list[str] = []
+    reasons: list[str] = []
+    for line in text.splitlines():
+        if failed := _PLUGIN_FAILED.match(line):
+            if failed.group(1) != "yaml":  # "not YAML inventory": it was a plugin config
+                reasons.append(failed.group(2))
+        elif source := _SOURCE_FAILED.match(line):
+            errors.append(f"{source.group(1)}: {'; '.join(reasons) or 'could not be parsed'}")
+            reasons = []
+        elif line.startswith("[ERROR]: "):
+            errors.append(line.removeprefix("[ERROR]: "))
     summary = "\n".join(errors) if errors else text.strip()[-800:]
     summary = Scrubber(secrets).scrub_text(summary).strip()
     return (summary or f"ansible-inventory failed (exit code {rc})")[-1000:]

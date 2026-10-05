@@ -22,6 +22,7 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "httpx>=0.28",
     "prometheus-client>=0.21",
+    "pytz>=2025.2",
 ]
 
 [dependency-groups]

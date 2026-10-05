@@ -354,16 +354,20 @@ def merged_hosts(
     source_hosts = (snapshot or {}).get("hosts", {})
     hosts = []
     for name in names[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]:
-        in_static, in_source = name in static["hosts"], name in source_hosts
-        overridden = (
-            sorted(set(static["hosts"][name]) & set(source_hosts[name] or {}))
-            if in_static and in_source
-            else []
-        )
+        # The inventory's own hosts are fed to the plugins, so they come back in the snapshot
+        # with their own vars: a source only counts where it added or changed something.
+        own = static["hosts"].get(name)
+        found = source_hosts.get(name) or {}
+        added = [k for k in found if own is None or k not in own]
+        overridden = sorted(k for k in found if own is not None and k in own and own[k] != found[k])
+        if own is None:
+            origin = "source"
+        else:
+            origin = "both" if added or overridden else "static"
         hosts.append(
             MergedHost(
                 name=name,
-                origin="both" if in_static and in_source else ("static" if in_static else "source"),
+                origin=origin,
                 groups=sorted(groups_of.get(name, [])),
                 vars=mask_secret_keys({str(k): v for k, v in graph["hosts"][name].items()}),
                 overridden=overridden,

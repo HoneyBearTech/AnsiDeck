@@ -13,7 +13,7 @@ import {
   api,
   ApiError,
   type Credential,
-  type InventoryDetail,
+  type InventoryTargets,
   type InventorySummary,
   type PlaybookSummary,
   type VaultPassword,
@@ -27,6 +27,25 @@ const NO_VAULT = "__none__";
 const DEFAULT_TIMEOUT_MINUTES = 120;
 const MAX_TIMEOUT_MINUTES = 24 * 60;
 
+/** How fresh a dynamic inventory's hosts are, for the run being set up. */
+function SnapshotNote({ targets }: { targets: InventoryTargets }) {
+  if (!targets.has_sources) return null;
+  if (!targets.snapshot_at) {
+    return (
+      <p className="text-xs text-destructive">
+        This inventory&apos;s dynamic sources haven&apos;t been refreshed yet: refresh it on its page first.
+      </p>
+    );
+  }
+  const failed = targets.last_refresh && ["failed", "timed_out"].includes(targets.last_refresh.status);
+  return (
+    <p className={failed ? "text-xs text-status-changed" : "text-xs text-muted-foreground"}>
+      {failed ? "The last refresh failed: " : ""}
+      Dynamic hosts as of {new Date(targets.snapshot_at).toLocaleString()}.
+    </p>
+  );
+}
+
 export function RunTriggerPage() {
   const navigate = useNavigate();
   const { user, can } = useAuth();
@@ -35,7 +54,7 @@ export function RunTriggerPage() {
   const [inventories, setInventories] = React.useState<InventorySummary[]>([]);
   const [credentials, setCredentials] = React.useState<Credential[]>([]);
   const [vaultPasswords, setVaultPasswords] = React.useState<VaultPassword[]>([]);
-  const [selectedInventory, setSelectedInventory] = React.useState<InventoryDetail | null>(null);
+  const [selectedInventory, setSelectedInventory] = React.useState<InventoryTargets | null>(null);
 
   const [playbookId, setPlaybookId] = React.useState<string>("");
   const [inventoryId, setInventoryId] = React.useState<string>("");
@@ -65,7 +84,7 @@ export function RunTriggerPage() {
       return;
     }
     setGroupId(ALL_HOSTS);
-    api.getInventory(Number(inventoryId)).then(setSelectedInventory);
+    api.inventoryTargets(Number(inventoryId)).then(setSelectedInventory);
   }, [inventoryId]);
 
   // A run lives in exactly one project: the playbook's. Only offer that project's items.
@@ -175,14 +194,15 @@ export function RunTriggerPage() {
               <SelectValue placeholder="All hosts" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={ALL_HOSTS}>All hosts ({selectedInventory.hosts.length})</SelectItem>
+              <SelectItem value={ALL_HOSTS}>All hosts ({selectedInventory.hosts})</SelectItem>
               {selectedInventory.groups.map((group) => (
-                <SelectItem key={group.id} value={GROUP_PREFIX + group.name}>
-                  Group: {group.name}
+                <SelectItem key={group.name} value={GROUP_PREFIX + group.name}>
+                  Group: {group.name} ({group.hosts}){group.origin === "source" ? " · from a source" : ""}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+          <SnapshotNote targets={selectedInventory} />
         </div>
       )}
 
