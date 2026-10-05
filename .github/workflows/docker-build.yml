@@ -96,10 +96,12 @@ jobs:
           echo "image head: $head, database: $applied"
           [ -n "$head" ] && [ "$head" = "$applied" ]
 
-      - name: Smoke test ansible-galaxy prerequisites in backend runtime image
+      - name: Smoke test ansible-galaxy and ansible-lint prerequisites in backend runtime image
         if: matrix.service == 'backend' && matrix.target == 'runtime'
         run: |
           docker exec smoke ansible-galaxy --version
+          docker exec smoke ansible-lint --version --offline
+          docker exec smoke yamllint --version
           docker exec smoke git --version
           docker exec smoke sh -c 'mkdir -p /data/galaxy/collections && touch /data/galaxy/collections/.write-test'
 

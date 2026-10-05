@@ -15,6 +15,7 @@ dependencies = [
     "pyyaml>=6.0",
     "ansible>=14.4.0",
     "ansible-runner>=2.4,<3",
+    "ansible-lint>=26.9.0",
     "joserfc>=1.7.5",
     "pyotp>=2.9",
     "segno>=1.6",

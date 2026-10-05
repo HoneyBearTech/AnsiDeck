@@ -30,6 +30,7 @@ import contextlib
 import json
 import os
 import pwd
+import re
 import shutil
 import signal
 import stat
@@ -240,6 +241,232 @@ def run_inventory(job: dict, emit) -> None:
         shutil.rmtree(pdd, ignore_errors=True)
 
 
+# ansible-lint config keys a repository may not set: write_list makes ansible-lint rewrite files
+# (even without --fix) and hide what it "fixed"; the others write elsewhere or change where and
+# how it looks. Its CLI options win for some of them, but not for all.
+_LINT_CONFIG_DROPPED = (
+    "write_list", "offline", "project_dir", "sarif_file", "cache_dir", "extra_vars",
+)  # fmt: skip
+_LINT_CONFIG_NAMES = (
+    ".ansible-lint",
+    ".ansible-lint.yml",
+    ".ansible-lint.yaml",
+    ".config/ansible-lint.yml",
+    ".config/ansible-lint.yaml",
+)
+# Findings that mean the file couldn't be checked at all, whatever severity ansible-lint gives.
+_LINT_ERROR_RULES = ("load-failure", "syntax-check", "internal-error", "parser-error")
+_LINT_MAX_OUTPUT = 16 * 1024 * 1024
+_LINT_EXIT_MEANING = {3: "ansible-lint's configuration is invalid"}
+# Colour codes ansible-lint writes to stderr even with --nocolor (configuration errors).
+_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def lint_config(project: Path) -> str:
+    """The -c argument for ansible-lint. Always given: without it ansible-lint looks for a
+    config in parent directories too, up to the shared /tmp, where another slot could plant
+    one. A repository's own config (from its root only) is used without the keys in
+    _LINT_CONFIG_DROPPED and without custom rule directories outside the repository; it is
+    rewritten in place (relative paths keep their meaning), as a new file, never through a
+    link."""
+    import yaml
+
+    inside = os.path.realpath(project) + os.sep
+    for name in _LINT_CONFIG_NAMES:
+        path = project / name
+        if path.is_file() and os.path.realpath(path).startswith(inside):
+            break
+    else:
+        return "/dev/null"  # ansible-lint's own spelling of "no configuration file"
+    try:
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (yaml.YAMLError, UnicodeDecodeError, OSError) as exc:
+        raise RuntimeError(f"the repository's {name} can't be read") from exc
+    if config is None:
+        config = {}
+    if not isinstance(config, dict):
+        raise RuntimeError(f"the repository's {name} is not a mapping")
+    for key in _LINT_CONFIG_DROPPED:
+        config.pop(key, None)
+    if "rulesdir" in config:
+        entries = config["rulesdir"] if isinstance(config["rulesdir"], list) else []
+        config["rulesdir"] = [
+            entry
+            for entry in entries
+            if isinstance(entry, str)
+            and entry
+            and not entry.startswith(("/", "~"))
+            and "$" not in entry
+            and os.path.realpath(project / entry).startswith(inside)
+        ]
+    path.unlink()
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    return str(path)
+
+
+def _int_or_none(value) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def lint_findings(issues, target: str, max_findings: int, clean) -> tuple[list[dict], int, int]:
+    """ansible-lint's codeclimate issues as compact findings: (the first max_findings, target
+    file first; how many there were; how many were in files outside the project, such as an
+    installed collection, and left out)."""
+    findings: list[dict] = []
+    external = 0
+    for issue in issues if isinstance(issues, list) else []:
+        if not isinstance(issue, dict):
+            continue
+        location = issue.get("location") if isinstance(issue.get("location"), dict) else {}
+        path = clean(str(location.get("path") or target))
+        if path.startswith(("/", "..")):
+            external += 1
+            continue
+        begin = (location.get("positions") or {}).get("begin") or {}
+        line = _int_or_none(begin.get("line")) or _int_or_none(
+            (location.get("lines") or {}).get("begin")
+        )
+        rule = str(issue.get("check_name") or "unknown")[:100]
+        severe = issue.get("severity") in ("major", "critical", "blocker") or (
+            rule.split("[")[0] in _LINT_ERROR_RULES
+        )
+        content = issue.get("content") if isinstance(issue.get("content"), dict) else {}
+        body = content.get("body")
+        url = issue.get("url")
+        findings.append(
+            {
+                "rule": rule,
+                "level": "error" if severe else "warning",
+                "message": clean(str(issue.get("description") or rule))[:500],
+                "details": clean(str(body))[:2000] if body else None,
+                "path": path[:1024],
+                "line": max(1, line or 1),
+                "column": _int_or_none(begin.get("column")),
+                "url": url[:300] if isinstance(url, str) and url.startswith("https://") else None,
+            }
+        )
+    findings.sort(key=lambda f: (f["path"] != target, f["path"], f["line"], f["column"] or 0))
+    return findings[:max_findings], len(findings), external
+
+
+def run_lint(job: dict, emit) -> None:
+    """A playbook check: ansible-lint over the job's content (written as playbook.yml) or, for
+    a playbook synced from git, over its repository (a tar after the job line on stdin, as for
+    runs) with the repository's own config, roles and collections. Offline, nothing written
+    back. Sends {"type": "lint_result", "rc", "findings", "total", "truncated", "external",
+    "error", "version"} and the usual "result". ansible-lint runs in a grandchild that can't
+    reach the message pipe; it loads collection and module code like a run does."""
+    import subprocess
+    from importlib.metadata import version
+
+    base = "/tmp" if os.path.isdir("/tmp") else None  # noqa: S108 - short paths; mkdtemp is private
+    pdd = Path(tempfile.mkdtemp(prefix=job.get("prefix", "ansideck-lint-"), dir=base))
+    emit({"type": "started", "private_data_dir": str(pdd)})
+    try:
+        if job.get("own_home"):
+            os.environ["HOME"] = _own_home()
+        for name in ("tmp", "ansible", "cache", "config"):
+            (pdd / name).mkdir(mode=0o700)
+        project = pdd / "project"
+        project.mkdir(mode=0o700)
+        env = dict(os.environ)
+        if job.get("project") is not None:
+            unpack_project(sys.stdin.buffer, project)
+            target = project_playbook(project, job["project"]["playbook"])
+            env["ANSIBLE_ROLES_PATH"] = _search_path(
+                project, "ANSIBLE_ROLES_PATH", ("roles_path",), "roles"
+            )
+            env["ANSIBLE_COLLECTIONS_PATH"] = _search_path(
+                project,
+                "ANSIBLE_COLLECTIONS_PATH",
+                ("collections_path", "collections_paths"),
+                "collections",
+            )
+            config = lint_config(project)
+        else:
+            target = "playbook.yml"
+            (project / target).write_text(job["content"], encoding="utf-8")
+            (project / target).chmod(0o600)
+            config = "/dev/null"
+        bin_dir = str(Path(sys.executable).parent)
+        for name in ("ANSIBLE_LINT_CUSTOM_RULESDIR", "ANSIBLE_LINT_NODEPS", "VIRTUAL_ENV"):
+            env.pop(name, None)
+        env.update(
+            {
+                "ANSIBLE_HOME": str(pdd / "ansible"),
+                "TMPDIR": str(pdd / "tmp"),
+                "ANSIBLE_LOCAL_TEMP": str(pdd / "tmp"),
+                "XDG_CACHE_HOME": str(pdd / "cache"),
+                "XDG_CONFIG_HOME": str(pdd / "config"),
+                "ANSIBLE_LINT_SKIP_SCHEMA_UPDATE": "1",
+                "NO_COLOR": "1",
+                "ANSIBLE_NOCOLOR": "1",
+                # ansible-lint runs ansible-playbook --syntax-check from PATH
+                "PATH": os.pathsep.join([bin_dir, env.get("PATH", "")]),
+            }
+        )
+        output, stderr = pdd / "out.json", pdd / "stderr.txt"
+        command = [
+            str(Path(bin_dir) / "ansible-lint"),
+            "--offline", "--nocolor", "-f", "codeclimate",
+            "--project-dir", str(project), "-c", config, target,
+        ]  # fmt: skip
+        with open(output, "wb") as out, open(stderr, "wb") as err:
+            rc = subprocess.run(  # noqa: S603 - argument list, no shell
+                command, stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                env=env, cwd=project, check=False,
+            ).returncode  # fmt: skip
+
+        prefixes = sorted(
+            {str(project), os.path.realpath(project), str(pdd), os.path.realpath(pdd)},
+            key=len,
+            reverse=True,
+        )
+
+        def clean(text: str) -> str:
+            for prefix in prefixes:
+                text = text.replace(prefix + os.sep, "").replace(prefix, ".")
+            return text
+
+        with open(stderr, "rb") as err:
+            err.seek(max(0, err.seek(0, os.SEEK_END) - _STDERR_TAIL))
+            tail = _ANSI.sub("", clean(err.read().decode("utf-8", "replace"))).strip()
+        findings: list[dict] = []
+        total = external = 0
+        error = None
+        if rc in (0, 2):
+            try:
+                if output.stat().st_size > _LINT_MAX_OUTPUT:
+                    raise ValueError("too large")
+                lines = output.read_text(encoding="utf-8").splitlines()
+                issues = json.loads(next(line for line in reversed(lines) if line.startswith("[")))
+            except (ValueError, StopIteration, OSError):
+                error = "ansible-lint's output couldn't be read"
+            else:
+                findings, total, external = lint_findings(
+                    issues, target, job.get("max_findings", 500), clean
+                )
+        else:
+            meaning = _LINT_EXIT_MEANING.get(rc, f"ansible-lint failed (exit {rc})")
+            last = "\n".join(tail.splitlines()[-15:])
+            error = f"{meaning}: {last}" if last else meaning
+        emit(
+            {
+                "type": "lint_result",
+                "rc": rc,
+                "findings": findings,
+                "total": total,
+                "truncated": total > len(findings),
+                "external": external,
+                "error": error[:1000] if error else None,
+                "version": version("ansible-lint"),
+            }
+        )
+        emit({"type": "result", "status": "failed" if error else "successful", "rc": rc})
+    finally:
+        shutil.rmtree(pdd, ignore_errors=True)
+
+
 def run(job: dict) -> None:
     event_fd = job.pop("event_fd")
     # Not inherited by anything the playbook spawns, so it can't forge results.
@@ -250,10 +477,10 @@ def run(job: dict) -> None:
         events.write(json.dumps(message) + "\n")
         events.flush()
 
-    if job.get("mode") == "inventory":
+    if job.get("mode") in ("inventory", "lint"):
         try:
-            run_inventory(job, emit)
-        except Exception as exc:  # noqa: BLE001 - reported, the refresh fails with this reason
+            (run_inventory if job["mode"] == "inventory" else run_lint)(job, emit)
+        except Exception as exc:  # noqa: BLE001 - reported, the job fails with this reason
             emit({"type": "refused", "reason": str(exc)[:300]})
         return
 
