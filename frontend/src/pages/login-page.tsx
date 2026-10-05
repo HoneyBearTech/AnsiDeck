@@ -2,7 +2,7 @@ import * as React from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/context/auth-context";
@@ -125,10 +125,10 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <main className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle className="font-mono text-xl text-primary">AnsiDeck</CardTitle>
+          <h1 className="font-mono text-xl font-semibold leading-none tracking-tight text-primary">AnsiDeck</h1>
           <CardDescription>
             {needsSecondFactor
               ? "Two-factor login is on for this account."
@@ -196,6 +196,6 @@ export function LoginPage() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </main>
   );
 }

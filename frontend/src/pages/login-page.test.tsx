@@ -21,7 +21,8 @@ describe("sign-in", () => {
     await user.type(screen.getByLabelText("Password"), "s3cret");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
-    expect(await screen.findByText("Runs", { selector: "h3" })).toBeInTheDocument();
+    // Signing in lands on the dashboard.
+    expect(await screen.findByRole("heading", { level: 1, name: "Dashboard" })).toBeInTheDocument();
     expect(api.requests("POST /auth/login")[0]?.body).toEqual({ username: "admin", password: "s3cret" });
   });
 

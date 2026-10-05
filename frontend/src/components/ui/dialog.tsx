@@ -22,12 +22,27 @@ function DialogOverlay({
 function DialogContent({
   className,
   children,
+  onOpenAutoFocus,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content>) {
+  // Radix returns focus to a <DialogTrigger> on close; many dialogs here open from a plain button
+  // (or a menu) instead, so remember whatever had focus and go back to it.
+  const opener = React.useRef<HTMLElement | null>(null);
   return (
     <DialogPrimitive.Portal>
       <DialogOverlay />
       <DialogPrimitive.Content
+        onOpenAutoFocus={(event) => {
+          opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          onOpenAutoFocus?.(event);
+        }}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event);
+          if (event.defaultPrevented || !opener.current?.isConnected) return;
+          event.preventDefault();
+          opener.current.focus();
+        }}
         className={cn(
           "fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-6 text-popover-foreground shadow-lg",
           className,

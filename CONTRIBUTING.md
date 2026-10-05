@@ -88,6 +88,9 @@ merged.
   `frontend/tsconfig*.json`, and the [oxlint](https://oxc.rs/docs/guide/usage/linter) rules in
   `frontend/.oxlintrc.json` (warnings fail the lint). Follow the
   existing component patterns (Radix primitives in `src/components/ui/`, Tailwind tokens in `src/index.css`).
+- **Accessibility**: give every control a label tied to it, keep one `<h1>` per page, and use the Radix-based
+  components in `src/components/ui/` for dialogs, selects and switches. The axe tests in
+  `src/test/a11y.test.tsx` must keep passing; see [docs/accessibility.md](docs/accessibility.md).
 - **Exceptions** are rare: suppress a single finding on its own line (`# noqa: <rule>` or
   `// oxlint-disable-next-line <rule>`) with a short reason, never a whole file or rule without one.
 - Beyond the tools, follow the style of the surrounding code rather than introducing a new one.

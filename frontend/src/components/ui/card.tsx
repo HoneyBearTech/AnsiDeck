@@ -18,9 +18,10 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   return <div className={cn("flex flex-col gap-1.5 p-6", className)} {...props} />;
 }
 
-function CardTitle({ className, ...props }: React.ComponentProps<"h3">) {
+// A section heading under the page's <h1>.
+function CardTitle({ className, ...props }: React.ComponentProps<"h2">) {
   // oxlint-disable-next-line jsx-a11y/heading-has-content -- the content arrives as children in props
-  return <h3 className={cn("text-lg font-semibold leading-none tracking-tight", className)} {...props} />;
+  return <h2 className={cn("text-lg font-semibold leading-none tracking-tight", className)} {...props} />;
 }
 
 function CardDescription({ className, ...props }: React.ComponentProps<"p">) {
