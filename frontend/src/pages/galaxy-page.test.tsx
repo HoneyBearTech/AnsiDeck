@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { reply } from "@/test/fake-api";
 import { viewerUser } from "@/test/fixtures";
 import { renderApp } from "@/test/render";
+import { editorText, setEditorText } from "@/test/editor";
 
 function install(overrides = {}) {
   return {
@@ -43,7 +44,8 @@ describe("galaxy", () => {
       expect(await screen.findByText("community.general")).toBeInTheDocument();
       expect(screen.getByText("unknown version")).toBeInTheDocument();
       const editor = screen.getByLabelText("requirements.yml");
-      await user.type(editor, "  - name: ansible.posix\n");
+      await vi.waitFor(() => expect(editorText(editor)).toContain("community.general"));
+      setEditorText(editor, `${editorText(editor)}  - name: ansible.posix\n`);
       expect(screen.getByText("Save your changes first.")).toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: "Save" }));
       expect(await screen.findByRole("button", { name: "Saved" })).toBeDisabled();
@@ -91,7 +93,8 @@ describe("galaxy", () => {
     await user.click(screen.getByRole("button", { name: /#4 · admin/ }));
     expect(await screen.findByText(/Waiting for 1 running run to finish/)).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText("requirements.yml"), "x");
+    const editor = screen.getByLabelText("requirements.yml");
+    setEditorText(editor, `${editorText(editor)}x`);
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Local paths are not allowed")).toBeInTheDocument();
   });
@@ -111,7 +114,7 @@ describe("galaxy", () => {
       routes: { ...BASE, "GET /galaxy/installed": { collections: [], roles: [] } },
     });
     expect(await screen.findAllByText("None installed.")).toHaveLength(2);
-    expect(screen.getByLabelText("requirements.yml")).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("requirements.yml")).toHaveAttribute("aria-readonly", "true");
     expect(screen.queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
   });
 });

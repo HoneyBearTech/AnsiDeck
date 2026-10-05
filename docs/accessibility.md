@@ -19,6 +19,11 @@ bugs: please report them in [GitHub Issues](https://github.com/HoneyBearTech/Ans
   and shows a visible focus ring; dialogs take focus, keep it inside while open, close with Escape and
   return focus to the control that opened them; selects open and choose with the keyboard. The
   focus-return behaviour has a regression test.
+- **The code editor** (playbooks, inventory source configs, Galaxy requirements) is a labelled multi-line
+  text box that doesn't capture Tab, so keyboard users can always move on; read-only text is announced as
+  read-only and can still be selected. Check results are a list with headings and a live summary, and
+  each finding says "Error" or "Warning" in words next to its colour and icon. Ctrl+Shift+M (⌘ on a Mac)
+  opens the editor's own list of the marked findings.
 
 ## How the UI is built for it
 

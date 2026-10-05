@@ -1,11 +1,11 @@
 import * as React from "react";
 
+import { CodeEditor } from "@/components/code-editor";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/auth-context";
 import {
   api,
@@ -150,13 +150,11 @@ export function GalaxyPage() {
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="galaxy-requirements">requirements.yml</Label>
-            <Textarea
-              id="galaxy-requirements"
+            <Label id="galaxy-requirements-label">requirements.yml</Label>
+            <CodeEditor
+              labelledBy="galaxy-requirements-label"
               value={content}
-              onChange={(e) => setContent(e.target.value)}
-              className="min-h-48 font-mono"
-              spellCheck={false}
+              onChange={setContent}
               readOnly={!canManage}
               placeholder={REQUIREMENTS_PLACEHOLDER}
             />

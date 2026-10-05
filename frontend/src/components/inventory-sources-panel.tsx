@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { CodeEditor } from "@/components/code-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +16,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/auth-context";
 import {
   api,
@@ -175,7 +175,7 @@ function SourceDialog({
           </div>
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <Label htmlFor="source-config">Plugin config (YAML)</Label>
+              <Label id="source-config-label">Plugin config (YAML)</Label>
               <div className="flex flex-wrap gap-1">
                 <span className="text-xs text-muted-foreground">Examples:</span>
                 {EXAMPLES.map((example) => (
@@ -192,13 +192,7 @@ function SourceDialog({
                 ))}
               </div>
             </div>
-            <Textarea
-              id="source-config"
-              value={config}
-              onChange={(e) => setConfig(e.target.value)}
-              className="min-h-56 font-mono text-xs"
-              spellCheck={false}
-            />
+            <CodeEditor labelledBy="source-config-label" value={config} onChange={setConfig} />
             <p className="text-xs text-muted-foreground">
               Anyone who can see this inventory can read the config: put tokens in an environment-variables
               credential and refer to them with <code>{"{{ lookup('env', 'NAME') }}"}</code>.

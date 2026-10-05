@@ -4,11 +4,36 @@
 
 **Playbooks** lists the project's playbooks. Operators and admins can:
 
-- **New Playbook**: give it a name and paste the YAML, or **Upload YAML file** (the name defaults to the
-  file's). It must be valid YAML: a playbook is checked when you save it.
+- **New Playbook**: give it a name and type or paste the YAML, or **Upload YAML file** (the name defaults
+  to the file's). It must be valid YAML: a playbook is checked when you save it.
 - Open a playbook to edit and **Save** it, or **Delete** it from the list (after a confirmation). Run
   history stays.
 - **Run** opens a new run (see [Runs](runs.md)).
+
+The editor highlights YAML and numbers its lines; undo and redo work as usual (Ctrl+Z / Ctrl+Shift+Z,
+⌘ on a Mac). Tab moves on to the next control rather than indenting, so the keyboard never gets stuck in
+it; indent with spaces. The same editor shows inventory source configs and the Galaxy requirements.
+
+### Checking a playbook
+
+**Check** (operators and admins) runs [ansible-lint](https://docs.ansible.com/projects/lint/) on the
+playbook in a worker and lists what it found: errors and warnings, each with its line, the rule (linked
+to its explanation) and details. Findings in the playbook are also marked in the editor's margin and
+underlined in the text; **Go to line** jumps there.
+
+- It checks the text **as it is in the editor**, saved or not, and even if it isn't valid YAML yet (that
+  is reported as an error). Saving never waits for a check, and nothing stops you from saving a playbook
+  with findings.
+- After you change the text, the results say they are for an earlier version: check again.
+- A playbook **synced from git** is checked inside its repository at the current commit, with the
+  repository's roles and its own ansible-lint configuration (`.ansible-lint`, `.yamllint`,
+  `.ansible-lint-ignore`) if it has one; other playbooks use ansible-lint's default rules. Findings in
+  the repository's roles or task files are listed with their file.
+- Checks run offline: only collections and roles installed on the [Galaxy](#galaxy) page are available, so
+  a module from anything else is reported as unknown. A repository's `requirements.yml` isn't installed.
+- Each person has one check waiting at a time (a new one replaces it), a few run at once across all
+  workers, and a check is stopped after 2 minutes; playbooks over 1 MiB can't be checked. Results are
+  visible only to you and are deleted after an hour.
 
 ## Playbooks from git
 

@@ -54,3 +54,108 @@
     color-scheme: dark;
   }
 }
+
+/* The code editor (components/code-editor.tsx, CodeMirror 6). Colours come from the theme tokens
+   above; syntax tokens use @lezer/highlight's classHighlighter class names. The extra .cm-editor in the
+   selectors outranks CodeMirror's own injected base theme. */
+@layer components {
+  /* What CodeMirror themes itself (gutter, active line, selection) is set in code-editor.tsx's
+     EditorView.theme, which outranks its base theme; these variables carry the tokens there. */
+  .code-editor {
+    --editor-gutter: var(--color-muted);
+    --editor-gutter-text: var(--color-muted-foreground);
+    --editor-border: var(--color-border);
+    --editor-active-line: color-mix(in oklab, var(--color-secondary) 45%, transparent);
+    --editor-active-gutter: var(--color-secondary);
+    --editor-foreground: var(--color-foreground);
+    --editor-selection: color-mix(in oklab, var(--color-primary) 25%, transparent);
+    --editor-caret: var(--color-primary);
+  }
+  .code-editor .cm-editor {
+    @apply rounded-md border border-input bg-input font-mono text-sm;
+    min-height: 12rem;
+  }
+  .code-editor .cm-editor.cm-focused {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+  .code-editor .cm-editor .cm-scroller {
+    @apply font-mono;
+    line-height: 1.6;
+  }
+  .code-editor .cm-editor .cm-content {
+    @apply py-2;
+  }
+  .code-editor .cm-editor .cm-placeholder {
+    @apply text-muted-foreground;
+  }
+  .code-editor .cm-editor .cm-matchingBracket {
+    @apply bg-primary/20 text-foreground;
+  }
+
+  /* Lint markers: CodeMirror's own are data: SVG images, which the CSP's img-src 'self' blocks. */
+  .code-editor .cm-editor .cm-lintRange-error,
+  .code-editor .cm-editor .cm-lintRange-warning {
+    background-image: none !important;
+    @apply underline decoration-wavy underline-offset-4;
+  }
+  .code-editor .cm-editor .cm-lintRange-error {
+    @apply decoration-status-failed;
+  }
+  .code-editor .cm-editor .cm-lintRange-warning {
+    @apply decoration-status-changed;
+  }
+  .code-editor .cm-editor .cm-lint-marker {
+    content: normal !important;
+    @apply mx-auto mt-[0.45em] block size-[0.6em] rounded-full;
+  }
+  .code-editor .cm-editor .cm-lint-marker-error {
+    @apply bg-status-failed;
+  }
+  .code-editor .cm-editor .cm-lint-marker-warning {
+    @apply bg-status-changed;
+  }
+  .code-editor .cm-editor .cm-tooltip {
+    @apply rounded-md border border-border bg-popover text-popover-foreground shadow-lg;
+  }
+  .code-editor .cm-editor .cm-diagnostic {
+    @apply px-2 py-1 font-sans text-sm;
+  }
+  .code-editor .cm-editor .cm-diagnostic-error {
+    @apply border-l-4 border-l-status-failed;
+  }
+  .code-editor .cm-editor .cm-diagnostic-warning {
+    @apply border-l-4 border-l-status-changed;
+  }
+  .code-editor .cm-editor .cm-panels {
+    @apply border-border bg-card text-card-foreground;
+  }
+
+  /* Syntax (YAML): keys, strings, numbers and literals, comments, punctuation. */
+  .code-editor .tok-propertyName,
+  .code-editor .tok-definition {
+    @apply text-primary;
+  }
+  .code-editor .tok-string,
+  .code-editor .tok-string2 {
+    @apply text-status-ok;
+  }
+  .code-editor .tok-number,
+  .code-editor .tok-bool,
+  .code-editor .tok-atom,
+  .code-editor .tok-literal {
+    @apply text-status-changed;
+  }
+  .code-editor .tok-keyword,
+  .code-editor .tok-meta,
+  .code-editor .tok-typeName,
+  .code-editor .tok-labelName {
+    @apply text-accent;
+  }
+  .code-editor .tok-comment {
+    @apply text-muted-foreground italic;
+  }
+  .code-editor .tok-punctuation,
+  .code-editor .tok-operator {
+    @apply text-secondary-foreground;
+  }
+}

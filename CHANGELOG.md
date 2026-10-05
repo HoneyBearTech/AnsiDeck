@@ -9,7 +9,11 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
-- **Playbook checks** (API, for the editor's Check button coming next): `POST /api/playbooks/lint`
+- **A code editor** for playbooks, inventory source configs and Galaxy requirements: YAML highlighting,
+  line numbers, undo, and markers for check findings. **Check** on a playbook runs ansible-lint on the
+  editor's text (saved or not; a synced playbook in its repository) and lists the findings with links to
+  each rule. The file upload controls now look like buttons.
+- **Playbook checks** API (behind the Check button): `POST /api/playbooks/lint`
   checks text (unsaved, even invalid YAML) and `POST /api/playbooks/{id}/lint` a saved playbook; one
   synced from git is checked inside its repository at the current commit with the repository's own
   `.ansible-lint`. ansible-lint runs offline in an isolated worker; findings (rule, level, line, message,
