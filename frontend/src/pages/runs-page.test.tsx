@@ -178,7 +178,7 @@ describe("run detail", () => {
     expect(screen.getByText("exit code 2")).toBeInTheDocument();
     expect(screen.getByText(/"release": "1.2"/)).toBeInTheDocument();
 
-    const socket = FakeWebSocket.instances[0]!;
+    const socket = await FakeWebSocket.opened();
     expect(socket.url).toContain("/api/runs/7/ws");
     act(() => {
       socket.open();
@@ -236,7 +236,8 @@ describe("run detail", () => {
     });
     expect(await screen.findByRole("button", { name: "Cancelling…" })).toBeDisabled();
     expect(screen.getAllByText("Cancelling…")).toHaveLength(2);
-    act(() => FakeWebSocket.instances[0]!.close(1000));
+    const socket = await FakeWebSocket.opened();
+    act(() => socket.close(1000));
     expect(await screen.findByText("This run produced no output.")).toBeInTheDocument();
   });
 });
@@ -247,7 +248,7 @@ describe("live output", () => {
     try {
       const { screen } = renderApp("/runs/7", { routes: { "GET /runs/:id": run() } });
       await screen.findByText("Live output");
-      const first = FakeWebSocket.instances[0]!;
+      const first = await FakeWebSocket.opened();
       act(() => {
         first.open();
         first.emit({ stdout: "line one", counter: 1 });
@@ -255,7 +256,7 @@ describe("live output", () => {
       });
       expect(await screen.findByText("Connection lost. Reconnecting…")).toBeInTheDocument();
       await vi.advanceTimersByTimeAsync(1100);
-      const second = FakeWebSocket.instances[1]!;
+      const second = await FakeWebSocket.opened(1);
       expect(second.url).toContain("from=1");
       act(() => second.close(1008));
       expect(await screen.findByText(/Live output is unavailable/)).toBeInTheDocument();
