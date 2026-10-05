@@ -14,6 +14,7 @@ Self-hosted web UI for running Ansible playbooks against target systems, package
 - [Security requirements](docs/security.md): what AnsiDeck does and doesn't protect against, and the
   [assurance case](docs/assurance-case.md) behind it.
 - [Roadmap](docs/roadmap.md): where the project is going, and what it won't do.
+- [Accessibility](docs/accessibility.md): what is checked (WCAG 2.1 AA) and the known gaps.
 - [Contributing](CONTRIBUTING.md), [Code of Conduct](CODE_OF_CONDUCT.md), [Governance](GOVERNANCE.md) and
   [reporting a vulnerability](SECURITY.md).
 
