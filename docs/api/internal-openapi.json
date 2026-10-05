@@ -1,0 +1,917 @@
+{
+  "components": {
+    "schemas": {
+      "ClaimIn": {
+        "properties": {
+          "isolated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isolated"
+          },
+          "kinds": {
+            "default": [
+              "run"
+            ],
+            "items": {
+              "enum": [
+                "run",
+                "refresh"
+              ],
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "title": "Kinds",
+            "type": "array"
+          },
+          "slots": {
+            "default": 1,
+            "maximum": 256.0,
+            "minimum": 1.0,
+            "title": "Slots",
+            "type": "integer"
+          },
+          "wait_seconds": {
+            "default": 25.0,
+            "maximum": 25.0,
+            "minimum": 0.0,
+            "title": "Wait Seconds",
+            "type": "number"
+          },
+          "worker_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Worker Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "worker_id"
+        ],
+        "title": "ClaimIn",
+        "type": "object"
+      },
+      "ClaimOut": {
+        "properties": {
+          "claim_token": {
+            "title": "Claim Token",
+            "type": "string"
+          },
+          "job_token": {
+            "title": "Job Token",
+            "type": "string"
+          },
+          "kind": {
+            "default": "run",
+            "enum": [
+              "run",
+              "refresh"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id",
+          "claim_token",
+          "job_token"
+        ],
+        "title": "ClaimOut",
+        "type": "object"
+      },
+      "CompleteIn": {
+        "properties": {
+          "host_counts": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Counts"
+          },
+          "last_seq": {
+            "minimum": 0.0,
+            "title": "Last Seq",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "return_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Code"
+          },
+          "status": {
+            "enum": [
+              "success",
+              "failed",
+              "cancelled",
+              "timed_out"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "last_seq",
+          "status"
+        ],
+        "title": "CompleteIn",
+        "type": "object"
+      },
+      "EventsIn": {
+        "properties": {
+          "events": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 10000,
+            "title": "Events",
+            "type": "array"
+          },
+          "first_seq": {
+            "minimum": 1.0,
+            "title": "First Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "first_seq",
+          "events"
+        ],
+        "title": "EventsIn",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HeartbeatIn": {
+        "properties": {
+          "isolated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isolated"
+          },
+          "refreshes": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/HeartbeatRefresh"
+            },
+            "maxItems": 256,
+            "title": "Refreshes",
+            "type": "array"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/HeartbeatRun"
+            },
+            "maxItems": 256,
+            "title": "Runs",
+            "type": "array"
+          },
+          "slots": {
+            "default": 1,
+            "maximum": 256.0,
+            "minimum": 1.0,
+            "title": "Slots",
+            "type": "integer"
+          },
+          "worker_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Worker Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "worker_id",
+          "runs"
+        ],
+        "title": "HeartbeatIn",
+        "type": "object"
+      },
+      "HeartbeatRefresh": {
+        "properties": {
+          "claim_token": {
+            "maxLength": 200,
+            "title": "Claim Token",
+            "type": "string"
+          },
+          "refresh_id": {
+            "title": "Refresh Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "refresh_id",
+          "claim_token"
+        ],
+        "title": "HeartbeatRefresh",
+        "type": "object"
+      },
+      "HeartbeatRun": {
+        "properties": {
+          "claim_token": {
+            "maxLength": 200,
+            "title": "Claim Token",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id",
+          "claim_token"
+        ],
+        "title": "HeartbeatRun",
+        "type": "object"
+      },
+      "JobIn": {
+        "properties": {
+          "job_token": {
+            "maxLength": 200,
+            "title": "Job Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_token"
+        ],
+        "title": "JobIn",
+        "type": "object"
+      },
+      "RefreshCompleteIn": {
+        "properties": {
+          "bytes": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "scrubbed": {
+            "default": false,
+            "title": "Scrubbed",
+            "type": "boolean"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "status": {
+            "enum": [
+              "success",
+              "failed",
+              "timed_out"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "RefreshCompleteIn",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "AnsiDeck internal worker API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/internal/claim": {
+      "post": {
+        "description": "Long poll: returns as soon as a run can be claimed, or 204 after wait_seconds.",
+        "operationId": "claim_internal_claim_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "204": {
+            "description": "Nothing to run"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Claim"
+      }
+    },
+    "/internal/heartbeat": {
+      "post": {
+        "description": "Renews the lease of each run the worker still owns: \"ok\", \"cancel\" (stop it), or \"gone\"\n(the claim ended; stop without reporting).",
+        "operationId": "heartbeat_internal_heartbeat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeartbeatIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "items": {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "title": "Response Heartbeat Internal Heartbeat Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Heartbeat"
+      }
+    },
+    "/internal/ping": {
+      "post": {
+        "operationId": "ping_internal_ping_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Ping Internal Ping Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ping"
+      }
+    },
+    "/internal/refreshes/{refresh_id}/complete": {
+      "post": {
+        "description": "Checks the uploaded output against the worker's size and hash, normalises it and makes\nit the inventory's current snapshot, or records why the refresh failed.",
+        "operationId": "refresh_complete_internal_refreshes__refresh_id__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "refresh_id",
+            "required": true,
+            "schema": {
+              "title": "Refresh Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-claim-token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "title": "X-Claim-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshCompleteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Refresh Complete Internal Refreshes  Refresh Id  Complete Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Complete"
+      }
+    },
+    "/internal/refreshes/{refresh_id}/job": {
+      "post": {
+        "description": "Hands the refresh job (with its credentials' variables) out exactly once.",
+        "operationId": "refresh_job_internal_refreshes__refresh_id__job_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "refresh_id",
+            "required": true,
+            "schema": {
+              "title": "Refresh Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-claim-token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "title": "X-Claim-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Refresh Job Internal Refreshes  Refresh Id  Job Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Job"
+      }
+    },
+    "/internal/refreshes/{refresh_id}/output": {
+      "post": {
+        "description": "Appends a chunk of the refresh's output at X-Offset (a resent chunk is accepted again;\na gap is refused with the offset to resend from).",
+        "operationId": "refresh_output_internal_refreshes__refresh_id__output_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "refresh_id",
+            "required": true,
+            "schema": {
+              "title": "Refresh Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-claim-token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "title": "X-Claim-Token",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-offset",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "X-Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Refresh Output Internal Refreshes  Refresh Id  Output Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Output"
+      }
+    },
+    "/internal/runs/{run_id}/complete": {
+      "post": {
+        "description": "Records the outcome, but only once every event is in the log (so a finished run's\noutput is complete by definition).",
+        "operationId": "complete_internal_runs__run_id__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-claim-token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "title": "X-Claim-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Complete Internal Runs  Run Id  Complete Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete"
+      }
+    },
+    "/internal/runs/{run_id}/events": {
+      "post": {
+        "description": "Appends a batch of (already scrubbed) events. Sequence numbers make retries safe:\nevents up to runs.log_seq are skipped, and a gap is refused with the seq to resend from.",
+        "operationId": "events_internal_runs__run_id__events_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-claim-token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "title": "X-Claim-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Events Internal Runs  Run Id  Events Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Events"
+      }
+    },
+    "/internal/runs/{run_id}/job": {
+      "post": {
+        "description": "Hands the job (with its decrypted secrets) out exactly once.",
+        "operationId": "job_internal_runs__run_id__job_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-claim-token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "title": "X-Claim-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Job Internal Runs  Run Id  Job Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Job"
+      }
+    },
+    "/internal/runs/{run_id}/snapshot": {
+      "post": {
+        "description": "The repository snapshot (a tar) a run of a synced playbook executes in. Its path comes\nfrom the run's row; the worker checks size and hash against its job.",
+        "operationId": "snapshot_internal_runs__run_id__snapshot_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-claim-token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "title": "X-Claim-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Snapshot Internal Runs  Run Id  Snapshot Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Snapshot"
+      }
+    }
+  }
+}

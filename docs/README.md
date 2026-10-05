@@ -39,7 +39,10 @@ The main [README](../README.md) lists every setting (environment variable) for d
 
 ## About the project
 
-- [Architecture](architecture.md), [security requirements](security.md), the
+- [Architecture](architecture.md), [external interfaces](interfaces.md) (with the
+  [OpenAPI description](api/openapi.json)), [security requirements](security.md), the
   [assurance case](assurance-case.md) and [accessibility](accessibility.md).
-- [Roadmap](roadmap.md), [changelog](../CHANGELOG.md), [governance](../GOVERNANCE.md),
+- [Dependencies and vulnerability management](dependencies.md): how dependencies are chosen and tracked,
+  and the remediation policies for dependency and code-scanning findings.
+- [Roadmap](roadmap.md), [changelog](../CHANGELOG.md), [support](../SUPPORT.md), [governance](../GOVERNANCE.md),
   [contributing](../CONTRIBUTING.md) and [reporting a vulnerability](../SECURITY.md).

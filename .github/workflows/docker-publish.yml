@@ -68,11 +68,15 @@ jobs:
           tags: ansideck-${{ matrix.service }}:scan
           cache-from: type=gha,scope=${{ matrix.service }}-runtime
 
+      # Findings recorded as not affecting AnsiDeck in the OpenVEX document are suppressed
+      # (docs/dependencies.md).
       - name: Scan for fixable HIGH and CRITICAL vulnerabilities
         run: >-
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
+          -v "$GITHUB_WORKSPACE/.vex:/vex:ro"
           aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
           image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress
+          --vex /vex/ansideck.openvex.json
           ansideck-${{ matrix.service }}:scan
 
       - name: Build and push

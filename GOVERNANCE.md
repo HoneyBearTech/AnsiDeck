@@ -35,6 +35,54 @@ Automated tools also take part: Dependabot proposes dependency updates (patch an
 packages merge automatically once CI passes; Docker base images and major versions wait for the
 maintainer), and CI, CodeQL, fuzzing and OpenSSF Scorecard check every change.
 
+## Access to sensitive resources
+
+Who can change the code, releases and project settings, as of the date of this file's last change:
+
+| Resource | Who has access | Through |
+| --- | --- | --- |
+| Repository administration (settings, rulesets, secrets, merging) | the maintainer (@HoneyBearTech) | GitHub account owner |
+| Publishing releases and images on GHCR | the release workflow, on a version tag pushed by the maintainer | GitHub Actions, short-lived `GITHUB_TOKEN` and Sigstore identity |
+| Signing version tags | the maintainer | personal SSH key |
+| The OpenSSF Best Practices badge entry | the maintainer | GitHub sign-in |
+| Security advisories and private vulnerability reports | the maintainer | GitHub |
+| Automated changes | Dependabot (pull requests only; it can't merge without the required checks) | GitHub |
+
+There are no other collaborators, and no repository secrets: workflows use only the per-job
+`GITHUB_TOKEN`, read-only unless a job asks for more.
+
+## Granting elevated access
+
+Nobody gets write, maintain or admin access to the repository, or any of the resources above, without
+this review:
+
+1. The person has a public track record with the project: several merged pull requests of good quality
+   over at least three months, and participation in reviews or issues.
+2. Their identity is established: a GitHub account with history, two-factor authentication on, and a way
+   for the maintainer to confirm who they are (for example a known employer, a long-standing open-source
+   profile, or meeting in person).
+3. The maintainer decides, records the decision and the role in a pull request that updates the tables in
+   this file, and grants the least access that role needs.
+4. Access is removed when someone steps back or is inactive for a year, also by a pull request here.
+
+## The project's own secrets
+
+The credentials AnsiDeck's project (not a deployment) holds, and how they're handled:
+
+- **What exists**: the maintainer's GitHub account and its recovery codes, and the SSH key that signs
+  tags. Releases are signed keylessly (Sigstore), so there is no long-lived signing key, and workflows
+  need no stored secrets.
+- **Storage**: in the maintainer's password manager, never in the repository, CI configuration, issues or
+  logs. GitHub secret scanning with push protection blocks committed secrets, and `.gitignore` excludes
+  `.env` files and the deployment's `deploy/secrets/`.
+- **Access**: the maintainer only, plus the successor through the lockbox described under Continuity.
+- **Rotation**: recovery codes are regenerated after use and at least yearly, and the lockbox updated;
+  the tag-signing key is replaced (and `.github/allowed_signers` updated) if it may have been exposed.
+  Any secret that might have leaked is revoked and replaced at once, and the incident handled as in
+  [SECURITY.md](SECURITY.md).
+- If the project ever needs a stored secret in CI, it goes into GitHub encrypted secrets or an environment
+  with required reviewers, available only to the job that needs it, with this section updated.
+
 ## Continuity
 
 The project must be able to carry on, with issues opened and closed, changes accepted and releases made,

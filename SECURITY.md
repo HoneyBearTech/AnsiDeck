@@ -20,7 +20,11 @@ Please keep the details private until the advisory is published, or for 90 days 
 
 ## Supported Versions
 
-Security fixes go into `main` and the most recent release (see the [releases](https://github.com/HoneyBearTech/AnsiDeck/releases) and [CHANGELOG.md](CHANGELOG.md)). Older releases are not patched: upgrading to the latest release is the supported path ([docs/upgrading.md](docs/upgrading.md)), and the release notes say when an upgrade needs extra steps.
+The latest release and `main` receive security fixes; a release stops receiving them when the next one is published. Details are in [SUPPORT.md](SUPPORT.md).
+
+## Published vulnerabilities
+
+Fixed vulnerabilities in AnsiDeck are published as [GitHub security advisories](https://github.com/HoneyBearTech/AnsiDeck/security/advisories) (with a CVE where one applies), naming the affected and fixed versions, how to tell whether you're affected, and how to fix or work around it, and they're listed in the release notes. How vulnerabilities in AnsiDeck's dependencies are handled is described in [docs/dependencies.md](docs/dependencies.md).
 
 ## Scope
 

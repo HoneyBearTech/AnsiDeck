@@ -73,12 +73,14 @@ jobs:
       - name: Enforce the branch-coverage floor
         run: uv run python scripts/check_branch_coverage.py "$RUNNER_TEMP/coverage.json" 80
 
-      # Fails on any known vulnerability in the locked runtime + dev dependencies.
-      # pip-audit is pinned so the check itself can't change underneath us.
+      # Fails on any known vulnerability in the locked runtime + dev dependencies, using OSV,
+      # which also lists malicious packages (OpenSSF MAL- reports). pip-audit is pinned so the
+      # check itself can't change underneath us. Policy: docs/dependencies.md.
       - name: Dependency audit
         run: |
           uv export --frozen --all-groups --no-hashes --no-emit-project > "$RUNNER_TEMP/requirements.txt"
-          uvx pip-audit@2.10.1 -r "$RUNNER_TEMP/requirements.txt" --no-deps --disable-pip
+          uvx pip-audit@2.10.1 -r "$RUNNER_TEMP/requirements.txt" --no-deps --disable-pip \
+            --vulnerability-service osv
 
   frontend:
     name: Frontend lint + typecheck + build
@@ -97,7 +99,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - name: Dependency audit
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=moderate
       - run: npm run lint
       - run: npm run typecheck
       # Vitest with v8 coverage; vite.config.ts fails the run under 80% of statements.
