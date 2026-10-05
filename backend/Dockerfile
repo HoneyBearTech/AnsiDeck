@@ -31,7 +31,10 @@ COPY . .
 RUN uv sync --frozen --no-dev
 
 FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 AS runtime
+# upgrade: security fixes published since the pinned base image (the release scan fails on any
+# fixable HIGH or CRITICAL vulnerability).
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends openssh-client git \
     && rm -rf /var/lib/apt/lists/*
 # One user per worker slot (app.run_isolation): the worker runs each slot's playbooks as
