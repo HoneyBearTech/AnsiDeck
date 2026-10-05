@@ -9,7 +9,7 @@ from app import audit, secret_store
 from app.config import get_settings
 from app.crypto import encrypt_secret
 from app.db import get_db
-from app.env_credentials import check_env, encrypt_env
+from app.env_credentials import encrypt_env, env_problem
 from app.hardening import FailureThrottle, client_ip
 from app.models import Credential, GitSource, User
 from app.permissions import Permission, Scope, guard
@@ -83,13 +83,12 @@ def read_env_reference(project_id: int, path: str) -> tuple[list[str], int]:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No secret store is configured")
     try:
         data, version = secret_store.read_all_versioned(project_id, path)
-        check_env(data)
     except SecretStoreError as exc:
         raise _store_error(project_id, path, None, exc) from None
-    except ValueError as exc:
+    if problem := env_problem(data):
         raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, f"The secret's keys can't be used: {exc}"
-        ) from None
+            status.HTTP_400_BAD_REQUEST, f"The secret's keys can't be used: {problem}"
+        )
     return sorted(data), version
 
 
@@ -193,10 +192,9 @@ def _new_env_credential(payload: CredentialCreate, project_id: int) -> tuple[Cre
             "names": names,
             "version": version,
         }
-    try:
-        env = check_env(payload.env)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    if problem := env_problem(payload.env):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, problem)
+    env = dict(payload.env)
     credential = Credential(
         name=payload.name,
         description=payload.description,
@@ -242,12 +240,13 @@ def check_env_reference(db: Session, actor: User, request: Request, credential) 
     if path is not None:
         try:
             data, version = secret_store.read_all_versioned(project_id, path)
-            check_env(data)
-            result.update(version=version, env_names=sorted(data))
         except SecretStoreError as exc:
             result = {"ok": False, "error_kind": exc.kind, "error": secret_store.explain(exc.kind)}
-        except ValueError as exc:
-            result = {"ok": False, "error_kind": "bad_value", "error": str(exc)}
+        else:
+            if problem := env_problem(data):
+                result = {"ok": False, "error_kind": "bad_value", "error": problem}
+            else:
+                result.update(version=version, env_names=sorted(data))
     audit.record(
         db,
         "credential.check",

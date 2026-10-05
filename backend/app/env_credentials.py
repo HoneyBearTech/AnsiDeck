@@ -45,20 +45,27 @@ def name_problem(name: str) -> str | None:
     return None
 
 
-def check_env(env: dict) -> dict[str, str]:
-    """The variables, or ValueError saying what is wrong with them (never their values)."""
+def env_problem(env: object) -> str | None:
+    """What is wrong with these variables (never their values), or None."""
     if not isinstance(env, dict) or not env:
-        raise ValueError("give at least one variable")
+        return "give at least one variable"
     if len(env) > MAX_VARS:
-        raise ValueError(f"at most {MAX_VARS} variables")
+        return f"at most {MAX_VARS} variables"
     for name, value in env.items():
         problem = name_problem(name) if isinstance(name, str) else "names must be text"
         if problem:
-            raise ValueError(problem)
+            return problem
         if not isinstance(value, str) or not value:
-            raise ValueError(f"{name}: the value must be non-empty text")
+            return f"{name}: the value must be non-empty text"
         if "\x00" in value or len(value.encode()) > MAX_VALUE_BYTES:
-            raise ValueError(f"{name}: the value is too long or contains a NUL byte")
+            return f"{name}: the value is too long or contains a NUL byte"
+    return None
+
+
+def check_env(env: dict) -> dict[str, str]:
+    """The variables, or ValueError saying what is wrong with them (never their values)."""
+    if problem := env_problem(env):
+        raise ValueError(problem)
     return dict(env)
 
 
@@ -72,7 +79,6 @@ def resolve_env(credential, deadline: float | None = None) -> dict[str, str]:
     if credential.store_path is None:
         return json.loads(decrypt_secret(credential.encrypted_env))
     data, _version = read_all_versioned(credential.project_id, credential.store_path, deadline)
-    try:
-        return check_env(data)
-    except ValueError as exc:
-        raise SecretStoreError("bad_value", f"the secret's keys aren't usable: {exc}") from None
+    if problem := env_problem(data):
+        raise SecretStoreError("bad_value", f"the secret's keys aren't usable: {problem}")
+    return data
