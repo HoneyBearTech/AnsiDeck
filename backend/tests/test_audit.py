@@ -289,7 +289,7 @@ def test_production_refuses_insecure_defaults(monkeypatch) -> None:
     monkeypatch.delenv("WORKER_TOKEN", raising=False)
     with pytest.raises(
         ValidationError,
-        match="AUTH_SECRET_KEY, ADMIN_PASSWORD, the database password .*, WORKER_TOKEN",
+        match=r"AUTH_SECRET_KEY, ADMIN_PASSWORD, the database password .*, WORKER_TOKEN",
     ):
         Settings(_env_file=None)
 

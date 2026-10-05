@@ -33,7 +33,7 @@ function SecretStoreCard({ status }: { status: SecretStoreStatus }) {
         )}
         <p className="text-sm text-muted-foreground">
           Checked {when(status.checked_at)} · last reachable {when(status.last_ok_at)}
-          {status.token_ttl != null &&
+          {status.token_ttl !== null && status.token_ttl !== undefined &&
             ` · AnsiDeck's token has ${Math.round(status.token_ttl / 60)} min left`}
         </p>
       </CardContent>

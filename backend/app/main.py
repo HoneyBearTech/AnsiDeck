@@ -101,7 +101,7 @@ async def _git_sync_forever() -> None:
                         running.add(source_id)
                         future = loop.run_in_executor(executor, sync_source, source_id)
                         future.add_done_callback(lambda _f, sid=source_id: finished(sid))
-                except Exception:  # noqa: BLE001 - the next round tries again
+                except Exception:  # the next round tries again
                     logger.exception("git sync round failed")
                 await listener.wait(LOOP_SECONDS)
     finally:
@@ -129,7 +129,7 @@ async def _secret_store_probe_forever() -> None:
     while True:
         try:
             await asyncio.to_thread(_probe_secret_store)
-        except Exception:  # noqa: BLE001 - the next probe tries again
+        except Exception:  # the next probe tries again
             logger.exception("secret store probe failed")
         await asyncio.sleep(SECRET_STORE_PROBE_SECONDS)
 
@@ -138,13 +138,13 @@ async def _reap_forever() -> None:
     while True:
         try:
             await asyncio.to_thread(reap_once)
-        except Exception:  # noqa: BLE001 - the next pass tries again
+        except Exception:  # the next pass tries again
             logger.exception("reaper pass failed")
         await asyncio.sleep(INTERVAL_SECONDS)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     disable_process_inspection()
     init_db()
     session = get_sessionmaker()()
@@ -186,7 +186,7 @@ app = FastAPI(title="AnsiDeck API", version="0.1.0", lifespan=lifespan)
 
 
 @app.exception_handler(DataError)
-async def _integer_out_of_range(request: Request, exc: DataError) -> JSONResponse:
+async def _integer_out_of_range(_request: Request, exc: DataError) -> JSONResponse:
     """An id beyond Postgres' INTEGER range cannot match any row, so answer it like any other
     missing resource instead of a 500. Any other DataError is a real bug: re-raise."""
     if not isinstance(exc.orig, NumericValueOutOfRange):

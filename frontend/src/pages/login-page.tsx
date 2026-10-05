@@ -9,7 +9,7 @@ import { useAuth } from "@/context/auth-context";
 import { api, ApiError, GITHUB_LOGIN_URL, SSO_LOGIN_URL, type AuthProviders } from "@/lib/api";
 
 // The server only ever sends a generic code; the real reason is in the audit log.
-const SSO_MESSAGES: Record<string, string> = {
+const SSO_MESSAGES: Record<string, string> & { failed: string } = {
   not_linked: "No AnsiDeck account is linked to this identity. Ask an admin to add you.",
   failed: "SSO sign-in failed. Try again, or sign in with your password.",
 };
@@ -44,6 +44,7 @@ function SecondFactorForm({ onStartOver }: { onStartOver: () => void }) {
         <Input
           id="second-factor"
           key={useRecovery ? "recovery" : "code"}
+          // oxlint-disable-next-line jsx-a11y/no-autofocus -- second sign-in step; focus follows the user's own submit
           autoFocus
           autoComplete={useRecovery ? "off" : "one-time-code"}
           inputMode={useRecovery ? "text" : "numeric"}

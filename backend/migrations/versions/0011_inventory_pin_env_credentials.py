@@ -18,7 +18,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 _SECRET_BY_KIND = (
-    "CASE kind"
+    "CASE kind"  # noqa: S105 - column names, not secrets
     " WHEN 'ssh' THEN encrypted_env IS NULL"
     " AND (encrypted_private_key IS NULL) <> (store_path IS NULL)"
     " AND (store_path IS NULL) = (store_key IS NULL)"

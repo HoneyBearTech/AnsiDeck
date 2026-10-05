@@ -8,7 +8,7 @@ import { api, type SecretStoreInfo } from "@/lib/api";
 export function useSecretStoreInfo(): SecretStoreInfo | null {
   const { user, activeProject } = useAuth();
   const projects = user?.projects ?? [];
-  const projectId = activeProject?.id ?? (projects.length === 1 ? projects[0].id : null);
+  const projectId = activeProject?.id ?? (projects.length === 1 ? (projects[0]?.id ?? null) : null);
   const [loaded, setLoaded] = React.useState<{ projectId: number; info: SecretStoreInfo | null } | null>(
     null,
   );

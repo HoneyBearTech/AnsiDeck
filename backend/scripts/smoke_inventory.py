@@ -43,7 +43,7 @@ def main() -> None:
     )
 
     def call(method: str, path: str, body: dict | None = None):
-        request = urllib.request.Request(
+        request = urllib.request.Request(  # noqa: S310 - fixed http URL of the local stack
             f"{base}/api{path}",
             method=method,
             data=json.dumps(body).encode() if body is not None else None,

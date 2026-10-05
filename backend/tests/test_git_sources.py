@@ -317,7 +317,8 @@ def test_a_source_syncs_into_read_only_playbooks(admin, tmp_path) -> None:
     snapshot = db.scalars(select(GitSnapshot)).one()
     db.close()
     tar = git_snapshot_dir(source["id"]) / f"{head}.tar"
-    names = tarfile.open(tar).getnames()
+    with tarfile.open(tar) as archive:
+        names = archive.getnames()
     assert {"site.yml", "roles/web/tasks/main.yml", "group_vars/all.yml", "web_role"} <= set(names)
     assert snapshot.sha256 and snapshot.size_bytes == tar.stat().st_size
     assert not (git_mirror_path(source["id"]) / "hooks").exists()
@@ -365,7 +366,8 @@ def test_a_subdirectory_and_custom_patterns(admin, tmp_path) -> None:
     assert git_sync.sync_source(source["id"]) == "ok"
     assert set(_playbooks(source["id"])) == {"deploy/main.yml", "other.yml"}
     tar = next(git_snapshot_dir(source["id"]).glob("*.tar"))
-    assert "top.yml" not in tarfile.open(tar).getnames()
+    with tarfile.open(tar) as archive:
+        assert "top.yml" not in archive.getnames()
 
     admin.patch(f"/api/projects/1/git-sources/{source['id']}", json={"subdir": "nope"})
     assert git_sync.sync_source(source["id"]) == "failed"
@@ -473,9 +475,9 @@ def test_export_attributes_are_ignored(admin, tmp_path) -> None:
     )
     source = _create(admin, repo)
     git_sync.sync_source(source["id"])
-    tar = tarfile.open(next(git_snapshot_dir(source["id"]).glob("*.tar")))
-    assert "hidden.yml" in tar.getnames()
-    assert tar.extractfile("version.txt").read() == b"$Format:%H$\n"
+    with tarfile.open(next(git_snapshot_dir(source["id"]).glob("*.tar"))) as tar:
+        assert "hidden.yml" in tar.getnames()
+        assert tar.extractfile("version.txt").read() == b"$Format:%H$\n"
 
 
 def test_an_unreachable_remote_fails_without_leaking_the_token(admin, tmp_path) -> None:

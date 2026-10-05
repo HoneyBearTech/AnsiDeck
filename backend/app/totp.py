@@ -109,7 +109,8 @@ def use_second_factor(user: User, *, code: str | None, recovery_code: str | None
 
 def enable(user: User, counter: int) -> list[str]:
     """Promotes the pending secret; returns the recovery codes to show once."""
-    assert user.totp_pending_secret is not None
+    if user.totp_pending_secret is None:
+        raise ValueError("there is no pending two-factor secret to enable")
     codes, hashes = new_recovery_codes()
     user.totp_secret = user.totp_pending_secret
     user.totp_pending_secret = None

@@ -267,8 +267,10 @@ class _Session:
             "[maintenance]\n\tauto = false\n",
             "[tar]\n\tumask = 0022\n",
             "[init]\n\tdefaultBranch = main\n",
-            "[http]\n\tfollowRedirects = false\n\tsslVerify = true\n\tproxy = \n"
-            "\tlowSpeedLimit = 1024\n\tlowSpeedTime = 60\n",
+            (
+                "[http]\n\tfollowRedirects = false\n\tsslVerify = true\n\tproxy = \n"
+                "\tlowSpeedLimit = 1024\n\tlowSpeedTime = 60\n"
+            ),
         ]
         if self.remote.kind in ("https", "http"):
             target = f"[{self.address}]" if ":" in self.address else self.address
@@ -387,7 +389,7 @@ def _run(
     limit = settings.git_max_repo_mb * 1024 * 1024
     killed: list[str] = []
     out_handle = open(stdout_path, "wb") if stdout_path else None  # noqa: SIM115
-    proc = subprocess.Popen(
+    proc = subprocess.Popen(  # noqa: S603 - argument list, no shell
         cmd,
         stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
         stdout=out_handle or subprocess.PIPE,
@@ -584,9 +586,9 @@ def _cat(session: _Session, mirror: Path, object_ids: list[str]) -> dict[str, by
 def commit_info(mirror: Path, commit: str) -> dict:
     with _local() as session:
         out = _run(_git(mirror, "show", "-s", "--format=%s%x00%an%x00%cI", commit), session)
-    subject, author, when = (out.decode(errors="replace").rstrip("\n").split("\0") + ["", "", ""])[
-        :3
-    ]
+    subject, author, when = (
+        [*out.decode(errors="replace").rstrip("\n").split("\x00"), "", "", ""]
+    )[:3]
     return {
         "commit_subject": subject[:255],
         "commit_author": author[:255],
@@ -652,13 +654,16 @@ def inspect_tree(mirror: Path, commit: str, subdir: str | None) -> Tree:
             target = targets[oid].decode("utf-8", errors="surrogateescape")
             if not _inside(path, target):
                 raise SyncError(f"symlink {path} points outside the repository ({target})")
-    for requirements in ("requirements.yml", "roles/requirements.yml",
-                         "collections/requirements.yml"):  # fmt: skip
-        if requirements in files:
-            warnings.append(
-                f"{requirements} is not installed automatically: install its roles and "
-                "collections on the Galaxy page"
-            )
+    warnings.extend(
+        f"{requirements} is not installed automatically: install its roles and "
+        "collections on the Galaxy page"
+        for requirements in (
+            "requirements.yml",
+            "roles/requirements.yml",
+            "collections/requirements.yml",
+        )
+        if requirements in files
+    )
     return Tree(files, count, total, warnings)
 
 
@@ -888,7 +893,7 @@ def _sync_locked(source_id: int) -> str:
             snapshot.superseded_at = None
         except SyncError as exc:
             return _failed(db, source_id, str(exc), previous_status)
-        except Exception:  # noqa: BLE001 - recorded; never leaks details that might hold secrets
+        except Exception:  # recorded; never leaks details that might hold secrets
             logger.exception("git sync of source %s failed", source_id)
             return _failed(db, source_id, "unexpected error (see the server log)", previous_status)
 
@@ -1023,7 +1028,8 @@ def read_member(snapshot: GitSnapshot, path: str, max_bytes: int = MAX_PLAYBOOK_
         if not member.isfile() or member.size > max_bytes:
             raise SyncError(f"{path} is not a playbook file")
         handle = tar.extractfile(member)
-        assert handle is not None
+        if handle is None:
+            raise SyncError(f"{path} is not a playbook file")
         try:
             return handle.read().decode("utf-8")
         except UnicodeDecodeError as exc:

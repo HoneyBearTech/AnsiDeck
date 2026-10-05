@@ -43,7 +43,31 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+# Maximally strict where practical (OpenSSF Silver warnings_strict): pycodestyle, pyflakes,
+# isort, pyupgrade, bugbear, bandit (S), async, blind except, simplify, ruff's own rules,
+# comprehensions, performance, naming, pytest style, unused arguments, return/pie/print/debugger
+# checks, string concatenation, import conventions, logging, namespace packages, pygrep hooks,
+# pylint errors and warnings, refurb and timezone-aware datetimes.
+select = [
+    "E", "F", "I", "UP", "B", "S", "ASYNC", "BLE", "SIM", "RUF", "C4", "PERF", "N", "PT", "ARG",
+    "PIE", "RET", "T10", "T20", "EXE", "ISC", "ICN", "LOG", "G", "INP", "PGH", "PLE", "PLW",
+    "FURB", "DTZ",
+]
+# Exceptions are named for what happened (RateLimited, RunRefused, TooDeep); an Error suffix
+# would add nothing.
+ignore = ["N818"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: plain asserts are pytest's idiom; fixture passwords, temp paths and SQL are test data;
+# fixtures are requested for their side effects; composite asserts read better in long tests.
+"tests/**" = ["S101", "S105", "S106", "S107", "S108", "S603", "S607", "S608", "ARG", "PT018"]
+# Command-line tools print by design.
+"scripts/**" = ["T201", "INP001"]
+"fuzz/**" = ["T201", "INP001"]
+"app/cli.py" = ["T201"]
+"migrations/**" = ["INP001"]
+# FastAPI endpoints called test_* (e.g. "send a test notification") aren't pytest tests.
+"app/**" = ["PT"]
 
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI's dependency-injection system relies on calling Depends()/Query()/etc.
@@ -61,6 +85,16 @@ extend-immutable-calls = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Warnings fail the suite (OpenSSF Silver warnings_strict); ignore specific ones below, with a reason.
+filterwarnings = [
+    "error",
+    # Starlette is moving its TestClient from httpx to httpx2; FastAPI's TestClient still wraps it.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+    # ...and still names anyio's old BlockingPortal alias in its type hints.
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated",
+    # uvloop (uvicorn's event loop in the live-server tests) calls this on Python 3.14.
+    "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning",
+]
 markers = [
     "no_worker: the client fixture starts no worker, so runs stay queued",
 ]

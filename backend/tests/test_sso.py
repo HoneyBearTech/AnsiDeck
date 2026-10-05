@@ -1,4 +1,5 @@
 import json
+import warnings
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -6,6 +7,7 @@ import pyotp
 import pytest
 from fastapi.testclient import TestClient
 from joserfc import jwt
+from joserfc.errors import SecurityWarning
 from joserfc.jwk import OctKey, RSAKey
 
 from app import oidc, sso_common
@@ -219,6 +221,14 @@ def _none_alg(claims: dict) -> str:
     return f"{header}.{b64url(json.dumps(claims).encode())}."
 
 
+def _public_key_as_hmac_secret(fake: FakeOidc) -> OctKey:
+    """The algorithm-confusion attack: the provider's public key used as an HS256 secret.
+    joserfc rightly warns about such a key; here it is the point."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SecurityWarning)
+        return OctKey.import_key(fake.key.as_pem(private=False))
+
+
 @pytest.mark.parametrize(
     "case",
     ["aud", "iss", "expired", "nonce", "no_sub", "none_alg", "hs256_confusion", "wrong_key"],
@@ -236,7 +246,7 @@ def test_hostile_id_tokens_are_refused(sso, case) -> None:
         "none_alg": {"forge": _none_alg},
         "hs256_confusion": {
             "forge": lambda c: jwt.encode(
-                {"alg": "HS256", "kid": "k1"}, c, OctKey.import_key(fake.key.as_pem(private=False))
+                {"alg": "HS256", "kid": "k1"}, c, _public_key_as_hmac_secret(fake)
             )
         },
         "wrong_key": {
@@ -259,7 +269,7 @@ def test_the_algorithm_allowlist_holds_whatever_the_provider_advertises(sso, adv
     fake.advertised_algs = advertised
     _provision(admin, "alice", "alice@example.com")
     forge = lambda c: jwt.encode(  # noqa: E731
-        {"alg": "HS256", "kid": "k1"}, c, OctKey.import_key(fake.key.as_pem(private=False))
+        {"alg": "HS256", "kid": "k1"}, c, _public_key_as_hmac_secret(fake)
     )
     assert _refused(_sign_in(fake, forge=forge)[1], "failed")
     assert _ok(_sign_in(fake)[1])  # honest RS256 tokens still work

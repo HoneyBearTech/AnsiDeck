@@ -8,6 +8,7 @@ Installs wait their turn like runs do: a new install is queued, no new run is cl
 on, and the install starts once the running runs have finished (try_start_install()).
 """
 
+import contextlib
 import json
 import os
 import re
@@ -233,7 +234,7 @@ def _install_commands(requirements: dict[str, list], requirements_file: Path, up
 def _run_command(cmd: list[str], env: dict[str, str], log) -> int:
     log.write(f"$ {' '.join(cmd)}\n")
     log.flush()
-    proc = subprocess.Popen(
+    proc = subprocess.Popen(  # noqa: S603 - argument list, no shell
         cmd,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
@@ -244,20 +245,20 @@ def _run_command(cmd: list[str], env: dict[str, str], log) -> int:
     )
 
     def _kill() -> None:
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
         log.write(f"\n[killed: exceeded {INSTALL_TIMEOUT_SECONDS}s]\n")
 
     timer = threading.Timer(INSTALL_TIMEOUT_SECONDS, _kill)
     timer.start()
     try:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            log.write(line)
-            log.flush()
-        return proc.wait()
+        with proc:  # closes the pipe and waits, also on errors
+            if proc.stdout is None:
+                raise RuntimeError("ansible-galaxy was started without an output pipe")
+            for line in proc.stdout:
+                log.write(line)
+                log.flush()
+            return proc.wait()
     finally:
         timer.cancel()
 
@@ -372,10 +373,8 @@ def list_installed_collections() -> list[dict[str, str | None]]:
     if root.is_dir():
         for manifest in sorted(root.glob("*/*/MANIFEST.json")):
             version = None
-            try:
+            with contextlib.suppress(OSError, ValueError, KeyError, TypeError):
                 version = json.loads(manifest.read_text())["collection_info"]["version"]
-            except (OSError, ValueError, KeyError, TypeError):
-                pass
             found.append(
                 {
                     "name": f"{manifest.parent.parent.name}.{manifest.parent.name}",

@@ -146,7 +146,7 @@ def sweep(identity: RunIdentity) -> bool:
     for attempt in range(_SWEEP_ATTEMPTS):
         home_clean = False
         try:
-            done = subprocess.run(
+            done = subprocess.run(  # noqa: S603 - argument list, no shell
                 command,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
@@ -198,7 +198,10 @@ def _process_table() -> dict[int, tuple[int, str]]:
         return table
     # macOS (development). -ww: never truncate, the marker can be far into a command line.
     out = subprocess.run(
-        ["ps", "-axwwo", "pid=,ppid=,command="], capture_output=True, text=True, check=False
+        ["ps", "-axwwo", "pid=,ppid=,command="],  # noqa: S607 - ps from the image's PATH
+        capture_output=True,
+        text=True,
+        check=False,
     ).stdout
     for line in out.splitlines():
         fields = line.split(None, 2)
@@ -306,7 +309,7 @@ def run_in_worker(
     command = _WORKER_COMMAND if identity is None else wrap(_WORKER_COMMAND, identity)
     read_fd, write_fd = os.pipe()
     try:
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # noqa: S603 - argument list, no shell
             command,
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
@@ -329,7 +332,8 @@ def run_in_worker(
     refused: str | None = None
     try:
         with os.fdopen(read_fd, encoding="utf-8") as events:
-            assert proc.stdin is not None
+            if proc.stdin is None:
+                raise RuntimeError("the run worker was started without an input pipe")
             # The job (SSH key, vault password) travels over stdin — never argv or env.
             settings = {"pexpect_timeout": _CANCEL_POLL_SECONDS}
             proc.stdin.write(

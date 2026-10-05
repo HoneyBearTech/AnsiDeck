@@ -411,6 +411,7 @@ function SourceDialog({
 
   React.useEffect(() => {
     if (!open) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- opening the dialog resets the form to the source
     setName(source?.name ?? "");
     setUrl(source?.url ?? "");
     setBranch(source?.branch ?? "main");

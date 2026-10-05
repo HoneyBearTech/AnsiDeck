@@ -287,12 +287,12 @@ def job(
             try:
                 with db.begin_nested():
                     secret_store_failed(db, exc.kind, label)
-            except Exception:  # noqa: BLE001 - the run's failure is what matters
+            except Exception:  # the run's failure is what matters
                 logger.exception("could not raise the secret store alert")
         db.commit()
         _finished(run_id)
         return _gone()
-    except Exception:  # noqa: BLE001 - never echo details that might hold secrets
+    except Exception:  # never echo details that might hold secrets
         logger.exception("could not build the job for run %s", run_id)
         fail_run(run, RunStatus.FAILED, "could not prepare the job (see the server log)")
         db.commit()
@@ -498,7 +498,7 @@ def refresh_job(
             try:
                 with db.begin_nested():
                     secret_store_failed(db, exc.kind, label)
-            except Exception:  # noqa: BLE001 - the refresh's failure is what matters
+            except Exception:  # the refresh's failure is what matters
                 logger.exception("could not raise the secret store alert")
         _end_refresh(
             db,
@@ -510,7 +510,7 @@ def refresh_job(
     except SourceError as exc:
         _end_refresh(db, refresh, RunStatus.FAILED.value, str(exc))
         return _gone()
-    except Exception:  # noqa: BLE001 - never echo details that might hold secrets
+    except Exception:  # never echo details that might hold secrets
         logger.exception("could not build the job for refresh %s", refresh_id)
         _end_refresh(
             db,

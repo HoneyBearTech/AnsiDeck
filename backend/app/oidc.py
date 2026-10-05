@@ -159,7 +159,8 @@ def _verify_id_token(settings: Settings, metadata: dict, id_token: str, nonce: s
                 raise SsoError(
                     "failed", f"ID token signature invalid: {type(exc).__name__}"
                 ) from exc
-    assert token is not None
+    if token is None:
+        raise SsoError("failed", "ID token could not be verified")
     registry = jwt.JWTClaimsRegistry(
         leeway=_CLOCK_LEEWAY_SECONDS,
         iss={"essential": True, "value": settings.oidc_issuer},

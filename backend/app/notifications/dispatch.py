@@ -144,7 +144,7 @@ def dispatch_once(
     for delivery_id in ids:
         try:
             deliver(delivery_id, settings, transport)
-        except Exception:  # noqa: BLE001 - the lease runs out and it is tried again
+        except Exception:  # the lease runs out and it is tried again
             logger.exception("notification %s could not be delivered", delivery_id)
     return len(ids)
 
@@ -154,7 +154,7 @@ async def dispatch_forever() -> None:
         while True:
             try:
                 handled = await asyncio.to_thread(dispatch_once)
-            except Exception:  # noqa: BLE001 - the next pass tries again
+            except Exception:  # the next pass tries again
                 logger.exception("notification pass failed")
                 handled = 0
             if handled < BATCH:

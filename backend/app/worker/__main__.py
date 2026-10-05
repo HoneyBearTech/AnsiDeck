@@ -2,6 +2,7 @@
 (`docker run --init`) or other wrapper: whatever process holds the container's environment
 (WORKER_TOKEN included) must be non-dumpable, or a playbook could read it from /proc."""
 
+import contextlib
 import logging
 import os
 import signal
@@ -107,10 +108,8 @@ def reap_orphans(own_pids: Callable[[], set[int]]) -> None:
                 break
             if info is None or info.si_pid in own_pids():
                 break
-            try:
+            with contextlib.suppress(ChildProcessError):
                 os.waitpid(info.si_pid, 0)
-            except ChildProcessError:
-                pass
 
 
 def main() -> None:

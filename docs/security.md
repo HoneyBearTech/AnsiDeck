@@ -27,6 +27,8 @@ exposed directly to the public internet. The rest of this page assumes that depl
   `COOKIE_SECURE=true`. Changing your password or turning on two-factor sign-in ends your other sessions, an
   admin resetting your password, two-factor login or deactivating you ends all of them; signing out deletes the cookie in that browser. State-changing requests
   and WebSocket handshakes from another origin are refused.
+- The web app is served with a strict Content-Security-Policy and other browser hardening headers
+  (no framing, no MIME sniffing, no referrer). HSTS is up to your TLS-terminating proxy.
 - API keys carry 256 bits of entropy, are stored only as hashes, belong to exactly one project with a fixed
   preset (trigger or read-only), can expire, and are never global admins.
 - Production mode refuses to start with the default admin password, auth secret, database password or

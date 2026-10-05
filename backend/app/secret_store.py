@@ -41,7 +41,7 @@ MAX_SEGMENTS = 16
 MAX_PATH = 400
 CONNECT_TIMEOUT = 2.0
 READ_TIMEOUT = 4.0
-CHILD_TOKEN_TTL = "30s"
+CHILD_TOKEN_TTL = "30s"  # noqa: S105 - a duration, not a secret
 # None: the real network. Tests put an httpx.MockTransport here.
 default_transport: httpx.BaseTransport | None = None
 

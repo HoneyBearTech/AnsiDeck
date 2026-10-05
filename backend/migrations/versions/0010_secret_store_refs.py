@@ -37,7 +37,7 @@ def downgrade() -> None:
     connection = op.get_bind()
     for table, _ in _TABLES:
         if connection.execute(
-            sa.text(f"SELECT 1 FROM {table} WHERE store_path IS NOT NULL LIMIT 1")
+            sa.text(f"SELECT 1 FROM {table} WHERE store_path IS NOT NULL LIMIT 1")  # noqa: S608 - constants and quoted identifiers only
         ).first():
             raise RuntimeError(
                 f"{table} has secret store references; delete them (or move the secrets into "

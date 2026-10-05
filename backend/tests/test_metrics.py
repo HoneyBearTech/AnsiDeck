@@ -187,9 +187,14 @@ def test_runs_show_up_in_the_metrics(admin_client, scrape, tmp_path) -> None:
     assert value(after, "ansideck_build_info", version="0.1.0") == 1
 
     # HTTP metrics: by route template, public and internal.
-    run_route = dict(server="public", method="GET", route="/api/runs/{run_id}", status="200")
+    run_route = {
+        "server": "public",
+        "method": "GET",
+        "route": "/api/runs/{run_id}",
+        "status": "200",
+    }
     assert value(after, "ansideck_http_requests_total", **run_route) >= 2
-    claim = dict(server="internal", method="POST", route="/internal/claim")
+    claim = {"server": "internal", "method": "POST", "route": "/internal/claim"}
     assert value(after, "ansideck_http_request_duration_seconds_count", **claim) >= 2
 
 
@@ -205,7 +210,7 @@ def test_a_queued_run_that_never_started_counts_without_a_duration(
 
     assert admin_client.post(f"/api/runs/{run_id}/cancel").status_code == 200
     after = scrape()
-    cancelled = dict(project_id="1", status="cancelled")
+    cancelled = {"project_id": "1", "status": "cancelled"}
     assert (
         value(after, "ansideck_runs_finished_total", **cancelled)
         - value(waiting, "ansideck_runs_finished_total", **cancelled)
@@ -269,7 +274,7 @@ def test_lockouts_and_audit_events_are_counted(client, scrape) -> None:
     for _ in range(6):
         client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
     after = scrape()
-    login = dict(action="auth.login", outcome="failure")
+    login = {"action": "auth.login", "outcome": "failure"}
     assert (
         value(after, "ansideck_audit_events_total", **login)
         - value(before, "ansideck_audit_events_total", **login)

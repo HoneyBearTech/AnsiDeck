@@ -279,6 +279,7 @@ def test_a_killed_worker_process_is_reaped_as_lost(client, tmp_path, internal_ap
         proc.wait(10)
     finally:
         proc.kill()
+        proc.stdout.close()
     assert client.get(f"/api/runs/{run_id}").json()["status"] == "running"
     _set(run_id, lease_expires_at=text("now() - interval '1 second'"))  # skip the 60 s wait
     assert reap_once() == [run_id]
@@ -304,7 +305,9 @@ def _wait_for_output(tmp_path, run_id: int, timeout: float = 15.0) -> None:
 
 
 def _processes_mentioning(fragment: str) -> list[str]:
-    out = subprocess.run(["ps", "-axwwo", "pid=,command="], capture_output=True, text=True).stdout
+    out = subprocess.run(
+        ["ps", "-axwwo", "pid=,command="], capture_output=True, text=True, check=False
+    ).stdout
     return [line for line in out.splitlines() if fragment in line]
 
 

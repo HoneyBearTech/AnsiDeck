@@ -19,6 +19,7 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
 }
 
 function CardTitle({ className, ...props }: React.ComponentProps<"h3">) {
+  // oxlint-disable-next-line jsx-a11y/heading-has-content -- the content arrives as children in props
   return <h3 className={cn("text-lg font-semibold leading-none tracking-tight", className)} {...props} />;
 }
 

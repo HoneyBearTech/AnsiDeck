@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import sqlite3
 from datetime import UTC, datetime
@@ -53,9 +54,11 @@ OLD_ROWS = [
     "INSERT INTO inventories (id, name) VALUES (1, 'old-inv')",
     "INSERT INTO credentials (id, name, encrypted_private_key) VALUES (1, 'old-cred', x'00')",
     "INSERT INTO vault_passwords (id, name, encrypted_password) VALUES (1, 'old-vault', x'00')",
-    "INSERT INTO runs (id, playbook_id, playbook_name, inventory_id, inventory_name,"
-    " credential_id, credential_name, become, status, triggered_by)"
-    " VALUES (1, 1, 'old-playbook', 1, 'old-inv', 1, 'old-cred', 0, 'success', 'boss')",
+    (
+        "INSERT INTO runs (id, playbook_id, playbook_name, inventory_id, inventory_name,"
+        " credential_id, credential_name, become, status, triggered_by)"
+        " VALUES (1, 1, 'old-playbook', 1, 'old-inv', 1, 'old-cred', 0, 'success', 'boss')"
+    ),
     "INSERT INTO audit_events (id, action, outcome) VALUES (1, 'auth.login', 'success')",
 ]
 
@@ -195,9 +198,11 @@ def test_orphaned_set_null_references_are_cleared_and_reported(empty) -> None:
     source = _legacy_db(
         empty,
         [
-            "INSERT INTO runs (id, playbook_id, playbook_name, inventory_id, inventory_name,"
-            " credential_id, credential_name, become, status, triggered_by)"
-            " VALUES (2, 99, 'gone', 1, 'old-inv', 1, 'old-cred', 0, 'failed', 'boss')"
+            (
+                "INSERT INTO runs (id, playbook_id, playbook_name, inventory_id, inventory_name,"
+                " credential_id, credential_name, become, status, triggered_by)"
+                " VALUES (2, 99, 'gone', 1, 'old-inv', 1, 'old-cred', 0, 'failed', 'boss')"
+            )
         ],
     )
     logged: list[str] = []
@@ -218,8 +223,10 @@ def test_orphaned_set_null_references_are_cleared_and_reported(empty) -> None:
         ),
         (
             [
-                "CREATE TABLE inventory_hosts (id INTEGER PRIMARY KEY, inventory_id INTEGER,"
-                " hostname VARCHAR(255), vars JSON)",
+                (
+                    "CREATE TABLE inventory_hosts (id INTEGER PRIMARY KEY, inventory_id INTEGER,"
+                    " hostname VARCHAR(255), vars JSON)"
+                ),
                 "INSERT INTO inventory_hosts VALUES (1, 1, 'web', 'not json')",
             ],
             "inventory_hosts: a value can't be read",
@@ -239,7 +246,8 @@ def test_it_refuses_files_that_are_not_ansideck_databases(empty) -> None:
     (empty / "text.db").write_text("hello")
     with pytest.raises(ImportFailed, match="not a readable SQLite database"):
         import_sqlite(empty / "text.db")
-    sqlite3.connect(empty / "other.db").executescript("CREATE TABLE t (x);")
+    with contextlib.closing(sqlite3.connect(empty / "other.db")) as con:
+        con.executescript("CREATE TABLE t (x);")
     with pytest.raises(ImportFailed, match="not an AnsiDeck database"):
         import_sqlite(empty / "other.db")
 

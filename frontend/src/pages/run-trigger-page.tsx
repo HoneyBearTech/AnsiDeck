@@ -80,6 +80,7 @@ export function RunTriggerPage() {
 
   React.useEffect(() => {
     if (!inventoryId) {
+      // oxlint-disable-next-line react/set-state-in-effect -- clearing the inventory clears its targets
       setSelectedInventory(null);
       return;
     }

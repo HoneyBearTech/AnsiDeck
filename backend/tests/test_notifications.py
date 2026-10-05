@@ -6,6 +6,7 @@ import hmac
 import ipaddress
 import json
 import smtplib
+from typing import ClassVar
 
 import httpx
 import pytest
@@ -273,8 +274,8 @@ def test_smtp_settings_are_checked() -> None:
 
 
 class FakeSMTP:
-    sent: list = []
-    calls: list = []
+    sent: ClassVar[list] = []
+    calls: ClassVar[list] = []
 
     def __init__(self, host, port, timeout=None, context=None) -> None:
         FakeSMTP.calls.append(("connect", type(self).__name__, host, port))
@@ -848,7 +849,7 @@ def test_a_queue_stuck_without_workers_is_reported_once_and_when_it_moves(client
     _age_queued(run_id, 11)
     reap_once()
     reap_once()
-    [(event, payload)] = _events_queued()
+    [(_event, payload)] = _events_queued()
     assert (payload["state"], payload["waiting"], payload["oldest_run_id"]) == ("stuck", 1, run_id)
     assert payload["reason"].startswith("No worker is online")
 
@@ -915,7 +916,7 @@ def test_guessing_an_unknown_user_name_is_reported_too(client) -> None:
     _channel(None, name="security", events=("security.login_attack",))
     for _ in range(6):
         client.post("/api/auth/login", json={"username": "nobody-here", "password": "x"})
-    [(event, payload)] = _events_queued()
+    [(_event, payload)] = _events_queued()
     assert (payload["kind"], payload["user"]) == ("password", "(unknown user)")
     db = get_sessionmaker()()
     try:

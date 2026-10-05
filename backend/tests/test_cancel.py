@@ -129,7 +129,7 @@ def test_cancel_needs_runs_trigger_in_the_runs_project(client) -> None:
 
 def test_a_queued_run_says_what_it_is_waiting_for(client) -> None:
     queued = _queue_runs(client, 2, 1)
-    (inv_a, [run_a]), (inv_b, [run_b]) = queued.items()
+    (_inv_a, [run_a]), (_inv_b, [run_b]) = queued.items()
     assert _waiting(client, run_a) == "No worker is online: start one to run queued runs"
 
     _heartbeat("w", slots=1)

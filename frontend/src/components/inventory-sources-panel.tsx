@@ -120,7 +120,7 @@ function SourceDialog({
 }) {
   // Mounted per dialog opening (keyed by the source), so the fields start from it.
   const [name, setName] = React.useState(source?.name ?? "");
-  const [config, setConfig] = React.useState(source?.config ?? EXAMPLES[0].config);
+  const [config, setConfig] = React.useState(source?.config ?? EXAMPLES[0]?.config ?? "");
   const [credentialId, setCredentialId] = React.useState<string>(
     source?.credential_id ? String(source.credential_id) : "none",
   );
@@ -253,6 +253,7 @@ function HostsPreview({ inventoryId, version }: { inventoryId: number; version: 
       active = false;
       window.clearTimeout(timer);
     };
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- version changes after a refresh, to reload
   }, [inventoryId, query, version]);
 
   return (

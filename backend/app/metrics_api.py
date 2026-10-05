@@ -233,7 +233,7 @@ class DatabaseCollector(Collector):
                 db.rollback()
                 db.close()
             self._up = 1
-        except Exception:  # noqa: BLE001 - the in-process metrics are still worth serving
+        except Exception:  # the in-process metrics are still worth serving
             self._cached, self._up = [], 0
             if started - self._warned_at >= _WARN_EVERY_SECONDS:
                 self._warned_at = started

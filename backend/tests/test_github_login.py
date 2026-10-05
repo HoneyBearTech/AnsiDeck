@@ -193,7 +193,7 @@ def test_unverified_emails_are_ignored(gh) -> None:
     fake, admin = gh
     _provision(admin, "alice", "alice@example.com")
     unverified = [{"email": "alice@example.com", "verified": False, "primary": True}]
-    browser, response = _sign_in(fake, id=6666, emails=unverified)
+    _browser, response = _sign_in(fake, id=6666, emails=unverified)
     assert _refused(response, "not_linked")
     assert "no verified email" in _reasons(admin)[0]
     assert _user_row("alice").sso_subject is None
@@ -408,7 +408,7 @@ def test_a_200_response_with_an_error_body_is_a_failure(gh) -> None:
 
 
 def test_a_token_endpoint_outage_is_a_failure(gh) -> None:
-    fake, admin = gh
+    fake, _admin = gh
     fake.token_status = 503
     assert _refused(_sign_in(fake)[1], "failed")
 
@@ -423,7 +423,7 @@ def test_a_missing_email_scope_is_a_failure_and_still_revokes(gh) -> None:
 
 
 def test_a_profile_outage_is_a_failure_and_still_revokes(gh) -> None:
-    fake, admin = gh
+    fake, _admin = gh
     fake.user_status = 500
     assert _refused(_sign_in(fake)[1], "failed")
     assert fake.revoked == fake.issued and len(fake.issued) == 1

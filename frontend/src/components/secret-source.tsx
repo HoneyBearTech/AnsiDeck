@@ -33,21 +33,21 @@ export function SecretSourcePicker({
   if (!info?.enabled) return null;
   return (
     <div className="flex flex-col gap-3 rounded-md border border-border p-3">
-      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Where the secret lives">
+      <fieldset className="flex flex-wrap gap-2">
+        <legend className="sr-only">Where the secret lives</legend>
         {(["ansideck", "external"] as const).map((value) => (
           <Button
             key={value}
             type="button"
             size="sm"
-            role="radio"
-            aria-checked={mode === value}
+            aria-pressed={mode === value}
             variant={mode === value ? "default" : "outline"}
             onClick={() => onModeChange(value)}
           >
             {value === "ansideck" ? "Stored in AnsiDeck (encrypted)" : `In ${info.label}`}
           </Button>
         ))}
-      </div>
+      </fieldset>
       {mode === "external" && (
         <>
           <div className="flex flex-col gap-2">

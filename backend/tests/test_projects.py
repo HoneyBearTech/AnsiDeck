@@ -151,9 +151,11 @@ def test_user_in_project_a_cannot_reach_anything_in_project_b(world) -> None:
         response = only_a.request(method, path, json=body)
         assert response.status_code == 404, f"{method} {path} -> {response.status_code}"
 
-    with pytest.raises(WebSocketDisconnect):
-        with only_a.websocket_connect(f"/api/runs/{b['run']}/ws"):
-            pass
+    with (
+        pytest.raises(WebSocketDisconnect),
+        only_a.websocket_connect(f"/api/runs/{b['run']}/ws"),
+    ):
+        pass
 
     # nothing of B was touched
     assert admin.get(f"/api/playbooks/{b['playbook']}").json()["name"] == "pb-b"

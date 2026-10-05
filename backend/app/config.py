@@ -8,11 +8,11 @@ from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
-_DEFAULT_AUTH_SECRET_KEY = "change-me-dev-only-insecure-secret"
-_DEFAULT_ADMIN_PASSWORD = "admin"
-_DEFAULT_DB_PASSWORD = "ansideck"
+_DEFAULT_AUTH_SECRET_KEY = "change-me-dev-only-insecure-secret"  # noqa: S105 - dev default, refused in production
+_DEFAULT_ADMIN_PASSWORD = "admin"  # noqa: S105 - dev default, refused in production
+_DEFAULT_DB_PASSWORD = "ansideck"  # noqa: S105 - dev default, refused in production
 # The worker has its own copy (app.worker.settings must not import this module).
-DEFAULT_WORKER_TOKEN = "change-me-dev-only-worker-token"
+DEFAULT_WORKER_TOKEN = "change-me-dev-only-worker-token"  # noqa: S105 - dev default, refused in production
 MIN_WORKER_TOKEN_LENGTH = 32
 
 

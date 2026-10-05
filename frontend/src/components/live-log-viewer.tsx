@@ -24,6 +24,7 @@ export function LiveLogViewer({ runId }: { runId: number }) {
   const containerRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- a new run id starts a new stream from empty
     setLines([]);
     setState("streaming");
     const ansiUp = new AnsiUp();
@@ -38,13 +39,13 @@ export function LiveLogViewer({ runId }: { runId: number }) {
       let opened = false;
       socket = new WebSocket(runWebSocketUrl(runId, received));
 
-      socket.onopen = () => {
+      socket.addEventListener("open", () => {
         opened = true;
         failedConnects = 0;
         setState("streaming");
-      };
+      });
 
-      socket.onmessage = (event: MessageEvent<string>) => {
+      socket.addEventListener("message", (event: MessageEvent<string>) => {
         received += 1;
         attempt = 0;
         let data: { stdout?: unknown; counter?: unknown };
@@ -56,9 +57,9 @@ export function LiveLogViewer({ runId }: { runId: number }) {
         if (typeof data.stdout !== "string" || data.stdout.length === 0) return;
         const html = ansiUp.ansi_to_html(data.stdout);
         setLines((prev) => [...prev, { key: `${data.counter ?? "e"}-${prev.length}`, html }]);
-      };
+      });
 
-      socket.onclose = (event: CloseEvent) => {
+      socket.addEventListener("close", (event: CloseEvent) => {
         if (disposed) return;
         if (event.code === CLOSE_COMPLETE) {
           setState("complete");
@@ -73,7 +74,7 @@ export function LiveLogViewer({ runId }: { runId: number }) {
         const delay = RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)];
         attempt += 1;
         timer = setTimeout(connect, delay);
-      };
+      });
     }
     connect();
 
@@ -86,6 +87,7 @@ export function LiveLogViewer({ runId }: { runId: number }) {
 
   React.useEffect(() => {
     containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight });
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- scroll to the bottom whenever lines arrive
   }, [lines]);
 
   return (

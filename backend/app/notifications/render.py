@@ -158,8 +158,10 @@ def _ops(event: str, payload: dict, public_url: str) -> Message:
         facts=[
             (
                 "Oldest",
-                f"run #{payload.get('oldest_run_id', '?')}, "
-                f"queued {_clip(payload.get('queued_at') or '?', 40)}",
+                (
+                    f"run #{payload.get('oldest_run_id', '?')}, "
+                    f"queued {_clip(payload.get('queued_at') or '?', 40)}"
+                ),
             )
         ],
         url=_link(public_url, "/runs"),

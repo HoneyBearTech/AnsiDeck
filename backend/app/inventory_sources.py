@@ -530,6 +530,6 @@ def end_refresh(
                     "project_id": inventory.project_id,
                     "detail": {"refresh_id": refresh.id, "error": (error or status)[:300]},
                 }
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("could not notify about refresh %s", refresh.id)
     return None

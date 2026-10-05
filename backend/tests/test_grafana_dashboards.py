@@ -76,9 +76,11 @@ def _promql() -> list[tuple[str, str]]:
     ]
     for group in yaml.safe_load(ALERTS.read_text())["groups"]:
         for rule in group["rules"]:
-            for query in rule["data"]:
-                if "expr" in query["model"]:
-                    found.append((f"alert {rule['uid']}", query["model"]["expr"]))
+            found.extend(
+                (f"alert {rule['uid']}", query["model"]["expr"])
+                for query in rule["data"]
+                if "expr" in query["model"]
+            )
     return found
 
 

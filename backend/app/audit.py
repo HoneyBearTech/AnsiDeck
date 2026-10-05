@@ -67,7 +67,7 @@ def record(
         )
         _notify(db, action, outcome, actor, actor_username, target_name, ip, detail)
         db.commit()
-    except Exception:  # noqa: BLE001
+    except Exception:
         db.rollback()
         logger.exception("failed to write audit event %s", action)
         return
@@ -100,7 +100,7 @@ def _notify(
                 ip=ip,
                 detail=detail,
             )
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("could not queue notifications for audit event %s", action)
 
 

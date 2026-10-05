@@ -288,4 +288,9 @@ jobs:
             sleep 2
           done
           curl -sf http://localhost:8080/ | grep -q "AnsiDeck"
+          headers=$(curl -sfI http://localhost:8080/)
+          for header in "content-security-policy: default-src 'self'" "x-content-type-options: nosniff" \
+                        "x-frame-options: DENY" "referrer-policy: no-referrer"; do
+            echo "$headers" | grep -qi "^$header" || { echo "missing header: $header"; echo "$headers"; exit 1; }
+          done
           docker logs smoke

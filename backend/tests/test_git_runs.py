@@ -294,7 +294,8 @@ def test_the_snapshot_endpoint_needs_the_runs_claim(admin, tmp_path) -> None:
     assert internal.post(path, headers={"X-Claim-Token": "wrong"}).status_code == 410
     response = internal.post(path, headers={"X-Claim-Token": claim.claim_token})
     assert response.status_code == 200
-    assert "site.yml" in tarfile.open(fileobj=io.BytesIO(response.content)).getnames()
+    with tarfile.open(fileobj=io.BytesIO(response.content)) as tar:
+        assert "site.yml" in tar.getnames()
 
 
 def test_runs_of_missing_or_unsynced_playbooks_are_refused(admin, tmp_path) -> None:

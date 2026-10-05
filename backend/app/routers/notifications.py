@@ -319,7 +319,7 @@ def catalog(_user: User = Depends(_any_manager)) -> dict:
 
 
 @router.get("/channels", response_model=list[ChannelOut])
-def list_global(user: User = Depends(_global), db: Session = Depends(get_db)) -> list[dict]:
+def list_global(_user: User = Depends(_global), db: Session = Depends(get_db)) -> list[dict]:
     return _list(db, None)
 
 
@@ -335,7 +335,7 @@ def create_global(
 
 @router.get("/channels/{channel_id}", response_model=ChannelOut)
 def get_global(
-    channel_id: int, user: User = Depends(_global), db: Session = Depends(get_db)
+    channel_id: int, _user: User = Depends(_global), db: Session = Depends(get_db)
 ) -> dict:
     return _out(db, _load(db, None, channel_id))
 
@@ -373,7 +373,7 @@ def test_global(
 
 @router.get("/channels/{channel_id}/deliveries", response_model=list[DeliveryOut])
 def deliveries_global(
-    channel_id: int, user: User = Depends(_global), db: Session = Depends(get_db)
+    channel_id: int, _user: User = Depends(_global), db: Session = Depends(get_db)
 ) -> list[dict]:
     return _deliveries(db, None, channel_id)
 

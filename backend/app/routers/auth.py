@@ -1,3 +1,5 @@
+import functools
+
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
@@ -43,16 +45,12 @@ MFA_COOKIE_PATH = "/api/auth/login"
 
 _authenticated = require_authenticated()
 
+
 # Verified against when the username doesn't exist, so an unknown user costs the
 # same argon2 time as a wrong password (no timing/enumeration oracle).
-_dummy_hash: str | None = None
-
-
+@functools.cache
 def _get_dummy_hash() -> str:
-    global _dummy_hash
-    if _dummy_hash is None:
-        _dummy_hash = hash_password("ansideck-dummy-password")
-    return _dummy_hash
+    return hash_password("ansideck-dummy-password")
 
 
 def _to_out(db: Session, user: User) -> UserOut:

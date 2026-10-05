@@ -39,4 +39,5 @@ function Button({ className, variant, size, asChild = false, ...props }: ButtonP
   return <Comp className={cn(buttonVariants({ variant, size, className }))} {...props} />;
 }
 
+// oxlint-disable-next-line react/only-export-components -- variants are shared with links styled as buttons
 export { Button, buttonVariants };

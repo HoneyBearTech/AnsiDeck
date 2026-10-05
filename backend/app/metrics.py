@@ -179,7 +179,7 @@ def _observe_committed(session: Session) -> None:
     for observe in session.info.pop(_PENDING, []):
         try:
             observe()
-        except Exception:  # noqa: BLE001 - metrics must never break a request
+        except Exception:  # metrics must never break a request
             logger.exception("could not record a metric")
 
 

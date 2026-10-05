@@ -35,7 +35,7 @@ def test_each_slot_has_a_user_of_its_own() -> None:
     )
     assert identity_for_slot(63, "/x").home == "/x/run63"
     for slot in (-1, 64):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="out of range"):
             identity_for_slot(slot)
 
 
