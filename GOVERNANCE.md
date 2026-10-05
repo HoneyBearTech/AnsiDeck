@@ -40,13 +40,15 @@ maintainer), and CI, CodeQL, fuzzing and OpenSSF Scorecard check every change.
 The project must be able to carry on, with issues opened and closed, changes accepted and releases made,
 within a week of it being confirmed that the maintainer can no longer support it. To make that possible:
 
-- The credentials needed to run the project are kept in a password manager, and a trusted person the
-  maintainer has chosen is set up for **emergency access** to them. This covers the GitHub account that
-  owns the repository and its two-factor recovery codes, and the SSH key that signs release tags. Release
-  images are signed keylessly by GitHub Actions, so whoever controls the repository can keep publishing
-  verifiable releases.
-- A written succession note, kept with the maintainer's personal papers, gives that person the right to
-  continue the project or to hand it to a new maintainer, and says how to reach them.
+- **A lockbox**: the credentials needed to run the project are kept in a password-manager vault that a
+  trusted person the maintainer has chosen can open through the password manager's **emergency access**,
+  after a waiting period of a few days (short enough to act within the week). It holds the login and
+  two-factor recovery codes of the GitHub account that owns the repository, access to that account's
+  email address (GitHub asks it to confirm sign-ins from new devices), and the SSH key that signs release
+  tags. Release images are signed keylessly by GitHub Actions, so whoever controls the repository can keep
+  publishing verifiable releases.
+- **A succession note**, kept with the maintainer's personal papers and referenced from the lockbox, gives
+  that person the right to continue the project or to hand it to a new maintainer.
 - Everything else needed to keep working on the project is in this repository: the code, the CI
   configuration, the release process and the documentation.
 

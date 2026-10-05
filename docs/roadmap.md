@@ -14,12 +14,10 @@ Postgres-backed queue with isolated workers, live output, cancel and timeouts, A
 tools, notifications, an audit log, two-factor and single sign-on, API keys for CI, and Prometheus metrics
 with Grafana dashboards.
 
-## Next: first release (late 2026)
-
-- **v0.1.0**: signed container images and release checksums, user guides for every feature, upgrade and
-  backup/restore guides, and a changelog. After it, the most recent release is the supported version.
-- **Quality**: frontend automated tests with a coverage floor, stricter compiler and lint settings, and an
-  accessibility pass on every page.
+**v0.1.0** (October 2026) was the first release: signed container images and release checksums, user
+guides for every feature, upgrade and backup/restore guides, and a changelog, together with frontend tests
+behind a coverage floor, stricter compiler and lint settings, and an accessibility pass on every page. The
+most recent release is the supported version.
 
 ## Over the following year
 
