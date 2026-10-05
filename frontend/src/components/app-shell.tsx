@@ -87,6 +87,7 @@ export function AppShell() {
             <NavItem to="/galaxy" label="Galaxy" />
             <NavItem to="/vault" label="Vault" permission="secrets:list" />
             <NavItem to="/runs" label="Runs" />
+            <NavItem to="/templates" label="Templates" />
             <NavItem to="/projects" label="Projects" visible={canSeeProjects} />
             <NavItem to="/users" label="Users" permission="users:manage" />
             <NavItem to="/audit" label="Audit" permission="audit:read" />

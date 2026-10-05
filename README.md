@@ -406,8 +406,8 @@ optional Grafana alert rules for trends that AnsiDeck's own notifications don't 
 A project admin can create an API key under **Projects → API keys**. Keys belong to one project, are shown
 once, and expire (30 days, 90 days or 1 year) or can be revoked at any time. There are two kinds:
 
-- `trigger` — start runs and read run status and output in that project. Never runs as root, never edits
-  anything.
+- `trigger` — start runs (directly or from a run template) and read run status and output in that
+  project. Never runs as root, never edits anything.
 - `read-only` — read run status and output only.
 
 Send the key as a bearer token, over HTTPS only:
@@ -428,11 +428,21 @@ curl -sf "$BASE/api/runs/$RUN" -H "Authorization: Bearer $KEY"
 
 # cancel it (a trigger key may cancel only the runs it started itself)
 curl -sf -X POST "$BASE/api/runs/$RUN/cancel" -H "Authorization: Bearer $KEY"
+
+# or start a saved run template (its id is in the Edit link on the Templates page); the limit and check
+# mode may be changed for this run only, and an empty body runs it as saved
+curl -sf -X POST "$BASE/api/run-templates/3/launch" \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"limit": "web1", "check_mode": true}'
+
+# keep the output as a build artifact: format=text (plain text) or format=jsonl (Ansible's events)
+curl -sf "$BASE/api/runs/$RUN/log?format=text" -H "Authorization: Bearer $KEY" -o ansible.log
 ```
 
 A key can only use the run endpoints (`GET/POST /api/runs`, `GET /api/runs/{id}`,
-`POST /api/runs/{id}/cancel`, and the run log WebSocket
-`/api/runs/{id}/ws` with the same header); everything else answers `403`. Extra vars you send are not
+`POST /api/runs/{id}/cancel`, `GET /api/runs/{id}/log`, `POST /api/run-templates/{id}/launch`, and the run
+log WebSocket `/api/runs/{id}/ws` with the same header); everything else answers `403`. A `read-only` key
+can't launch templates. Extra vars you send are not
 readable back through a key. Keys are access control, not isolation: a `trigger` key can run any playbook in
 its project, so scope keys per project and rotate them.
 

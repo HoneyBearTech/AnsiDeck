@@ -2,7 +2,10 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import re
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Literal
 
 from fastapi import (
     APIRouter,
@@ -14,6 +17,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -25,6 +29,7 @@ from app.inventory_render import merge, static_data, static_problems
 from app.inventory_sources import has_sources
 from app.models import (
     FINISHED_STATUSES,
+    MAX_RUN_TIMEOUT_SECONDS,
     Credential,
     GitSnapshot,
     GitSource,
@@ -59,6 +64,8 @@ MAX_INVENTORY_PIN_BYTES = 4 * 1024 * 1024
 
 # The only routes an API key may reach (a test pins this set).
 _guard = guard(Permission.CONTENT_READ, Permission.RUNS_TRIGGER, scope=Scope.PROJECT, api_key=True)
+# People only: a key starts runs from explicit ids or a template, never by copying another run.
+_user_guard = guard(Permission.CONTENT_READ, Permission.RUNS_TRIGGER, scope=Scope.PROJECT)
 HIDDEN = "[HIDDEN]"
 
 
@@ -180,13 +187,18 @@ def _require_same_project(obj, project_id: int, label: str) -> None:
         )
 
 
-@router.post("", response_model=RunOut, status_code=status.HTTP_201_CREATED)
-def create_run(
-    payload: RunCreate,
+def queue_run(
+    db: Session,
+    current_user: User,
     request: Request,
-    current_user: User = Depends(_guard),
-    db: Session = Depends(get_db),
-) -> RunOut:
+    payload: RunCreate,
+    *,
+    audit_detail: dict | None = None,
+) -> Run:
+    """Checks a run request (the caller's permissions, and that everything is in the
+    playbook's project), pins what it will execute and queues it. Shared by POST /runs, the
+    re-run and template launches; audit_detail says where the request came from."""
+
     def denied_become(project_id: int | None) -> HTTPException:
         audit.record(
             db,
@@ -333,10 +345,76 @@ def create_run(
             "become": payload.become,
             "check_mode": payload.check_mode,
             **({"commit": run.git_commit} if run.git_commit else {}),
+            **(audit_detail or {}),
         },
     )
     notifier.notify(QUEUE_TOPIC)  # wake the workers waiting for a claim
-    return _run_out(db, run, current_user)
+    return run
+
+
+@router.post("", response_model=RunOut, status_code=status.HTTP_201_CREATED)
+def create_run(
+    payload: RunCreate,
+    request: Request,
+    current_user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> RunOut:
+    return _run_out(db, queue_run(db, current_user, request, payload), current_user)
+
+
+def deleted_items_conflict(what: str, missing: list[str]) -> HTTPException:
+    verb = "has" if len(missing) == 1 else "have"
+    return HTTPException(
+        status.HTTP_409_CONFLICT,
+        f"{what} can't be started: its {', '.join(missing)} {verb} been deleted",
+    )
+
+
+def _deleted_references(run: Run) -> list[str]:
+    missing = [
+        label
+        for label, ref in (
+            ("playbook", run.playbook_id),
+            ("inventory", run.inventory_id),
+            ("credential", run.credential_id),
+        )
+        if ref is None
+    ]
+    if run.vault_password_name is not None and run.vault_password_id is None:
+        missing.append("vault password")
+    return missing
+
+
+@router.post("/{run_id}/rerun", response_model=RunOut, status_code=status.HTTP_201_CREATED)
+def rerun(
+    run_id: int,
+    request: Request,
+    current_user: User = Depends(_user_guard),
+    db: Session = Depends(get_db),
+) -> RunOut:
+    """Starts the run again with the same playbook, inventory and target, credential, vault
+    password and options (extra vars included), each as it is now: a synced playbook runs at
+    its source's current commit. 409 when one of them has been deleted."""
+    run = get_scoped(
+        db, current_user, request, Run, run_id, Permission.RUNS_TRIGGER, "Run not found"
+    )
+    if missing := _deleted_references(run):
+        raise deleted_items_conflict(f"Run #{run_id}", missing)
+    payload = RunCreate(
+        playbook_id=run.playbook_id,
+        inventory_id=run.inventory_id,
+        group_name=run.group_name,
+        credential_id=run.credential_id,
+        vault_password_id=run.vault_password_id,
+        become=run.become,
+        check_mode=run.check_mode,
+        diff_mode=run.diff_mode,
+        limit=run.limit,
+        extra_vars=run.extra_vars,
+        timeout_seconds=min(run.timeout_seconds, MAX_RUN_TIMEOUT_SECONDS),
+    )
+    new_run = queue_run(db, current_user, request, payload, audit_detail={"rerun_of": run.id})
+    return _run_out(db, new_run, current_user)
 
 
 @router.get("/{run_id}", response_model=RunOut)
@@ -420,6 +498,92 @@ def cancel_run(
         notifier.notify(run_topic(run_id))  # its viewers see the end of the log
         notifier.notify(QUEUE_TOPIC)  # the next run on its inventory may start now
     return _run_out(db, run, current_user)
+
+
+# Colour and cursor codes in Ansible's output (CSI and OSC sequences, and two-byte escapes).
+_ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
+_EXPORT_CHUNK_BYTES = 64 * 1024
+
+
+def _committed_chunks(path: Path, length: int) -> Iterator[bytes]:
+    """The log's first `length` bytes: what has been committed (a write still in flight, or
+    one whose commit never happened, is left out)."""
+    try:
+        log = path.open("rb")
+    except FileNotFoundError:  # a queued run has no log yet
+        return
+    with log:
+        remaining = length
+        while remaining > 0 and (chunk := log.read(min(remaining, _EXPORT_CHUNK_BYTES))):
+            remaining -= len(chunk)
+            yield chunk
+
+
+def _committed_lines(path: Path, length: int) -> Iterator[bytes]:
+    try:
+        log = path.open("rb")
+    except FileNotFoundError:
+        return
+    with log:
+        remaining = length
+        while remaining > 0 and (line := log.readline(remaining)):
+            remaining -= len(line)
+            yield line
+
+
+def _as_text(lines: Iterator[bytes]) -> Iterator[bytes]:
+    for raw in lines:
+        try:
+            event = json.loads(raw)
+        except ValueError:
+            continue
+        text = event.get("stdout") if isinstance(event, dict) else None
+        if isinstance(text, str) and text:
+            yield (_ANSI.sub("", text).replace("\r\n", "\n") + "\n").encode()
+
+
+_EXPORT_FORMATS = {
+    "text": ("log", "text/plain; charset=utf-8"),
+    "jsonl": ("jsonl", "application/x-ndjson"),
+}
+
+
+@router.get(
+    "/{run_id}/log",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": "The run's output as a file",
+            "content": {"text/plain": {}, "application/x-ndjson": {}},
+        }
+    },
+)
+def export_log(
+    run_id: int,
+    request: Request,
+    fmt: Literal["text", "jsonl"] = Query("text", alias="format"),
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """The run's output as a download: `text` is each event's output with colour codes
+    removed, `jsonl` Ansible's events as stored (one JSON object per line, as the WebSocket
+    sends them). For a run still going, what it has produced so far. Secret values known to
+    AnsiDeck were removed before the output was stored."""
+    run = get_scoped(db, user, request, Run, run_id, Permission.CONTENT_READ, "Run not found")
+    path, length = run_log_path(run.id), run.log_bytes
+    extension, media_type = _EXPORT_FORMATS[fmt]
+    body = (
+        _committed_chunks(path, length)
+        if fmt == "jsonl"
+        else _as_text(_committed_lines(path, length))
+    )
+    return StreamingResponse(
+        body,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="ansideck-run-{run.id}.{extension}"'
+        },
+    )
 
 
 # How long a live log viewer waits for a notification before re-checking the run itself.

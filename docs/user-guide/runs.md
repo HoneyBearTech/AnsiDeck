@@ -28,7 +28,8 @@ project. Optionally:
 - **Run as admin (become root)** (admins only): escalates privileges on the hosts, after you tick the
   confirmation.
 
-**Trigger Run** queues it and opens its page.
+**Trigger Run** queues it and opens its page. **Save as template** (for people who may edit content)
+saves the form as a [run template](#run-templates) instead.
 
 ## Following a run
 
@@ -39,6 +40,11 @@ ok, changed, failed or unreachable, how long it waited and ran, and Ansible's ex
 
 Statuses: **queued**, **running**, **success**, **failed**, **cancelled** and **timed out**. A note under
 the title says why when it isn't Ansible's own result (a lost worker, a timeout, a cancel).
+
+**Download** saves the output as a file: **text** (what the page shows, without colours) or **JSON lines**
+(Ansible's events, one JSON object per line, for scripts). For a run that is still going, the file holds
+what it has produced so far. Secret values known to AnsiDeck are removed from the output before it's stored,
+so they aren't in the download either. Viewers can download too.
 
 ## The queue
 
@@ -53,6 +59,40 @@ worker, the run ahead of it on the same inventory, a Galaxy install, or no worke
 
 **Cancel run** (anyone who may start runs in the project) asks first. A queued run never starts; a running
 one is stopped within seconds, and tasks it already completed on the hosts are not undone.
+
+## Running it again
+
+Two buttons on a run's page, for anyone who may start runs in its project:
+
+- **Run again** starts the same run at once, after a confirmation that says what it runs (and whether as
+  root): the same playbook, inventory and target, credential, vault password, options and extra vars. The
+  playbook and inventory are used as they are **now** (a synced playbook at its source's current commit),
+  not as they were. Running as root still needs the permission to.
+- **Edit and run** opens **New Run** with the run's settings filled in, to change something first.
+  Extra vars whose names look secret show `[REDACTED]` there: type their values again before triggering
+  (**Run again** keeps them without showing them).
+
+If something the run used has since been deleted, **Run again** is disabled and says what; **Edit and run**
+lets you pick a replacement.
+
+## Run templates
+
+A template is a saved run: playbook, inventory and target, credential, vault password, options and extra
+vars, under a name. **Templates** lists the project's templates; everyone in the project can see them.
+
+- **Save one** from **New Run** with **Save as template** (operators and admins). Only people who may run
+  as root can save a template that does.
+- **Run** starts it, after showing what it runs. The **limit** and **check mode** can be changed for that
+  run only, for example to try it on one host first. Running a template that runs as root needs the
+  permission to.
+- **Edit** opens it in the **New Run** form: change what you need, then **Update template** (or trigger a
+  run from the changed form). Extra vars that show `[REDACTED]` keep their stored value if you leave them as
+  they are.
+- **Delete** (after a confirmation) removes the template; runs started from it are kept.
+
+If a playbook, inventory, credential or vault password a template uses is deleted, the template says so and
+can't run until it's edited. A CI/CD key can run a project's templates too; see the README's
+[Triggering runs from CI](../../README.md#triggering-runs-from-ci).
 
 ## History
 

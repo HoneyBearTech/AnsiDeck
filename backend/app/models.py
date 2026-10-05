@@ -603,6 +603,47 @@ class Run(Base):
     )
 
 
+class RunTemplate(Base):
+    """A saved run: playbook, inventory (and target group), credential and options, started
+    again in one step (Phase 5A). References are SET NULL when their item is deleted; a
+    template with a missing reference can't be launched until it is edited."""
+
+    __tablename__ = "run_templates"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_run_template_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(String(500), default=None)
+    playbook_id: Mapped[int | None] = mapped_column(ForeignKey("playbooks.id", ondelete="SET NULL"))
+    inventory_id: Mapped[int | None] = mapped_column(
+        ForeignKey("inventories.id", ondelete="SET NULL")
+    )
+    group_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    credential_id: Mapped[int | None] = mapped_column(
+        ForeignKey("credentials.id", ondelete="SET NULL")
+    )
+    vault_password_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vault_passwords.id", ondelete="SET NULL"), default=None
+    )
+    # Tells "no vault password" from "its vault password was deleted" (both leave the id NULL).
+    uses_vault_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    become: Mapped[bool] = mapped_column(Boolean, default=False)
+    check_mode: Mapped[bool] = mapped_column(Boolean, default=False)
+    diff_mode: Mapped[bool] = mapped_column(Boolean, default=False)
+    limit: Mapped[str | None] = mapped_column(String(500), default=None)
+    extra_vars: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, default=DEFAULT_RUN_TIMEOUT_SECONDS)
+    created_by: Mapped[str] = mapped_column(String(150))
+    updated_by: Mapped[str] = mapped_column(String(150))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Worker(Base):
     """A worker process as it last reported in (every claim and heartbeat). Only feeds the
     admin Workers page and the "why is my run still queued" hints; claiming never reads it.

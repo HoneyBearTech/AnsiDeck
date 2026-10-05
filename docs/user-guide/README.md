@@ -21,7 +21,7 @@ do what. This guide walks through each page. If you haven't used AnsiDeck yet, s
 - **Playbooks** say what to do: pasted, imported, or synced from a git repository.
   → [Playbooks and Galaxy](playbooks.md)
 - A **run** puts these together: one playbook, against one inventory (or a group of it), with one
-  credential. → [Runs](runs.md)
+  credential. A **run template** saves those choices to run them again in one step. → [Runs](runs.md)
 - **Notifications** tell you when runs fail and when something needs an admin's attention.
   → [Notifications](notifications.md)
 - **Workers**, the **audit log** and **metrics** are for administrators. → [Administration](administration.md)

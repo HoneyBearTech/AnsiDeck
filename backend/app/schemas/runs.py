@@ -37,6 +37,11 @@ class RunOut(BaseModel):
 
     id: int
     project_id: int
+    # What the run used, to start it again; None once that item has been deleted.
+    playbook_id: int | None = None
+    inventory_id: int | None = None
+    credential_id: int | None = None
+    vault_password_id: int | None = None
     playbook_name: str
     inventory_name: str
     group_name: str | None

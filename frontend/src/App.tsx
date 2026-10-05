@@ -22,6 +22,7 @@ const ProjectsPage = React.lazy(() => import("@/pages/projects-page").then((m) =
 const RunDetailPage = React.lazy(() => import("@/pages/run-detail-page").then((m) => ({ default: m.RunDetailPage })));
 const RunTriggerPage = React.lazy(() => import("@/pages/run-trigger-page").then((m) => ({ default: m.RunTriggerPage })));
 const RunsPage = React.lazy(() => import("@/pages/runs-page").then((m) => ({ default: m.RunsPage })));
+const TemplatesPage = React.lazy(() => import("@/pages/templates-page").then((m) => ({ default: m.TemplatesPage })));
 const UsersPage = React.lazy(() => import("@/pages/users-page").then((m) => ({ default: m.UsersPage })));
 const VaultPage = React.lazy(() => import("@/pages/vault-page").then((m) => ({ default: m.VaultPage })));
 const WorkersPage = React.lazy(() => import("@/pages/workers-page").then((m) => ({ default: m.WorkersPage })));
@@ -105,6 +106,7 @@ function App() {
             }
           />
           <Route path="/runs/:id" element={<RunDetailPage />} />
+          <Route path="/templates" element={<TemplatesPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

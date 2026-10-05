@@ -2,7 +2,7 @@ import { waitFor } from "@testing-library/react";
 import axe from "axe-core";
 import { describe, expect, it } from "vitest";
 
-import { CATALOG, credential, gitSource, inventory, playbook, run, targets, vaultPassword } from "./fixtures";
+import { CATALOG, credential, gitSource, inventory, playbook, run, runTemplate, targets, vaultPassword } from "./fixtures";
 import { renderApp } from "./render";
 
 // Enough data for every page to render its full content.
@@ -18,6 +18,7 @@ const ROUTES = {
   "GET /vault-passwords": [vaultPassword()],
   "GET /runs": [run()],
   "GET /runs/:id": run(),
+  "GET /run-templates": [runTemplate(), runTemplate({ id: 4, name: "Broken", missing: ["credential"] })],
   "GET /projects": [{ id: 1, name: "Default", description: null, created_at: "2026-10-05T12:00:00Z", my_role: "admin" }],
   "GET /projects/:id/git-sources": [gitSource()],
   "GET /users": [],
@@ -45,6 +46,7 @@ const PAGES: [string, string][] = [
   ["/runs", "Runs"],
   ["/runs/new", "New Run"],
   ["/runs/7", "site.yml → lab"],
+  ["/templates", "Run templates"],
   ["/users", "Users"],
   ["/audit", "Audit log"],
   ["/workers", "Workers"],
