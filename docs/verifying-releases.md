@@ -11,6 +11,10 @@ can check that what you run came from that workflow, unchanged:
   commit they were built) as attestations;
 - each GitHub Release has a source archive, `images.txt` (the image digests) and `SHA256SUMS`, which is
   signed the same way (`SHA256SUMS.sigstore.json`);
+- from v0.1.1 on, the release files also have **SLSA build provenance**: a signed attestation, stored by
+  GitHub and attached to the release (`ansideck-<version>.intoto.jsonl`, the signed in-toto envelope, and
+  `ansideck-<version>.provenance.sigstore.json`, the full Sigstore bundle), saying which workflow run
+  built them from which commit;
 - the **version tag** in git is signed with the maintainer's SSH key.
 
 You need [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) 2.0 or later. The
@@ -51,6 +55,21 @@ sha256sum -c SHA256SUMS
 
 The first command proves `SHA256SUMS` came from the release workflow; the second, that the archive and
 `images.txt` match it.
+
+## Build provenance (from v0.1.1)
+
+With the [GitHub CLI](https://cli.github.com/), check that a downloaded release file was built by this
+repository's release workflow:
+
+```sh
+gh attestation verify ansideck-0.1.1.tar.gz --repo HoneyBearTech/AnsiDeck \
+  --signer-workflow HoneyBearTech/AnsiDeck/.github/workflows/docker-publish.yml
+gh attestation verify images.txt --repo HoneyBearTech/AnsiDeck \
+  --signer-workflow HoneyBearTech/AnsiDeck/.github/workflows/docker-publish.yml
+```
+
+It prints the verified attestation, including the commit and workflow run. To verify offline, add
+`--bundle ansideck-0.1.1.provenance.sigstore.json`. Every file listed in `SHA256SUMS` is covered.
 
 ## The git tag
 

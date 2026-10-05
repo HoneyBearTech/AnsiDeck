@@ -4,7 +4,8 @@ name: Docker Publish
 # Each image is scanned with Trivy first (any fixable HIGH or CRITICAL vulnerability stops the
 # release), pushed with SBOM and SLSA provenance attestations, and signed keylessly with cosign
 # (Sigstore, identity = this workflow on the tag). The release carries a source archive, the image
-# digests and a signed SHA256SUMS. How to verify: docs/verifying-releases.md.
+# digests, a signed SHA256SUMS and SLSA build provenance for those files. How to verify:
+# docs/verifying-releases.md.
 
 on:
   push:
@@ -116,7 +117,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the release
-      id-token: write # keyless signing of SHA256SUMS
+      id-token: write # keyless signing of SHA256SUMS and of the provenance
+      attestations: write # store the provenance attestation in GitHub
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -141,6 +143,25 @@ jobs:
 
       - name: Sign the checksums
         run: cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
+
+      # SLSA build provenance for every file in SHA256SUMS: signed (Sigstore), stored as a GitHub
+      # attestation (gh attestation verify), and attached as <version>.intoto.jsonl (the signed
+      # in-toto DSSE envelope) plus the full Sigstore bundle.
+      - name: Attest build provenance
+        id: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: SHA256SUMS
+
+      - name: Provenance files for the release
+        env:
+          TAG: ${{ github.ref_name }}
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          version="${TAG#v}"
+          cp "$BUNDLE" "ansideck-${version}.provenance.sigstore.json"
+          jq -c '.dsseEnvelope' "$BUNDLE" > "ansideck-${version}.intoto.jsonl"
+          jq -r '.payload' "ansideck-${version}.intoto.jsonl" | base64 -d | jq '{predicateType, subject: [.subject[].name]}'
 
       - name: Release notes from the changelog
         env:
@@ -171,4 +192,5 @@ jobs:
           if [[ "$TAG" == *-* ]]; then prerelease=(--prerelease); fi
           gh release create "$TAG" --repo "$REPO" --verify-tag "${prerelease[@]}" \
             --title "AnsiDeck ${TAG}" --notes-file notes.md \
-            ansideck-*.tar.gz images.txt SHA256SUMS SHA256SUMS.sigstore.json
+            ansideck-*.tar.gz images.txt SHA256SUMS SHA256SUMS.sigstore.json \
+            ansideck-*.intoto.jsonl ansideck-*.provenance.sigstore.json
