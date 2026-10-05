@@ -5,6 +5,7 @@ Each property is a plain Hypothesis test so a coverage-guided fuzzer can
 reuse it later via `test_x.hypothesis.fuzz_one_input`.
 """
 
+import json
 import re
 import time
 
@@ -450,3 +451,24 @@ def test_store_references_never_leave_their_project(path: str) -> None:
     assert built.startswith("/v1/secret/data/ansideck/7/")
     assert all(part not in ("", ".", "..") for part in built.split("/")[1:])
     assert "%" not in built  # nothing needed encoding: no way to smuggle a separator
+
+
+# --- JSON nesting (untrusted inventory output) --------------------------------------
+
+
+def _depth(value) -> int:
+    if isinstance(value, dict):
+        return 1 + max((_depth(v) for v in value.values()), default=0)
+    if isinstance(value, list):
+        return 1 + max((_depth(v) for v in value), default=0)
+    return 0
+
+
+@given(json_values(any_text.filter(lambda t: not any(0xD800 <= ord(c) <= 0xDFFF for c in t))))
+def test_the_nesting_scan_agrees_with_the_parsed_depth(value) -> None:
+    """A linear scan, before json.loads ever recurses: brackets inside strings and escaped
+    quotes never fool it."""
+    from app.json_limits import nesting_depth
+
+    for indent in (None, 2):
+        assert nesting_depth(json.dumps(value, indent=indent).encode()) == _depth(value)

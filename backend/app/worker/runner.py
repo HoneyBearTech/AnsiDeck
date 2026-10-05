@@ -11,6 +11,7 @@ import time
 from collections import deque
 from pathlib import Path
 
+from app.json_limits import loads_bounded
 from app.run_executor import (
     ExecutionHandle,
     RunRefused,
@@ -36,6 +37,8 @@ _FLUSH_TIMEOUT_SECONDS = 60.0
 _DIRTY_SLOT_RETRY_SECONDS = 30.0
 # A refresh's output goes up in chunks, well under the internal API's 4 MiB body limit.
 _REFRESH_CHUNK_BYTES = 2 * 1024 * 1024
+# Deeper output is refused by the API anyway (app.inventory_sources.normalise).
+_MAX_OUTPUT_DEPTH = 64
 _ERROR_LINES = re.compile(r"^\[(ERROR|WARNING)\]: .*$", re.MULTILINE)
 _REFRESH_PATHS = re.compile(r"/\S*?/ansideck-refresh-\d+-[^/\s]*/inventory/")
 
@@ -527,7 +530,7 @@ class Worker:
 
     def _upload_refresh(self, task: RunTask, output: str, secrets: list[str]) -> None:
         try:
-            data = json.loads(output)
+            data = loads_bounded(output, _MAX_OUTPUT_DEPTH)
         except (ValueError, RecursionError):
             self._complete_refresh(
                 task, {"status": "failed", "error": "ansible-inventory's output is not JSON"}

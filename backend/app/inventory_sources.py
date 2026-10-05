@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.env_credentials import resolve_env
 from app.inventory_render import group_problem, hostname_problem, merge, render, static_data
+from app.json_limits import TooDeep, loads_bounded
 from app.models import (
     Credential,
     Inventory,
@@ -307,7 +308,10 @@ def normalise(raw: bytes, static_hosts: list[str]) -> tuple[dict, list[str]]:
     if len(raw) > settings.inventory_max_output_mb * 1024 * 1024:
         raise SourceError(f"the output is larger than {settings.inventory_max_output_mb} MiB")
     try:
-        data = json.loads(raw)
+        # The output's own structure (_meta, hostvars, a host) wraps the vars.
+        data = loads_bounded(raw, MAX_VARS_DEPTH + 8)
+    except TooDeep:
+        raise SourceError(f"a value is nested deeper than {MAX_VARS_DEPTH} levels") from None
     except (ValueError, RecursionError):
         raise SourceError("the output is not valid JSON") from None
     if not isinstance(data, dict) or not isinstance(data.get("_meta", {}), dict):

@@ -195,11 +195,23 @@ def test_hostile_output_is_normalised_or_refused(client: TestClient) -> None:
 
 @pytest.mark.parametrize(
     ("raw", "message"),
-    [
-        (b"not json", "not valid JSON"),
-        (json.dumps({"_meta": {"profile": "other"}}).encode(), "format"),
-        (json.dumps({"_meta": {"profile": "inventory_legacy"}, "g": []}).encode(), "unexpected"),
-        (b"[" * 100_000, "not valid JSON"),
+    [  # short ids: a 100k-character test id once stalled CI's verbose log
+        pytest.param(b"not json", "not valid JSON", id="not-json"),
+        pytest.param(
+            json.dumps({"_meta": {"profile": "other"}}).encode(), "format", id="other-profile"
+        ),
+        pytest.param(
+            json.dumps({"_meta": {"profile": "inventory_legacy"}, "g": []}).encode(),
+            "unexpected",
+            id="group-not-a-mapping",
+        ),
+        # refused before json.loads would recurse into it
+        pytest.param(b"[" * 100_000, "nested deeper", id="deep-nesting"),
+        pytest.param(
+            b'{"_meta": {"profile": "inventory_legacy"}, "x": "[[[[[[[["}',
+            "unexpected",
+            id="brackets-in-a-string",
+        ),
     ],
 )
 def test_the_normaliser_refuses_what_it_cannot_trust(raw: bytes, message: str) -> None:
