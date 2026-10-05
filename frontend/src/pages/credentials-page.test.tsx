@@ -144,7 +144,7 @@ describe("credentials", () => {
     const { api, user, screen } = renderApp("/credentials", {
       routes: {
         "GET /credentials": [credential()],
-        "DELETE /credentials/:id": reply(409, { detail: "A queued run uses this credential" }),
+        "DELETE /credentials/:id": reply(409, { detail: "Git source 'infra' uses this key as its deploy key" }),
       },
     });
     await user.click(await screen.findByRole("button", { name: "Delete" }));
@@ -153,7 +153,7 @@ describe("credentials", () => {
 
     confirm.mockReturnValue(true);
     await user.click(screen.getByRole("button", { name: "Delete" }));
-    expect(await screen.findByText("A queued run uses this credential")).toBeInTheDocument();
+    expect(await screen.findByText("Git source 'infra' uses this key as its deploy key")).toBeInTheDocument();
     expect(screen.getByText("deploy-key")).toBeInTheDocument();
   });
 
