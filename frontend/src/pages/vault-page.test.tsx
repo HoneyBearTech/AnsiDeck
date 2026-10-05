@@ -1,5 +1,5 @@
 import { within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { reply } from "@/test/fake-api";
 import { vaultPassword } from "@/test/fixtures";
@@ -89,6 +89,7 @@ describe("vault", () => {
   });
 
   it("deletes a vault password and shows refused creates", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     const { api, user, screen } = renderApp("/vault", {
       routes: {
         "GET /vault-passwords": [vaultPassword()],

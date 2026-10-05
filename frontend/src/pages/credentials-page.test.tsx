@@ -1,5 +1,5 @@
 import { within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { reply } from "@/test/fake-api";
 import { credential, viewerUser } from "@/test/fixtures";
@@ -128,6 +128,7 @@ describe("credentials", () => {
   });
 
   it("deletes a credential", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     const { api, user, screen } = renderApp("/credentials", {
       routes: { "GET /credentials": [credential()], "DELETE /credentials/:id": reply(204) },
     });
@@ -136,6 +137,24 @@ describe("credentials", () => {
     await user.click(screen.getByRole("button", { name: "Delete" }));
     await screen.findByText("No credentials yet.");
     expect(api.requests("DELETE /credentials/1")).toHaveLength(1);
+  });
+
+  it("asks before deleting, and shows why a delete was refused", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { api, user, screen } = renderApp("/credentials", {
+      routes: {
+        "GET /credentials": [credential()],
+        "DELETE /credentials/:id": reply(409, { detail: "A queued run uses this credential" }),
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("deleted for good and can't be recovered"));
+    expect(api.requests("DELETE /credentials/1")).toHaveLength(0);
+
+    confirm.mockReturnValue(true);
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(await screen.findByText("A queued run uses this credential")).toBeInTheDocument();
+    expect(screen.getByText("deploy-key")).toBeInTheDocument();
   });
 
   it("is hidden from people who can't list secrets", async () => {

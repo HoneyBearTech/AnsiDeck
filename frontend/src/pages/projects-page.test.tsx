@@ -69,6 +69,7 @@ describe("projects", () => {
   });
 
   it("manages members", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     const { api, user, screen } = renderApp("/projects", {
       routes: {
         "GET /projects": [summary()],
