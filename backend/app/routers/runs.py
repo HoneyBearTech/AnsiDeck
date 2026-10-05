@@ -22,6 +22,7 @@ from app.db import get_db, get_sessionmaker
 from app.dependencies import SESSION_COOKIE_NAME, RateLimited, authenticate_request
 from app.hardening import client_ip
 from app.inventory_render import merge, static_data, static_problems
+from app.inventory_sources import has_sources
 from app.models import (
     FINISHED_STATUSES,
     Credential,
@@ -29,6 +30,7 @@ from app.models import (
     GitSource,
     Inventory,
     InventoryGroup,
+    InventorySnapshot,
     Playbook,
     Run,
     RunStatus,
@@ -132,10 +134,25 @@ def _pin_snapshot(db: Session, playbook: Playbook) -> dict:
 
 
 def _pin_inventory(
-    inventory: Inventory, group: InventoryGroup | None, group_name: str | None
-) -> tuple[dict, str | None]:
-    """The inventory's own hosts and groups as they are now (what the queued run will see,
-    whatever is edited meanwhile) and the target group's name, checked against the tree."""
+    db: Session, inventory: Inventory, group: InventoryGroup | None, group_name: str | None
+) -> tuple[dict, str | None, InventorySnapshot | None]:
+    """The inventory's own hosts and groups as they are now and its sources' current snapshot
+    (what the queued run will see, whatever is edited or refreshed meanwhile), and the target
+    group's name, checked against the merged tree. The snapshot row is share-locked until the
+    run is committed, so pruning can't remove it in between."""
+    snapshot = None
+    if has_sources(db, inventory.id):
+        if inventory.current_snapshot_id is not None:
+            snapshot = db.scalars(
+                select(InventorySnapshot)
+                .where(InventorySnapshot.id == inventory.current_snapshot_id)
+                .with_for_update(read=True)
+            ).first()
+        if snapshot is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "This inventory's dynamic sources haven't been refreshed yet",
+            )
     static = static_data(inventory)
     if problems := static_problems(static):
         raise HTTPException(
@@ -148,11 +165,12 @@ def _pin_inventory(
             f"The inventory is too large to run (over {MAX_INVENTORY_PIN_BYTES // 2**20} MiB)",
         )
     target = group.name if group is not None else group_name
-    if target is not None and target not in merge(static)["groups"]:
+    merged = merge(static, snapshot.data if snapshot is not None else None)
+    if target is not None and target not in merged["groups"]:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, f"No group named {target!r} in this inventory"
         )
-    return static, target
+    return static, target, snapshot
 
 
 def _require_same_project(obj, project_id: int, label: str) -> None:
@@ -227,7 +245,9 @@ def create_run(
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "group_id and group_name name different groups"
             )
-    inventory_static, group_name = _pin_inventory(inventory, group, payload.group_name)
+    inventory_static, group_name, snapshot = _pin_inventory(
+        db, inventory, group, payload.group_name
+    )
     if group is None and group_name is not None:
         # A static group picked by name: keep the link, for history.
         group = next((g for g in inventory.groups if g.name == group_name), None)
@@ -276,6 +296,7 @@ def create_run(
         group_id=group.id if group else None,
         group_name=group_name,
         inventory_static=inventory_static,
+        inventory_snapshot_id=snapshot.id if snapshot is not None else None,
         credential_id=credential.id,
         credential_name=credential.name,
         vault_password_id=vault_password.id if vault_password else None,

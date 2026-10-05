@@ -232,6 +232,27 @@ vaulted playbook variables.
   commit is refused and the previous one stays current). A commit over `GIT_MAX_SNAPSHOT_MB` (50) or
   `GIT_MAX_FILES` (20000), or a repository over `GIT_MAX_REPO_MB` (500), is refused.
 
+## Dynamic inventory sources (optional)
+
+An inventory can also get hosts and groups from **sources**: inventory plugin configs (YAML with a `plugin:`
+key, for example `netbox.netbox.nb_inventory`, or `ansible.builtin.constructed` to group hosts by their vars).
+A refresh runs them with `ansible-inventory` in an isolated worker slot, together with the inventory's own
+hosts (so `constructed` can group those too), and keeps the result as a **snapshot**. Runs use the snapshot that
+is current when they are started; the inventory's own host vars win over a source's. A refresh happens when a
+source changes, when the inventory's own hosts or groups change, on demand, and on a schedule (at most every 5
+minutes). If a refresh fails, runs keep the last good snapshot and an **Inventory refresh failed** notification
+goes out once (and again when it works).
+
+A source that needs an API token gets it from an **environment-variables credential** (for example
+`NETBOX_TOKEN`), referenced in the config as `"{{ lookup('env', 'NETBOX_TOKEN') }}"`; configs may not hold
+secrets themselves, since anyone who can see the inventory can read them. Text that comes from a source (a
+NetBox description, a cloud tag) is never treated as a template in a run.
+
+Project admins manage sources (`POST /api/inventories/{id}/sources`, `PATCH`/`DELETE …/sources/{source id}`,
+`PUT …/refresh-settings`); operators can `POST …/refresh`; anyone who can see the inventory can read
+`…/sources`, `…/refreshes`, `…/snapshot`, `…/hosts` and `…/targets`. Plugins that need Python packages the
+image doesn't have (AWS needs boto3, Proxmox needs requests) don't work yet.
+
 ## Notifications
 
 The **Notifications** page sends events to Discord, Slack, Microsoft Teams (a Workflows

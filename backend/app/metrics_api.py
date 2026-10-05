@@ -29,7 +29,13 @@ from app.config import get_settings
 from app.db import get_sessionmaker
 from app.hardening import FailureThrottle
 from app.metrics import REGISTRY
-from app.notifications import QUEUE_STUCK, SECRETS_UNAVAILABLE, WORKER_OFFLINE, WORKER_UNISOLATED
+from app.notifications import (
+    INVENTORY_REFRESH_FAILED,
+    QUEUE_STUCK,
+    SECRETS_UNAVAILABLE,
+    WORKER_OFFLINE,
+    WORKER_UNISOLATED,
+)
 from app.queue import WORKER_ONLINE_SECONDS
 
 logger = logging.getLogger(__name__)
@@ -39,7 +45,13 @@ STATEMENT_TIMEOUT_MS = 3000
 # Worker ids come from whoever holds WORKER_TOKEN: cap the per-worker series.
 MAX_WORKER_SERIES = 100
 _WARN_EVERY_SECONDS = 60.0
-_ALERT_KINDS = (WORKER_OFFLINE, WORKER_UNISOLATED, QUEUE_STUCK, SECRETS_UNAVAILABLE)
+_ALERT_KINDS = (
+    WORKER_OFFLINE,
+    WORKER_UNISOLATED,
+    QUEUE_STUCK,
+    SECRETS_UNAVAILABLE,
+    INVENTORY_REFRESH_FAILED,
+)
 
 metrics_ip_throttle = FailureThrottle(max_failures=20, window_seconds=300)
 

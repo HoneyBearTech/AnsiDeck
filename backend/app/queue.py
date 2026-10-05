@@ -71,11 +71,44 @@ _CLAIM = text(
 )
 
 
+# An inventory refresh (Phase 4G) is claimed like a run: the oldest queued one whose inventory
+# has none running. Runs don't wait for refreshes (they pin a snapshot when triggered).
+_CLAIM_REFRESH = text(
+    """
+    WITH candidate AS (
+        SELECT r.id FROM inventory_refreshes r
+        WHERE r.status = 'queued'
+          AND NOT EXISTS (
+              SELECT 1 FROM inventory_refreshes busy
+              WHERE busy.inventory_id = r.inventory_id AND busy.status = 'running')
+        ORDER BY r.queued_at, r.id
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+    )
+    UPDATE inventory_refreshes SET
+        status = 'running',
+        claimed_at = now(),
+        heartbeat_at = now(),
+        lease_expires_at = now() + make_interval(secs => :lease),
+        worker_id = :worker_id,
+        claim_token_hash = :claim_hash,
+        job_token_hash = :job_hash,
+        job_token_expires_at = now() + make_interval(secs => :job_ttl)
+    FROM candidate
+    WHERE inventory_refreshes.id = candidate.id
+    RETURNING inventory_refreshes.id
+    """
+)
+
+
 @dataclass(frozen=True)
 class Claim:
+    """A claimed run, or (kind "refresh") a claimed inventory refresh with that id."""
+
     run_id: int
     claim_token: str
     job_token: str
+    kind: str = "run"
 
 
 def hash_token(token: str) -> str:
@@ -164,7 +197,48 @@ def wait_reason(db: Session, run: Run) -> str:
     return "Waiting for a worker…"
 
 
-def claim_next(db: Session, worker_id: str) -> Claim | None:
+def claim_next(db: Session, worker_id: str, kinds: tuple[str, ...] = ("run",)) -> Claim | None:
+    """Refreshes first (they are short, and someone may be waiting for the hosts), then runs.
+    A worker that doesn't list "refresh" (from before 4G) never gets one."""
+    if "refresh" in kinds and (claim := _claim_refresh(db, worker_id)) is not None:
+        return claim
+    if "run" not in kinds:
+        return None
+    return _claim_run(db, worker_id)
+
+
+def _claim_refresh(db: Session, worker_id: str) -> Claim | None:
+    for _ in range(_CLAIM_ATTEMPTS):
+        claim_token, job_token = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+        try:
+            db.execute(text("SELECT pg_advisory_xact_lock_shared(:key)"), {"key": GALAXY_GATE_KEY})
+            if install_pending(db):
+                db.rollback()
+                return None
+            refresh_id = db.scalar(
+                _CLAIM_REFRESH,
+                {
+                    "lease": get_settings().run_lease_seconds,
+                    "worker_id": worker_id[:255],
+                    "claim_hash": hash_token(claim_token),
+                    "job_hash": hash_token(job_token),
+                    "job_ttl": JOB_TOKEN_SECONDS,
+                },
+            )
+        except IntegrityError as exc:
+            db.rollback()
+            if isinstance(exc.orig, UniqueViolation):
+                continue
+            raise
+        if refresh_id is None:
+            db.rollback()
+            return None
+        db.commit()
+        return Claim(refresh_id, claim_token, job_token, kind="refresh")
+    return None
+
+
+def _claim_run(db: Session, worker_id: str) -> Claim | None:
     lease = get_settings().run_lease_seconds
     for _ in range(_CLAIM_ATTEMPTS):
         claim_token, job_token = secrets.token_urlsafe(32), secrets.token_urlsafe(32)

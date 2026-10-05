@@ -4,8 +4,11 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.inventory_render import group_problem, hostname_problem
+from app.inventory_sources import enqueue_refresh
 from app.models import Inventory, InventoryGroup, InventoryHost, User
+from app.notify import notifier
 from app.permissions import SAFE_METHODS, Permission, Scope, guard
+from app.queue import QUEUE_TOPIC
 from app.schemas.inventories import (
     GroupCreate,
     GroupOut,
@@ -159,6 +162,15 @@ def delete_inventory(
     db.commit()
 
 
+def _static_changed(db: Session, inventory_id: int, user: User) -> None:
+    """The inventory's own hosts or groups changed: its sources (constructed ones group them)
+    are refreshed, one refresh for a burst of edits."""
+    inventory = db.get(Inventory, inventory_id)
+    if enqueue_refresh(db, inventory, "static_changed", user.username) is not None:
+        db.commit()
+        notifier.notify(QUEUE_TOPIC)
+
+
 def _check_group_name(name: str) -> None:
     if problem := group_problem(name):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Group name {problem}")
@@ -193,6 +205,7 @@ def create_group(
             status.HTTP_400_BAD_REQUEST, "Group name already exists in this inventory"
         ) from exc
     db.refresh(group)
+    _static_changed(db, inventory_id, user)
     return group
 
 
@@ -217,6 +230,7 @@ def update_group(
             status.HTTP_400_BAD_REQUEST, "Group name already exists in this inventory"
         ) from exc
     db.refresh(group)
+    _static_changed(db, inventory_id, user)
     return group
 
 
@@ -232,6 +246,7 @@ def delete_group(
     group = _get_group_or_404(db, inventory_id, group_id)
     db.delete(group)
     db.commit()
+    _static_changed(db, inventory_id, user)
 
 
 @router.post("/{inventory_id}/hosts", response_model=HostOut, status_code=status.HTTP_201_CREATED)
@@ -257,6 +272,7 @@ def create_host(
             status.HTTP_400_BAD_REQUEST, "Host already exists in this inventory"
         ) from exc
     db.refresh(host)
+    _static_changed(db, inventory_id, user)
     return _to_host_out(host)
 
 
@@ -286,6 +302,7 @@ def update_host(
             status.HTTP_400_BAD_REQUEST, "Host already exists in this inventory"
         ) from exc
     db.refresh(host)
+    _static_changed(db, inventory_id, user)
     return _to_host_out(host)
 
 
@@ -301,3 +318,4 @@ def delete_host(
     host = _get_host_or_404(db, inventory_id, host_id)
     db.delete(host)
     db.commit()
+    _static_changed(db, inventory_id, user)

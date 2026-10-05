@@ -30,6 +30,10 @@ COLUMNS = {
         "install_id", "status", "status_reason", "upgrade", "return_code", "triggered_by",
         "created_at", "started_at", "finished_at", "run_seconds",
     ],
+    "inventory_refreshes": [
+        "refresh_id", "project_id", "inventory_id", "status", "trigger", "queued_at",
+        "started_at", "finished_at", "duration_seconds", "worker", "host_count", "group_count",
+    ],
     "notification_deliveries": [
         "delivery_id", "channel_id", "channel", "kind", "project_id", "event", "status",
         "attempts", "last_status_code", "created_at", "sent_at",

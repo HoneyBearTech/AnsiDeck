@@ -28,6 +28,19 @@ class ApiClient:
             raise ApiUnavailable(f"{path}: HTTP {response.status_code}")
         return response
 
+    def post_bytes(
+        self, path: str, data: bytes, *, claim_token: str, headers: dict, timeout: float = 60.0
+    ) -> httpx.Response:
+        """POSTs raw bytes (a chunk of an inventory refresh's output)."""
+        sent = {"X-Claim-Token": claim_token, "Content-Type": "application/octet-stream", **headers}
+        try:
+            response = self.http.post(path, content=data, headers=sent, timeout=timeout)
+        except httpx.HTTPError as exc:
+            raise ApiUnavailable(f"{path}: {exc.__class__.__name__}: {exc}") from exc
+        if response.status_code >= 500 or response.status_code in (401, 429):
+            raise ApiUnavailable(f"{path}: HTTP {response.status_code}")
+        return response
+
     def download(
         self, path: str, body: dict, *, claim_token: str, max_bytes: int, timeout: float = 120.0
     ) -> bytes:

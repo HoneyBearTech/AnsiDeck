@@ -262,6 +262,31 @@ def _checked_dir(path: str, job: dict) -> str | None:
     return None
 
 
+def inventory_in_worker(
+    job: dict,
+    env: dict[str, str],
+    handle: ExecutionHandle | None = None,
+    identity: RunIdentity | None = None,
+) -> tuple[int | None, str, str]:
+    """An inventory refresh in the run process (app.run_worker, mode "inventory"), as
+    `identity` when given: (ansible-inventory's exit code or None, its output, the end of its
+    stderr). RunRefused if it couldn't be set up."""
+    chunks: list[str] = []
+    outcome: dict = {}
+
+    def on_message(message: dict) -> None:
+        if message["type"] == "output":
+            chunks.append(message["data"])
+        elif message["type"] == "inventory_result":
+            outcome.update(rc=message["rc"], stderr=message.get("stderr") or "")
+
+    run_in_worker(
+        {**job, "mode": "inventory"}, env, lambda _event: None, handle, identity,
+        on_message=on_message,
+    )  # fmt: skip
+    return outcome.get("rc"), "".join(chunks), outcome.get("stderr", "")
+
+
 class RunRefused(Exception):
     """The run process refused to start the run (its message is safe to show)."""
 
@@ -273,6 +298,7 @@ def run_in_worker(
     handle: ExecutionHandle | None = None,
     identity: RunIdentity | None = None,
     stdin_tail: bytes | None = None,
+    on_message: Callable[[dict], None] | None = None,
 ) -> tuple[str | None, int | None]:
     """Runs ansible-runner in a child process started with `env` instead of the app's
     environment (see app.run_worker), as `identity` when given. Returns (ansible-runner
@@ -322,6 +348,8 @@ def run_in_worker(
                     result = (message["status"], message["rc"])
                 elif message["type"] == "refused":
                     refused = str(message.get("reason") or "refused")
+                elif on_message is not None:  # an inventory refresh's output and result
+                    on_message(message)
     except BaseException:
         stop_worker(proc)
         _clean_up(identity, private_data_dir)

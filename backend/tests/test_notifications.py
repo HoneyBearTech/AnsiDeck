@@ -982,6 +982,7 @@ def test_ops_and_security_events_are_for_global_channels_only(client) -> None:
     assert groups == {
         RUN_FAILED: "Runs",
         RUN_RECOVERED: "Runs",
+        "inventory.refresh_failed": "Inventories",
         "worker.offline": "Operations",
         "worker.unisolated": "Operations",
         "queue.stuck": "Operations",
@@ -1070,3 +1071,13 @@ def test_ops_and_security_events_are_for_global_channels_only(client) -> None:
 def test_ops_and_security_messages(event, payload, title, color, path) -> None:
     message = render.build(event, payload, "https://a.example")
     assert (message.title, message.color, message.url) == (title, color, f"https://a.example{path}")
+
+
+def test_an_inventory_refresh_failure_and_its_all_clear_render() -> None:
+    payload = {"inventory_id": 3, "inventory": "netbox", "project": "P", "error": "x" * 400}
+    failed = render.build("inventory.refresh_failed", payload, "https://ansideck.example")
+    assert failed.title == "Inventory netbox: refresh failed"
+    assert failed.summary.endswith("Runs keep using the last good snapshot.")
+    assert failed.url == "https://ansideck.example/inventories/3"
+    resolved = render.build("inventory.refresh_failed", {**payload, "state": "resolved"})
+    assert resolved.title == "Inventory netbox refreshes again" and resolved.url is None

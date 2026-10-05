@@ -289,5 +289,39 @@ class Scrubber:
             }
 
 
+def scrub_exact(data: Any, secrets: Iterable[str]) -> tuple[Any, bool]:
+    """`data` with every exact secret (and its variants) redacted in strings and keys, and
+    whether anything was. No patterns: inventory data (URLs, assignments in descriptions)
+    must stay as it is unless it holds one of the secrets themselves."""
+    regex = _exact_regex(secrets)
+    changed = False
+
+    def text(value: str) -> str:
+        nonlocal changed
+        new = regex.sub(REDACTED, value)
+        changed = changed or new != value
+        return new
+
+    def walk(value: Any) -> Any:
+        if isinstance(value, str):
+            return text(value)
+        if isinstance(value, list):
+            return [walk(v) for v in value]
+        if isinstance(value, dict):
+            out: dict = {}
+            for k, v in value.items():
+                new_k = text(k) if isinstance(k, str) else k
+                base, n = new_k, 2
+                while new_k in out:
+                    new_k, n = f"{base}#{n}", n + 1
+                out[new_k] = walk(v)
+            return out
+        return value
+
+    if regex is None:
+        return data, False
+    return walk(data), changed
+
+
 def build_scrubber(secrets: Iterable[str]) -> Callable[[dict], dict]:
     return Scrubber(secrets).scrub_event

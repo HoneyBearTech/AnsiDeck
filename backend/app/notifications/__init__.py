@@ -15,6 +15,7 @@ KINDS = ("webhook", "discord", "slack", "teams", "email", "pushbullet", "pushove
 
 RUN_FAILED = "run.failed"
 RUN_RECOVERED = "run.recovered"
+INVENTORY_REFRESH_FAILED = "inventory.refresh_failed"
 WORKER_OFFLINE = "worker.offline"
 WORKER_UNISOLATED = "worker.unisolated"
 QUEUE_STUCK = "queue.stuck"
@@ -33,7 +34,7 @@ class EventInfo:
     # Project events come from one project: its channels get them, and so does every global
     # channel subscribed to them. Global events (ops, security) go to global channels only.
     project: bool
-    group: str  # for the UI: Runs, Operations, Security
+    group: str  # for the UI: Runs, Inventories, Operations, Security
 
 
 EVENTS: dict[str, EventInfo] = {
@@ -45,6 +46,13 @@ EVENTS: dict[str, EventInfo] = {
         "A playbook succeeded on an inventory after its previous run there failed.",
         project=True,
         group="Runs",
+    ),
+    INVENTORY_REFRESH_FAILED: EventInfo(
+        "Inventory refresh failed",
+        "An inventory's dynamic sources could not be refreshed; runs keep using its last good "
+        "snapshot (and again when a refresh works).",
+        project=True,
+        group="Inventories",
     ),
     WORKER_OFFLINE: EventInfo(
         "Worker offline",

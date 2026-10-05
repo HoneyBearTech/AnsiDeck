@@ -14,8 +14,10 @@ from app import audit
 from app.db import get_sessionmaker
 from app.galaxy import try_start_install
 from app.git_sync import prune_snapshots
+from app.inventory_sources import due_inventories, end_refresh, enqueue_refresh
+from app.inventory_sources import prune_snapshots as prune_inventory_snapshots
 from app.jobs import UNRUNNABLE, unrunnable_reason
-from app.models import GalaxyInstall, Run, RunStatus, Worker
+from app.models import GalaxyInstall, InventoryRefresh, Run, RunStatus, Worker
 from app.notifications import WORKER_OFFLINE, WORKER_UNISOLATED
 from app.notifications.alerts import clear_alerts
 from app.notifications.dispatch import prune as prune_deliveries
@@ -23,6 +25,7 @@ from app.notifications.ops import check_queue, check_workers
 from app.notify import notifier, run_topic
 from app.queue import QUEUE_TOPIC, fail_run
 from app.run_executor import format_duration
+from app.storage import inventory_refresh_output_path
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +54,57 @@ def _lock(db: Session, *where) -> list[Run]:
     )
 
 
+def reap_refreshes(db: Session) -> list[dict]:
+    """Inventory refreshes (Phase 4G): ends those whose worker went away or overran, queues
+    the scheduled ones and prunes old snapshots. Returns the audit events to record."""
+    pending: list[dict] = []
+
+    def lock(*where) -> list[InventoryRefresh]:
+        return list(
+            db.scalars(
+                select(InventoryRefresh)
+                .where(InventoryRefresh.status == RunStatus.RUNNING.value, *where)
+                .order_by(InventoryRefresh.id)
+                .limit(_BATCH)
+                .with_for_update(skip_locked=True)
+            )
+        )
+
+    for refresh in lock(InventoryRefresh.lease_expires_at < func.now()):
+        why = (
+            f"worker lost: no heartbeat from {refresh.worker_id} since {_at(refresh.heartbeat_at)}"
+        )
+        if audit_event := end_refresh(db, refresh, RunStatus.FAILED.value, why):
+            pending.append(audit_event)
+        inventory_refresh_output_path(refresh.id).unlink(missing_ok=True)
+    db.commit()
+    began = func.coalesce(InventoryRefresh.started_at, InventoryRefresh.claimed_at)
+    limit = func.make_interval(
+        0, 0, 0, 0, 0, 0, InventoryRefresh.timeout_seconds + TIMEOUT_GRACE_SECONDS
+    )
+    for refresh in lock(began + limit < func.now()):
+        took = format_duration(refresh.timeout_seconds)
+        why = f"timed out after {took} (its worker did not stop it)"
+        if audit_event := end_refresh(db, refresh, RunStatus.TIMED_OUT.value, why):
+            pending.append(audit_event)
+        inventory_refresh_output_path(refresh.id).unlink(missing_ok=True)
+    db.commit()
+
+    queued = False
+    for inventory in due_inventories(db):
+        queued = enqueue_refresh(db, inventory, "schedule") is not None or queued
+    db.commit()
+    if queued:
+        notifier.notify(QUEUE_TOPIC)
+    prune_inventory_snapshots(db)
+    db.commit()
+    return pending
+
+
 def reap_once() -> list[int]:
     """One pass; returns the ids of the runs it ended."""
     ended: list[tuple[int, str | None, int, str | None]] = []  # id, audit action, project, worker
+    pending_audits: list[dict] = []
     db = get_sessionmaker()()
     try:
         running = Run.status == RunStatus.RUNNING.value
@@ -107,6 +158,12 @@ def reap_once() -> list[int]:
             install.lease_expires_at = None
         db.commit()
 
+        try:
+            pending_audits += reap_refreshes(db)
+        except Exception:  # noqa: BLE001 - the next pass tries again
+            db.rollback()
+            logger.exception("could not reap inventory refreshes")
+
         retention = func.make_interval(0, 0, 0, 0, 0, 0, WORKER_RETENTION_SECONDS)
         gone = db.scalars(
             delete(Worker).where(Worker.last_seen_at < func.now() - retention).returning(Worker.id)
@@ -130,6 +187,8 @@ def reap_once() -> list[int]:
                 logger.exception("notification check failed")
         db.commit()
 
+        for pending in pending_audits:
+            audit.record(db, **pending)
         for run_id, action, project_id, worker_id in ended:
             notifier.notify(run_topic(run_id))
             if action:
