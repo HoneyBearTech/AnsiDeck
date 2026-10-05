@@ -7,6 +7,12 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+### Added
+
+- Releases carry SLSA build provenance for their files: a signed attestation stored by GitHub
+  (`gh attestation verify`) and attached as `ansideck-<version>.intoto.jsonl`
+  ([docs/verifying-releases.md](docs/verifying-releases.md#build-provenance-from-v011)).
+
 ## [0.1.0] - 2026-10-05
 
 The first release. Container images are published to GitHub Container Registry, signed with cosign, and
