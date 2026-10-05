@@ -143,7 +143,11 @@ def _apply_settings(db: Session, source: GitSource, values: dict, *, creating: b
     if source.auth_kind == "ssh_key":
         credential_id = values.get("credential_id", source.credential_id)
         credential = db.get(Credential, credential_id) if credential_id is not None else None
-        if credential is None or credential.project_id != source.project_id:
+        if (
+            credential is None
+            or credential.project_id != source.project_id
+            or credential.kind != "ssh"
+        ):
             raise _bad("pick an SSH key (credential) of this project")
         source.credential_id = credential.id
     else:

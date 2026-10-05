@@ -24,10 +24,12 @@ export function SecretSourcePicker({
   onModeChange: (mode: SourceMode) => void;
   path: string;
   onPathChange: (path: string) => void;
-  secretKey: string;
-  onSecretKeyChange: (key: string) => void;
+  /** Omitted for an env credential: every key of the secret becomes a variable. */
+  secretKey?: string;
+  onSecretKeyChange?: (key: string) => void;
   idPrefix: string;
 }) {
+  const wholeSecret = onSecretKeyChange === undefined;
   if (!info?.enabled) return null;
   return (
     <div className="flex flex-col gap-3 rounded-md border border-border p-3">
@@ -67,16 +69,22 @@ export function SecretSourcePicker({
               Under this project's subtree only: {info.path_rules}.
             </p>
           </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor={`${idPrefix}-store-key`}>Key in that secret</Label>
-            <Input
-              id={`${idPrefix}-store-key`}
-              value={secretKey}
-              onChange={(e) => onSecretKeyChange(e.target.value)}
-              className="font-mono"
-              spellCheck={false}
-            />
-          </div>
+          {wholeSecret ? (
+            <p className="text-xs text-muted-foreground">
+              Every key in that secret becomes an environment variable of the same name.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <Label htmlFor={`${idPrefix}-store-key`}>Key in that secret</Label>
+              <Input
+                id={`${idPrefix}-store-key`}
+                value={secretKey}
+                onChange={(e) => onSecretKeyChange(e.target.value)}
+                className="font-mono"
+                spellCheck={false}
+              />
+            </div>
+          )}
           <p className="text-xs text-muted-foreground">
             AnsiDeck reads the value once now to check it, and again whenever a run needs it; it never stores
             it. Rotate it in {info.label}: the next run uses the new version.

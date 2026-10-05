@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import hashlib
+import json
 from pathlib import Path
 
 from fastapi import (
@@ -20,6 +21,7 @@ from app import audit, git_sync, metrics
 from app.db import get_db, get_sessionmaker
 from app.dependencies import SESSION_COOKIE_NAME, RateLimited, authenticate_request
 from app.hardening import client_ip
+from app.inventory_render import merge, static_data, static_problems
 from app.models import (
     FINISHED_STATUSES,
     Credential,
@@ -49,6 +51,8 @@ from app.storage import playbook_path, run_log_path
 router = APIRouter()
 
 MAX_PLAYBOOK_SNAPSHOT_BYTES = 1024 * 1024
+# The inventory's own hosts and groups, pinned on each run.
+MAX_INVENTORY_PIN_BYTES = 4 * 1024 * 1024
 
 
 # The only routes an API key may reach (a test pins this set).
@@ -127,6 +131,30 @@ def _pin_snapshot(db: Session, playbook: Playbook) -> dict:
     }
 
 
+def _pin_inventory(
+    inventory: Inventory, group: InventoryGroup | None, group_name: str | None
+) -> tuple[dict, str | None]:
+    """The inventory's own hosts and groups as they are now (what the queued run will see,
+    whatever is edited meanwhile) and the target group's name, checked against the tree."""
+    static = static_data(inventory)
+    if problems := static_problems(static):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Rename these in the inventory before running it: " + "; ".join(problems[:5]),
+        )
+    if len(json.dumps(static)) > MAX_INVENTORY_PIN_BYTES:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"The inventory is too large to run (over {MAX_INVENTORY_PIN_BYTES // 2**20} MiB)",
+        )
+    target = group.name if group is not None else group_name
+    if target is not None and target not in merge(static)["groups"]:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"No group named {target!r} in this inventory"
+        )
+    return static, target
+
+
 def _require_same_project(obj, project_id: int, label: str) -> None:
     if obj.project_id != project_id:
         raise HTTPException(
@@ -195,6 +223,14 @@ def create_run(
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "group_id does not belong to this inventory"
             )
+        if payload.group_name is not None and payload.group_name != group.name:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "group_id and group_name name different groups"
+            )
+    inventory_static, group_name = _pin_inventory(inventory, group, payload.group_name)
+    if group is None and group_name is not None:
+        # A static group picked by name: keep the link, for history.
+        group = next((g for g in inventory.groups if g.name == group_name), None)
 
     credential = get_scoped(
         db,
@@ -206,6 +242,8 @@ def create_run(
         "Credential not found",
     )
     _require_same_project(credential, project_id, "Credential")
+    if credential.kind != "ssh":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A run needs an SSH key credential")
 
     vault_password = None
     if payload.vault_password_id is not None:
@@ -236,7 +274,8 @@ def create_run(
         inventory_id=inventory.id,
         inventory_name=inventory.name,
         group_id=group.id if group else None,
-        group_name=group.name if group else None,
+        group_name=group_name,
+        inventory_static=inventory_static,
         credential_id=credential.id,
         credential_name=credential.name,
         vault_password_id=vault_password.id if vault_password else None,
@@ -269,7 +308,7 @@ def create_run(
         detail={
             "playbook": playbook.name,
             "inventory": inventory.name,
-            "group": group.name if group else None,
+            "group": group_name,
             "become": payload.become,
             "check_mode": payload.check_mode,
             **({"commit": run.git_commit} if run.git_commit else {}),

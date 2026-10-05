@@ -306,3 +306,19 @@ def _store_alerts() -> list[str]:
         )
     finally:
         db.close()
+
+
+def test_an_env_credential_reads_the_whole_secret(store, client, monkeypatch) -> None:
+    monkeypatch.setenv("SECRETS_STORE_PROJECT_POLICY", "ansideck-test-p{project_id}")
+    get_settings.cache_clear()
+    _login(client)
+    put_secret(1, "env/netbox", {"NETBOX_TOKEN": "nb-real-token", "NB_REGION": "eu"})
+    response = client.post(
+        "/api/credentials", json={"name": "nb-env", "kind": "env", "store_path": "env/netbox"}
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["store_location"] == f"secret/{PREFIX}/1/env/netbox"
+    check = client.post(f"/api/credentials/{response.json()['id']}/check").json()
+    assert check["ok"] and check["env_names"] == ["NB_REGION", "NETBOX_TOKEN"]
+    data, version = secret_store.read_all_versioned(1, "env/netbox")
+    assert data == {"NETBOX_TOKEN": "nb-real-token", "NB_REGION": "eu"} and version >= 1

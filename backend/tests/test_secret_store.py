@@ -105,6 +105,8 @@ def test_a_reference_reads_from_the_projects_own_subtree(store) -> None:
         "web%2fssh",
         "%2e%2e/8",
         "web\x00ssh",
+        "web\n",  # `$` alone would match before a trailing newline
+        "web/ssh\n",
         "wéb",
         "web ssh",
         "",
@@ -119,7 +121,7 @@ def test_paths_that_could_leave_the_subtree_are_refused(store, path: str) -> Non
     assert store["requests"] == []  # refused before anything is sent
 
 
-@pytest.mark.parametrize("key", ["", "..", "a/b", "-k", "k y"])
+@pytest.mark.parametrize("key", ["", "..", "a/b", "-k", "k y", "k\n"])
 def test_bad_keys_are_refused(store, key: str) -> None:
     with pytest.raises(SecretStoreError, match="invalid"):
         secret_store.read_secret(7, "web/ssh", key)

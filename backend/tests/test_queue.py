@@ -3,13 +3,16 @@ import time
 from collections import defaultdict
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 from sqlalchemy import text, update
 
 from app.db import GALAXY_GATE_KEY, get_engine, get_sessionmaker
 from app.galaxy import try_start_install
+from app.jobs import build_job
 from app.models import GalaxyInstall, InventoryGroup, Run
 from app.queue import claim_next
+from app.reaper import reap_once
 from tests.conftest import internal_client
 from tests.test_runs import (
     SUCCESS_PLAYBOOK,
@@ -143,7 +146,10 @@ def test_nothing_is_claimed_while_a_galaxy_install_waits_or_runs(client) -> None
     assert _claim() is not None
 
 
-def test_a_run_whose_group_was_deleted_is_failed_not_run_on_the_whole_inventory(client) -> None:
+def test_a_legacy_run_whose_group_was_deleted_is_failed_not_run_on_the_whole_inventory(
+    client,
+) -> None:
+    """A run queued before inventories were pinned (4G) still renders the live inventory."""
     _login(client)
     playbook_id = _create_playbook(client, SUCCESS_PLAYBOOK)
     inventory_id, _ = _create_inventory_with_host(client, "/dev/null")
@@ -158,6 +164,7 @@ def test_a_run_whose_group_was_deleted_is_failed_not_run_on_the_whole_inventory(
     fine = client.post("/api/runs", json=body).json()["id"]
 
     db = get_sessionmaker()()
+    db.execute(update(Run).where(Run.id == doomed).values(inventory_static=None))
     db.delete(db.get(InventoryGroup, group["id"]))
     db.commit()
     db.close()
@@ -170,6 +177,42 @@ def test_a_run_whose_group_was_deleted_is_failed_not_run_on_the_whole_inventory(
     assert run["finished_at"] is not None
     with client.websocket_connect(f"/api/runs/{doomed}/ws") as ws:
         assert "its inventory group 'web' was deleted" in ws.receive_text()
+
+
+def test_a_pinned_run_targets_its_group_as_it_was_when_triggered(client) -> None:
+    _login(client)
+    playbook_id = _create_playbook(client, SUCCESS_PLAYBOOK)
+    inventory_id, host_id = _create_inventory_with_host(client, "/dev/null")
+    group = client.post(f"/api/inventories/{inventory_id}/groups", json={"name": "web"}).json()
+    client.put(
+        f"/api/inventories/{inventory_id}/hosts/{host_id}", json={"group_ids": [group["id"]]}
+    )
+    other = client.post(
+        f"/api/inventories/{inventory_id}/hosts", json={"hostname": "other", "vars": {}}
+    )
+    assert other.status_code == 201
+    run_id = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook_id,
+            "inventory_id": inventory_id,
+            "group_name": "web",
+            "credential_id": _create_credential(client),
+        },
+    ).json()["id"]
+
+    db = get_sessionmaker()()
+    db.delete(db.get(InventoryGroup, group["id"]))  # edits while it waits change nothing
+    db.commit()
+    run = db.get(Run, run_id)
+    assert run.group_name == "web" and run.group_id is None
+    job = build_job(db, run)
+    db.close()
+    reap_once()  # the reaper fails queued runs that lost what they need; not this one
+    assert _claim().run_id == run_id  # nor does the claim
+    inventory = yaml.safe_load(job["inventory"])
+    assert list(inventory["all"]["hosts"]) == ["test-host"]  # not "other"
+    assert inventory["all"]["children"] == {"web": {"hosts": {"test-host": None}}}
 
 
 def test_a_queued_run_executes_the_playbook_as_it_was_when_triggered(client) -> None:
