@@ -6,7 +6,7 @@
 
 ## Starting a run
 
-**Runs → New Run** (operators and admins). Pick:
+**Runs → New run** (operators and admins). Pick:
 
 - **Playbook**: synced playbooks show their git source; playbooks removed upstream aren't offered.
 - **Inventory**, and a **Target**: all hosts, or one group (groups from dynamic sources are marked).
@@ -28,14 +28,15 @@ project. Optionally:
 - **Run as admin (become root)** (admins only): escalates privileges on the hosts, after you tick the
   confirmation.
 
-**Trigger Run** queues it and opens its page. **Save as template** (for people who may edit content)
+**Start run** queues it and opens its page. **Save as template** (for people who may edit content)
 saves the form as a [run template](#run-templates) instead.
 
 ## Following a run
 
 The run's page shows the playbook, inventory and target, who started it and with which credential and
-options, the git commit for synced playbooks, and the output **live** as Ansible works. If the connection
-drops, it reconnects and continues where it left off. When the run ends: its status, how many hosts were
+options, the git commit for synced playbooks, and the output **live** as Ansible works, coloured as on the
+command line (ok green, changed yellow, failed red, skipped blue; the recap per host by its outcome). If the
+connection drops, it reconnects and continues where it left off. When the run ends: its status, how many hosts were
 ok, changed, failed or unreachable, how long it waited and ran, and Ansible's exit code.
 
 Statuses: **queued**, **running**, **success**, **failed**, **cancelled** and **timed out**. A note under
@@ -68,7 +69,7 @@ Two buttons on a run's page, for anyone who may start runs in its project:
   root): the same playbook, inventory and target, credential, vault password, options and extra vars. The
   playbook and inventory are used as they are **now** (a synced playbook at its source's current commit),
   not as they were. Running as root still needs the permission to.
-- **Edit and run** opens **New Run** with the run's settings filled in, to change something first.
+- **Edit and run** opens **New run** with the run's settings filled in, to change something first.
   Extra vars whose names look secret show `[REDACTED]` there: type their values again before triggering
   (**Run again** keeps them without showing them).
 
@@ -80,12 +81,12 @@ lets you pick a replacement.
 A template is a saved run: playbook, inventory and target, credential, vault password, options and extra
 vars, under a name. **Templates** lists the project's templates; everyone in the project can see them.
 
-- **Save one** from **New Run** with **Save as template** (operators and admins). Only people who may run
+- **Save one** from **New run** with **Save as template** (operators and admins). Only people who may run
   as root can save a template that does.
 - **Run** starts it, after showing what it runs. The **limit** and **check mode** can be changed for that
   run only, for example to try it on one host first. Running a template that runs as root needs the
   permission to.
-- **Edit** opens it in the **New Run** form: change what you need, then **Update template** (or trigger a
+- **Edit** opens it in the **New run** form: change what you need, then **Update template** (or trigger a
   run from the changed form). Extra vars that show `[REDACTED]` keep their stored value if you leave them as
   they are.
 - **Delete** (after a confirmation) removes the template; runs started from it are kept.
@@ -96,6 +97,7 @@ can't run until it's edited. A CI/CD key can run a project's templates too; see 
 
 ## History
 
-**Runs** lists the project's runs, newest first, with their target, who started them, the commit, the
-options used and the status. Runs keep the names of the playbook, inventory and credential they used, so
+**Runs** lists the project's runs, newest first, with their number, target, who started them and when,
+how long they took, how many hosts they reached (and how many failed), the commit, the options used and
+the status. Runs keep the names of the playbook, inventory and credential they used, so
 the history stays readable after those are deleted.

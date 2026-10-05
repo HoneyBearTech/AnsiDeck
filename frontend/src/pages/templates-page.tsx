@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Link, useNavigate } from "react-router-dom";
 
+import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -98,7 +99,7 @@ function TemplateCard({
 
   return (
     <Card>
-      <CardContent className="flex flex-wrap items-start justify-between gap-4 pt-6">
+      <CardContent className="flex flex-wrap items-start justify-between gap-4 p-4">
         <div className="flex min-w-0 flex-col gap-1">
           <h2 className="flex items-center gap-2 font-medium">
             {template.name}
@@ -109,8 +110,16 @@ function TemplateCard({
             {template.playbook_name ?? "(deleted playbook)"} → {template.inventory_name ?? "(deleted inventory)"}
             {template.group_name ? ` / ${template.group_name}` : ""} · credential{" "}
             {template.credential_name ?? "(deleted)"}
-            {options.length > 0 && ` · ${options.join(" · ")}`}
           </p>
+          {options.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {options.map((option) => (
+                <Badge key={String(option)} variant="outline">
+                  {option}
+                </Badge>
+              ))}
+            </div>
+          )}
           {missing && (
             <p className="text-sm text-destructive">
               Can&apos;t run: {describeDeleted(template.missing)}.{canEdit ? " Edit it to pick another." : ""}
@@ -133,7 +142,7 @@ function TemplateCard({
                   Edit
                 </Link>
               </Button>
-              <Button size="sm" variant="outline" onClick={onDelete} aria-label={`Delete ${template.name}`}>
+              <Button size="sm" variant="destructive-outline" onClick={onDelete} aria-label={`Delete ${template.name}`}>
                 Delete
               </Button>
             </>
@@ -157,19 +166,17 @@ export function TemplatesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold">Run templates</h1>
-          <p className="text-sm text-muted-foreground">
-            Saved runs, started again in one step. Save one from the New Run form.
-          </p>
-        </div>
-        {can("runs:trigger") && (
-          <Button asChild>
-            <Link to="/runs/new">New Run</Link>
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title="Templates"
+        description="Saved runs, started again in one step. Save one from the New run form."
+        actions={
+          can("runs:trigger") && (
+            <Button asChild>
+              <Link to="/runs/new">New run</Link>
+            </Button>
+          )
+        }
+      />
 
       {deletion.error && <p className="text-sm text-destructive">{deletion.error}</p>}
 

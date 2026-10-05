@@ -1,3 +1,4 @@
+import type { BadgeProps } from "@/components/ui/badge";
 import type { Run } from "@/lib/api";
 
 // What the API puts in place of a value it won't show (secret-looking names; extra vars hidden from
@@ -25,4 +26,20 @@ export function hasMaskedValue(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(hasMaskedValue);
   if (value !== null && typeof value === "object") return Object.values(value).some(hasMaskedValue);
   return false;
+}
+
+export const STATUS_VARIANT: Record<Run["status"], BadgeProps["variant"]> = {
+  success: "ok",
+  failed: "failed",
+  running: "changed",
+  queued: "skipped",
+  cancelled: "skipped",
+  timed_out: "failed",
+};
+
+/** "4.2 s" or "3 min 12 s" between two timestamps, or null if either is missing. */
+export function formatDuration(from: string | null, to: string | null): string | null {
+  if (!from || !to) return null;
+  const s = (new Date(to).getTime() - new Date(from).getTime()) / 1000;
+  return s < 60 ? `${s.toFixed(1)} s` : `${Math.floor(s / 60)} min ${Math.floor(s % 60)} s`;
 }

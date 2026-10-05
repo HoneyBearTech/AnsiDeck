@@ -1,6 +1,9 @@
+import { ChevronRight } from "lucide-react";
 import * as React from "react";
 import { Link } from "react-router-dom";
 
+import { PageHeader } from "@/components/page-header";
+import { ProjectBadge } from "@/components/project-badge";
 import { GitSourcesPanel } from "@/components/git-sources-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,20 +35,23 @@ export function PlaybooksPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Playbooks</h1>
-        {canWrite && (
-          <Button asChild>
-            <Link to="/playbooks/new">New Playbook</Link>
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title="Playbooks"
+        description="What runs do: written here, imported from a file, or synced from git."
+        actions={
+          canWrite && (
+            <Button asChild>
+              <Link to="/playbooks/new">New playbook</Link>
+            </Button>
+          )
+        }
+      />
 
       {activeProject ? (
         <GitSourcesPanel projectId={activeProject.id} onSynced={refresh} />
       ) : (
         <p className="text-sm text-muted-foreground">
-          Pick a project in the switcher at the top to see and manage its git sources.
+          Git sources belong to a project: pick one in the project switcher to see and manage them.
         </p>
       )}
 
@@ -62,9 +68,13 @@ export function PlaybooksPage() {
           return (
             <Card key={playbook.id} className={missing ? "opacity-60" : undefined}>
               <CardContent className="flex items-center justify-between gap-4 p-4">
-                <Link to={`/playbooks/${playbook.id}`} className="flex min-w-0 flex-col gap-1">
+                <Link to={`/playbooks/${playbook.id}`} className="group flex min-w-0 flex-col gap-1">
                   <span className="flex flex-wrap items-center gap-2 font-medium">
-                    {playbook.name}
+                    <span className="flex items-center gap-1 break-all group-hover:text-primary">
+                      {playbook.name}
+                      <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground group-hover:text-primary" />
+                    </span>
+                    <ProjectBadge projectId={playbook.project_id} />
                     {synced && (
                       <Badge variant="outline" title={`Synced from ${playbook.source_name}`}>
                         git · {playbook.source_name}
@@ -77,14 +87,16 @@ export function PlaybooksPage() {
                     Updated {new Date(playbook.updated_at).toLocaleString()}
                   </span>
                 </Link>
-                <div className="flex gap-2">
+                <div className="flex shrink-0 gap-2">
                   {canRun && !missing && (
                     <Button asChild size="sm">
-                      <Link to="/runs/new">Run</Link>
+                      <Link to={`/runs/new?playbook=${playbook.id}`} aria-label={`Run ${playbook.name}`}>
+                        Run
+                      </Link>
                     </Button>
                   )}
                   {canWrite && (!synced || missing) && (
-                    <Button variant="outline" size="sm" onClick={() =>
+                    <Button variant="destructive-outline" size="sm" onClick={() =>
                         deletion.run(
                           `Delete the playbook "${playbook.name}"? This can't be undone; its run history stays.`,
                           () => api.deletePlaybook(playbook.id),

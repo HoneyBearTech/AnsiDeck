@@ -5,18 +5,11 @@ import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LiveLogViewer } from "@/components/live-log-viewer";
+import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/context/auth-context";
 import { api, ApiError, type Run } from "@/lib/api";
-import { deletedItems, describeDeleted } from "@/lib/runs";
+import { deletedItems, describeDeleted, formatDuration, STATUS_VARIANT } from "@/lib/runs";
 
-const STATUS_VARIANT: Record<Run["status"], BadgeProps["variant"]> = {
-  success: "ok",
-  failed: "failed",
-  running: "changed",
-  queued: "skipped",
-  cancelled: "skipped",
-  timed_out: "failed",
-};
 
 // From ansible's PLAY RECAP; zero counts are left out.
 const HOST_OUTCOMES: { key: keyof Run; label: string; variant: BadgeProps["variant"] }[] = [
@@ -37,15 +30,9 @@ function StatusNote({ run }: { run: Run }) {
   return <p className={bad ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>{note}</p>;
 }
 
-function seconds(from: string | null, to: string | null): string | null {
-  if (!from || !to) return null;
-  const s = (new Date(to).getTime() - new Date(from).getTime()) / 1000;
-  return s < 60 ? `${s.toFixed(1)} s` : `${Math.floor(s / 60)} min ${Math.floor(s % 60)} s`;
-}
-
 function RunSummary({ run }: { run: Run }) {
-  const waited = seconds(run.queued_at, run.started_at);
-  const ran = seconds(run.started_at, run.finished_at);
+  const waited = formatDuration(run.queued_at, run.started_at);
+  const ran = formatDuration(run.started_at, run.finished_at);
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
       {run.hosts_total !== null && (
@@ -200,15 +187,30 @@ export function RunDetailPage() {
   if (!run) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
   }
+  const live = run.status === "queued" || run.status === "running";
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold">
-            {run.playbook_name} → {run.inventory_name}
-            {run.group_name ? ` / ${run.group_name}` : ""}
-          </h1>
+      <PageHeader
+        back={{ to: "/runs", label: "Runs" }}
+        title={
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span>
+              <span className="mr-2 font-mono text-base text-muted-foreground">#{run.id}</span>
+              {run.playbook_name} <span className="whitespace-nowrap">→ {run.inventory_name}</span>
+              {run.group_name && <span className="whitespace-nowrap"> / {run.group_name}</span>}
+            </span>
+            <Badge variant={STATUS_VARIANT[run.status]}>{run.status.replace("_", " ")}</Badge>
+          </span>
+        }
+        actions={
+          <>
+            <RunAgain run={run} />
+            <CancelButton run={run} onCancelled={setRun} />
+          </>
+        }
+      />
+      <div className="-mt-4 flex flex-col gap-1">
           <p className="text-sm text-muted-foreground">
             Triggered by {run.triggered_by} · credential {run.credential_name}
             {run.vault_password_name && ` · vault: ${run.vault_password_name}`}
@@ -236,12 +238,6 @@ export function RunDetailPage() {
             </p>
           )}
           <StatusNote run={run} />
-        </div>
-        <div className="flex flex-wrap items-start justify-end gap-3">
-          <RunAgain run={run} />
-          <CancelButton run={run} onCancelled={setRun} />
-          <Badge variant={STATUS_VARIANT[run.status]}>{run.status.replace("_", " ")}</Badge>
-        </div>
       </div>
 
       <RunSummary run={run} />
@@ -264,11 +260,11 @@ export function RunDetailPage() {
 
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-          <CardTitle>Live output</CardTitle>
+          <CardTitle>{live ? "Live output" : "Output"}</CardTitle>
           <DownloadLog run={run} />
         </CardHeader>
         <CardContent>
-          <LiveLogViewer key={runId} runId={runId} />
+          <LiveLogViewer key={runId} runId={runId} follow={live} />
         </CardContent>
       </Card>
     </div>

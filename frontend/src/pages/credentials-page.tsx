@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -158,11 +159,11 @@ function CreateCredentialDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button>New Credential</Button>
+        <Button>New credential</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New Credential</DialogTitle>
+          <DialogTitle>New credential</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
@@ -278,10 +279,11 @@ export function CredentialsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Credentials</h1>
-        {canManage && <CreateCredentialDialog onCreated={refresh} store={store} />}
-      </div>
+      <PageHeader
+        title="Credentials"
+        description="SSH keys that runs connect with, and environment variables for inventory plugins. Stored values are never shown again."
+        actions={canManage && <CreateCredentialDialog onCreated={refresh} store={store} />}
+      />
 
       {deletion.error && <p className="text-sm text-destructive">{deletion.error}</p>}
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -313,7 +315,7 @@ export function CredentialsPage() {
                   {credential.store === "external" && (
                     <SecretCheckButton check={() => api.checkCredential(credential.id)} />
                   )}
-                  <Button variant="outline" size="sm" onClick={() =>
+                  <Button variant="destructive-outline" size="sm" onClick={() =>
                       deletion.run(
                         credential.store === "external"
                           ? `Delete the credential "${credential.name}"? AnsiDeck forgets the reference; the secret stays in ${store?.label ?? "the secret store"}.`

@@ -5,7 +5,7 @@ Operators can pick a project's credentials for runs; only project admins create 
 
 ## Credentials
 
-**Credentials → New Credential** stores one of two kinds:
+**Credentials → New credential** stores one of two kinds:
 
 - **SSH key**: the private key a run connects to its hosts with (and the deploy key a git source can
   use). Paste it, or upload the key file. Passphrase-protected keys aren't supported yet: use an
@@ -23,7 +23,7 @@ reason.
 ## Vault passwords
 
 Playbooks and extra variables can contain values encrypted with [Ansible
-Vault](https://docs.ansible.com/ansible/latest/vault_guide/index.html). **Vault → New Vault Password**
+Vault](https://docs.ansible.com/ansible/latest/vault_guide/index.html). **Vault → New vault password**
 stores the password that decrypts them; pick it when you start a run.
 
 The **Vault** page also has two tools, for anyone allowed to use them:

@@ -165,7 +165,7 @@ describe("checking a playbook", () => {
 
   it("checks a new playbook's text in the active project, once there is some", async () => {
     const { api, user, screen } = renderApp("/playbooks/new", { routes: { "POST /playbooks/lint": lintJob() } });
-    await screen.findByRole("heading", { name: "New Playbook" });
+    await screen.findByRole("heading", { name: "New playbook" });
     expect(screen.getByRole("button", { name: "Check" })).toBeDisabled();
     setEditorText(screen.getByRole("textbox", { name: "Content" }), CONTENT);
     await user.click(screen.getByRole("button", { name: "Check" }));
@@ -177,7 +177,7 @@ describe("checking a playbook", () => {
 describe("file picker", () => {
   it("is a button-styled, labelled file input that names the chosen file", async () => {
     const { user, screen } = renderApp("/playbooks/new");
-    await screen.findByRole("heading", { name: "New Playbook" });
+    await screen.findByRole("heading", { name: "New playbook" });
     expect(screen.getByText("No file chosen")).toBeInTheDocument();
     const input = screen.getByLabelText("Upload YAML file");
     expect(input).toHaveAttribute("type", "file");

@@ -30,8 +30,9 @@ describe("audit log", () => {
             : { items: [event(1)], total: 1 },
       },
     });
-    expect(await screen.findByText('admin → credential #3 "deploy-key" · 10.0.0.5 · project #1')).toBeInTheDocument();
-    expect(screen.getByText('{"kind":"ssh"}')).toBeInTheDocument();
+    expect(await screen.findByText('admin → credential #3 "deploy-key" · 10.0.0.5 · project Default')).toBeInTheDocument();
+    expect(screen.getByText("kind")).toBeInTheDocument();
+    expect(screen.getByText("ssh")).toBeInTheDocument();
     expect(screen.getByText("1 event · page 1 of 1")).toBeInTheDocument();
 
     await user.type(screen.getByLabelText("Action starts with"), "auth.");

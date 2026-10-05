@@ -9,11 +9,15 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        // Disabled, the primary button turns neutral instead of a dim cyan, so it reads as unavailable.
+        default:
+          "bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100",
         secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         outline: "border border-input bg-transparent hover:bg-secondary/50",
         ghost: "hover:bg-secondary/50",
         destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+        // For Delete and other irreversible actions sitting next to ordinary ones.
+        "destructive-outline": "border border-destructive/50 bg-transparent text-destructive hover:bg-destructive/10",
       },
       size: {
         default: "h-10 px-4 py-2",

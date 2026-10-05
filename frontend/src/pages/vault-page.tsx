@@ -6,6 +6,7 @@ import {
   SecretSourcePicker,
   type SourceMode,
 } from "@/components/secret-source";
+import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -70,11 +71,11 @@ function CreateVaultPasswordDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button>New Vault Password</Button>
+        <Button>New vault password</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New Vault Password</DialogTitle>
+          <DialogTitle>New vault password</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
@@ -312,7 +313,7 @@ function DecryptCard({ vaultPasswords }: { vaultPasswords: VaultPassword[] }) {
             onChange={(e) => setCiphertext(e.target.value)}
             className="min-h-28 font-mono"
             spellCheck={false}
-            placeholder="Paste a $ANSIBLE_VAULT;… envelope, or a full `name: !vault |` block"
+            placeholder="Paste a $ANSIBLE_VAULT;… envelope, or a whole name: !vault | block"
           />
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
@@ -356,10 +357,11 @@ export function VaultPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Vault</h1>
-        {canManage && <CreateVaultPasswordDialog onCreated={refresh} store={store} />}
-      </div>
+      <PageHeader
+        title="Vault"
+        description="Vault passwords that runs decrypt with, and encrypting or decrypting values with them."
+        actions={canManage && <CreateVaultPasswordDialog onCreated={refresh} store={store} />}
+      />
 
       {deletion.error && <p className="text-sm text-destructive">{deletion.error}</p>}
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -385,7 +387,7 @@ export function VaultPage() {
                   {vaultPassword.store === "external" && (
                     <SecretCheckButton check={() => api.checkVaultPassword(vaultPassword.id)} />
                   )}
-                  <Button variant="outline" size="sm" onClick={() =>
+                  <Button variant="destructive-outline" size="sm" onClick={() =>
                       deletion.run(
                         vaultPassword.store === "external"
                           ? `Delete the vault password "${vaultPassword.name}"? AnsiDeck forgets the reference; the password stays in ${store?.label ?? "the secret store"}.`

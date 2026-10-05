@@ -2,7 +2,7 @@ import { within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { reply } from "@/test/fake-api";
-import { credential, gitSource, playbook, viewerUser } from "@/test/fixtures";
+import { adminUser, credential, gitSource, playbook, project, viewerUser } from "@/test/fixtures";
 import { choose, renderApp } from "@/test/render";
 
 const SOURCES = "GET /projects/:id/git-sources";
@@ -24,7 +24,7 @@ describe("playbooks list", () => {
     expect(await screen.findByText("git · infra @ 01234567")).toBeInTheDocument();
     expect(screen.getByText("removed upstream")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(2);
-    expect(screen.getAllByRole("link", { name: "Run" })).toHaveLength(2);
+    expect(screen.getAllByRole("link", { name: /^Run / })).toHaveLength(2);
 
     api.set({ "GET /playbooks": [] });
     await user.click(screen.getAllByRole("button", { name: "Delete" })[0]!);
@@ -34,7 +34,7 @@ describe("playbooks list", () => {
 
   it("asks a global admin in all-projects mode to pick a project for git sources", async () => {
     const { screen } = renderApp("/playbooks", { activeProject: null, routes: { "GET /playbooks": [] } });
-    expect(await screen.findByText(/Pick a project in the switcher/)).toBeInTheDocument();
+    expect(await screen.findByText(/pick one in the project switcher/)).toBeInTheDocument();
   });
 
   it("shows viewers neither write actions nor an empty git panel", async () => {
@@ -43,7 +43,7 @@ describe("playbooks list", () => {
       routes: { [SOURCES]: [], "GET /playbooks": [playbook()] },
     });
     await screen.findByText("site.yml");
-    expect(screen.queryByRole("link", { name: "New Playbook" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "New playbook" })).not.toBeInTheDocument();
     expect(screen.queryByText("Git sources")).not.toBeInTheDocument();
   });
 });
@@ -53,11 +53,11 @@ describe("playbook editor", () => {
     const { api, user, screen } = renderApp("/playbooks/new", {
       routes: { "POST /playbooks": playbook({ id: 5, name: "web.yml" }), "GET /playbooks/:id": playbook({ id: 5, name: "web.yml" }) },
     });
-    await screen.findByRole("heading", { name: "New Playbook" });
+    await screen.findByRole("heading", { name: "New playbook" });
     await user.upload(screen.getByLabelText("Upload YAML file"), new File(["- hosts: web\n"], "web.yml"));
     expect(screen.getByLabelText("Name")).toHaveValue("web.yml");
     await user.click(screen.getByRole("button", { name: "Save" }));
-    await screen.findByRole("heading", { name: "Edit Playbook" });
+    await screen.findByRole("heading", { name: "Edit playbook" });
     expect(api.requests("POST /playbooks")[0]?.body).toMatchObject({ name: "web.yml", content: "- hosts: web\n" });
   });
 
@@ -257,5 +257,17 @@ describe("git sources", () => {
     await user.click(screen.getByRole("button", { name: "Delete" }));
     await screen.findByRole("button", { name: "Add git source" });
     expect(api.requests("DELETE /projects/1/git-sources/1")).toHaveLength(1);
+  });
+});
+
+describe("playbooks in all projects", () => {
+  it("names each playbook's project and links Run to it", async () => {
+    const { screen } = renderApp("/playbooks", {
+      activeProject: null,
+      user: adminUser({ projects: [project(), project({ id: 2, name: "Staging" })] }),
+      routes: { "GET /playbooks": [playbook(), playbook({ id: 2, name: "db.yml", project_id: 2 })] },
+    });
+    expect(await screen.findByText("Staging")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Run db.yml" })).toHaveAttribute("href", "/runs/new?playbook=2");
   });
 });

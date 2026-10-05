@@ -47,7 +47,7 @@ describe("notifications", () => {
     const { api, user, screen } = renderApp("/notifications", {
       routes: { "GET /notifications/catalog": CATALOG, [GLOBAL]: [], [PROJECT]: [], "POST /notifications/channels": channel({ kind: "webhook" }) },
     });
-    await screen.findAllByText("No channels yet.");
+    await screen.findAllByText(/^No channels yet/);
     await user.click(section("Global channels").getByRole("button", { name: "New channel" }));
     const dialog = within(await screen.findByRole("dialog"));
     expect(dialog.getByText(/A global channel/)).toBeInTheDocument();
@@ -73,7 +73,7 @@ describe("notifications", () => {
     const { api, user, screen } = renderApp("/notifications", {
       routes: { "GET /notifications/catalog": CATALOG, [GLOBAL]: [], [PROJECT]: [], "POST /projects/:id/notifications/channels": channel() },
     });
-    await screen.findAllByText("No channels yet.");
+    await screen.findAllByText(/^No channels yet/);
     const team = section("Default channels");
     await user.click(team.getByRole("button", { name: "New channel" }));
     let dialog = within(await screen.findByRole("dialog"));
@@ -82,7 +82,7 @@ describe("notifications", () => {
     await choose(user, dialog.getByLabelText("Send to"), "Email");
     await user.type(dialog.getByLabelText("Recipients (one per line)"), "a@example.com\nb@example.com, ");
     await user.click(dialog.getByRole("button", { name: "Save" }));
-    await screen.findAllByText("No channels yet.");
+    await screen.findAllByText(/^No channels yet/);
     expect(api.requests("POST /projects/1/notifications/channels")[0]?.body).toEqual({
       name: "mail",
       kind: "email",
@@ -97,7 +97,7 @@ describe("notifications", () => {
     await user.type(dialog.getByLabelText("Application API token"), " tok ");
     await user.type(dialog.getByLabelText("User or group key"), " usr ");
     await user.click(dialog.getByRole("button", { name: "Save" }));
-    await screen.findAllByText("No channels yet.");
+    await screen.findAllByText(/^No channels yet/);
     expect(api.requests("POST /projects/1/notifications/channels")[1]?.body).toMatchObject({ kind: "pushover", token: "tok", user_key: "usr" });
   });
 

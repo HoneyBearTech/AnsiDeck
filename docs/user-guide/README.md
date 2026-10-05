@@ -40,7 +40,12 @@ a viewer in another. Global admins have every permission in every project.
 
 ## The header
 
-The header's links lead to each page; pages you can't use are hidden or say "Not permitted". The project
-switcher picks the project you work in: lists show its content, and what you create goes into it. Global
-admins can also pick **All projects**. Click your user name for your **Account** (password and two-factor
-login), and **Log out** to end the session in this browser.
+The header's links lead to each page; pages you can't use are hidden or say "Not permitted". Projects,
+Users, the audit log, Workers and Notifications are under **Admin** for those who can use them. On a
+tablet or phone, the **menu** button opens all of these. The project switcher picks the project you work
+in: lists show its content, and what you create goes into it. Global admins can also pick **All
+projects**, where lists name each item's project. Your user name opens your **Account** (password and
+two-factor login) and **Log out**, which ends the session in this browser.
+
+The **Dashboard** shows what is running now, recent failures and the latest runs, with shortcuts to
+**New run** and **Templates**.

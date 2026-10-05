@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -400,7 +401,7 @@ function ChannelCard({
               Edit
             </Button>
             <Button
-              variant="outline"
+              variant="destructive-outline"
               size="sm"
               disabled={busy}
               onClick={() => {
@@ -484,16 +485,22 @@ function ChannelSection({
 
   return (
     <section className="flex flex-col gap-3">
-      <div className="flex items-end justify-between gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
         <div>
-          <h2 className="text-lg font-semibold">{title}</h2>
+          <h2 className="font-medium">{title}</h2>
           <p className="text-sm text-muted-foreground">{description}</p>
         </div>
-        <Button onClick={() => setCreating(true)}>New channel</Button>
+        <Button className="w-fit shrink-0" onClick={() => setCreating(true)}>
+          New channel
+        </Button>
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
       {channels === null && !error && <p className="text-sm text-muted-foreground">Loading…</p>}
-      {channels?.length === 0 && <p className="text-sm text-muted-foreground">No channels yet.</p>}
+      {channels?.length === 0 && (
+        <p className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
+          No channels yet: add one with New channel.
+        </p>
+      )}
       {channels?.map((channel) => (
         <ChannelCard
           key={channel.id}
@@ -532,13 +539,10 @@ export function NotificationsPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <div>
-        <h1 className="text-xl font-semibold">Notifications</h1>
-        <p className="text-sm text-muted-foreground">
-          Send events to Discord, Slack, Microsoft Teams, a webhook, email, Pushbullet or Pushover. Messages
-          carry run details (names, status, failed task and host names) but never secrets or task output.
-        </p>
-      </div>
+      <PageHeader
+        title="Notifications"
+        description="Send events to Discord, Slack, Microsoft Teams, a webhook, email, Pushbullet or Pushover. Messages carry run details (names, status, failed task and host names) but never secrets or task output."
+      />
       {error && <p className="text-sm text-destructive">{error}</p>}
       {catalog && global && (
         <ChannelSection

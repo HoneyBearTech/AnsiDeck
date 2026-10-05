@@ -40,7 +40,7 @@ describe("inventories list", () => {
       },
     });
     await screen.findByText("No inventories yet.");
-    await user.click(screen.getByRole("button", { name: "New Inventory" }));
+    await user.click(screen.getByRole("button", { name: "New inventory" }));
     const dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Name"), "lab");
     await user.type(dialog.getByLabelText("Description"), "The lab");
@@ -58,7 +58,7 @@ describe("inventories list", () => {
     const { user, screen } = renderApp("/inventories", {
       routes: { "GET /inventories": [], "POST /inventories": reply(409, { detail: "Name taken" }) },
     });
-    await user.click(await screen.findByRole("button", { name: "New Inventory" }));
+    await user.click(await screen.findByRole("button", { name: "New inventory" }));
     const dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Name"), "lab");
     await user.click(dialog.getByRole("button", { name: "Create" }));
@@ -81,14 +81,14 @@ describe("inventory detail", () => {
     expect(await screen.findByRole("heading", { name: "lab" })).toBeInTheDocument();
     expect(screen.getByText("web1.example")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Add Group" }));
+    await user.click(screen.getByRole("button", { name: "Add group" }));
     let dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Name"), "db");
     await user.click(dialog.getByRole("button", { name: "Create" }));
     await screen.findByText("web1.example");
     expect(api.requests("POST /inventories/1/groups")[0]?.body).toEqual({ name: "db" });
 
-    await user.click(screen.getByRole("button", { name: "Add Host" }));
+    await user.click(screen.getByRole("button", { name: "Add host" }));
     dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Hostname"), "db1");
     await user.clear(dialog.getByLabelText("Vars (JSON)"));
@@ -99,7 +99,7 @@ describe("inventory detail", () => {
     await user.clear(dialog.getByLabelText("Vars (JSON)"));
     await user.type(dialog.getByLabelText("Vars (JSON)"), "{{}");
     await user.click(dialog.getByRole("button", { name: "Save" }));
-    await screen.findByRole("button", { name: "Add Host" });
+    await screen.findByRole("button", { name: "Add host" });
     expect(api.requests("POST /inventories/1/hosts")[0]?.body).toEqual({ hostname: "db1", vars: {}, group_ids: [1] });
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
@@ -107,7 +107,7 @@ describe("inventory detail", () => {
     expect(dialog.getByLabelText("Hostname")).toHaveValue("web1.example");
     await user.click(dialog.getByRole("checkbox", { name: "web" }));
     await user.click(dialog.getByRole("button", { name: "Save" }));
-    await screen.findByRole("button", { name: "Add Host" });
+    await screen.findByRole("button", { name: "Add host" });
     expect(api.requests("PUT /inventories/1/hosts/1")[0]?.body).toEqual({
       hostname: "web1.example",
       vars: { ansible_user: "deploy" },
@@ -131,14 +131,14 @@ describe("inventory detail", () => {
     });
     await screen.findByText("No hosts yet.");
     expect(screen.getByText("No groups yet.")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Add Group" }));
+    await user.click(screen.getByRole("button", { name: "Add group" }));
     let dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Name"), "a b");
     await user.click(dialog.getByRole("button", { name: "Create" }));
     expect(await dialog.findByText("Group names use letters")).toBeInTheDocument();
     await user.keyboard("{Escape}");
 
-    await user.click(screen.getByRole("button", { name: "Add Host" }));
+    await user.click(screen.getByRole("button", { name: "Add host" }));
     dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Hostname"), "db:5432");
     await user.click(dialog.getByRole("button", { name: "Save" }));
@@ -148,7 +148,7 @@ describe("inventory detail", () => {
   it("is read-only for viewers, without an empty sources panel", async () => {
     const { screen } = renderApp("/inventories/1", { user: viewerUser(), routes: detail() });
     await screen.findByText("web1.example");
-    expect(screen.queryByRole("button", { name: "Add Host" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add host" })).not.toBeInTheDocument();
     expect(screen.queryByText("Dynamic sources")).not.toBeInTheDocument();
   });
 });
@@ -245,7 +245,8 @@ describe("dynamic inventory sources", () => {
     expect(await screen.findByText("credential: netbox-token")).toBeInTheDocument();
     expect(api.requests("POST /inventories/1/sources")[0]?.body).toMatchObject({ name: "gen", credential_id: 2, enabled: true });
 
-    await user.click(screen.getAllByRole("button", { name: "Edit" })[0]!); // the source's, above the hosts
+    const edits = screen.getAllByRole("button", { name: "Edit" });
+    await user.click(edits[edits.length - 1]!); // the source's: sources come after the hosts
     dialog = within(await screen.findByRole("dialog"));
     expect(dialog.getByLabelText("Name")).toHaveValue("gen");
     await user.click(dialog.getByRole("switch", { name: "Enabled" }));
@@ -259,7 +260,8 @@ describe("dynamic inventory sources", () => {
     expect(api.requests("PATCH /inventories/1/sources/1").at(-1)?.body).toEqual({ enabled: false });
 
     api.set({ "GET /inventories/:id/sources": [] });
-    await user.click(screen.getAllByRole("button", { name: "Delete" })[0]!);
+    const deletes = screen.getAllByRole("button", { name: "Delete" });
+    await user.click(deletes[deletes.length - 1]!); // the source's, the last on the page
     await screen.findByText(/No sources yet/);
     expect(api.requests("DELETE /inventories/1/sources/1")).toHaveLength(1);
   });

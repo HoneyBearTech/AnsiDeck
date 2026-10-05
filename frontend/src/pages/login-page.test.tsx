@@ -1,7 +1,8 @@
+import { within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { reply } from "@/test/fake-api";
-import { adminUser, playbook, run } from "@/test/fixtures";
+import { adminUser, playbook, run, viewerUser } from "@/test/fixtures";
 import { renderApp } from "@/test/render";
 
 const DASHBOARD = {
@@ -9,6 +10,7 @@ const DASHBOARD = {
   "GET /inventories": [],
   "GET /credentials": [],
   "GET /runs": [run(), run({ id: 8 })],
+  "GET /run-templates": [],
 };
 
 describe("sign-in", () => {
@@ -52,7 +54,7 @@ describe("sign-in", () => {
     await user.type(screen.getByLabelText("Recovery code"), "abcde-12345");
     await user.click(screen.getByRole("button", { name: /verify|sign in|continue/i }));
 
-    await screen.findByText("ok");
+    await screen.findByRole("heading", { level: 1, name: "Dashboard" });
     expect(api.requests("POST /auth/login/mfa")[0]?.body).toEqual({ recovery_code: "abcde-12345" });
   });
 
@@ -70,14 +72,35 @@ describe("sign-in", () => {
 });
 
 describe("dashboard", () => {
-  it("shows backend health and counts", async () => {
-    const { screen } = renderApp("/", { routes: DASHBOARD });
-    expect(await screen.findByText("ok")).toBeInTheDocument();
-    expect(await screen.findByText("2")).toBeInTheDocument(); // runs
+  it("shows what's running, recent failures, the latest runs and linked counts", async () => {
+    const { api, screen } = renderApp("/", {
+      routes: {
+        ...DASHBOARD,
+        "GET /runs": ({ query }: { query: URLSearchParams }) => {
+          const status = query.getAll("status");
+          if (status.includes("running")) return [run({ id: 10, status: "running", finished_at: null })];
+          if (status.includes("failed")) return [run({ id: 9, status: "failed" })];
+          return [run(), run({ id: 8 })];
+        },
+      },
+    });
+    const running = await screen.findByRole("region", { name: "Running now" });
+    expect(await within(running).findByText("#10")).toBeInTheDocument();
+    expect(await within(screen.getByRole("region", { name: "Recent failures" })).findByText("#9")).toBeInTheDocument();
+    const latest = screen.getByRole("region", { name: "Latest runs" });
+    expect(await within(latest).findByText("#8")).toBeInTheDocument();
+    expect(within(latest).getByRole("link", { name: "All runs" })).toHaveAttribute("href", "/runs");
+    expect(screen.getByRole("link", { name: /Playbooks\s*1/ })).toHaveAttribute("href", "/playbooks");
+    expect(screen.getByRole("link", { name: "New run" })).toHaveAttribute("href", "/runs/new");
+    const requests = api.requests("GET /runs").map((r) => r.query.toString());
+    expect(requests).toEqual(expect.arrayContaining(["project_id=1&status=failed&status=timed_out&limit=5", "project_id=1&limit=8", "project_id=1&status=queued&status=running&limit=20"]));
   });
 
-  it("says when the backend is unreachable", async () => {
-    const { screen } = renderApp("/", { routes: { ...DASHBOARD, "GET /health": reply(502) } });
-    expect(await screen.findByText("Backend unreachable")).toBeInTheDocument();
+  it("says when nothing is running or failed, and when the API is unreachable", async () => {
+    const { screen } = renderApp("/", { user: viewerUser(), routes: { ...DASHBOARD, "GET /runs": [] } });
+    expect(await screen.findByText("Nothing is running or waiting to run.")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "New run" })).not.toBeInTheDocument();
+    const broken = renderApp("/", { routes: { ...DASHBOARD, "GET /runs": reply(502) } });
+    expect(await broken.screen.findByRole("alert")).toHaveTextContent("couldn't be reached");
   });
 });

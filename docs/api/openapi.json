@@ -3714,6 +3714,18 @@
         "title": "RunOut",
         "type": "object"
       },
+      "RunStatus": {
+        "enum": [
+          "queued",
+          "running",
+          "success",
+          "failed",
+          "cancelled",
+          "timed_out"
+        ],
+        "title": "RunStatus",
+        "type": "string"
+      },
       "RunTemplateIn": {
         "description": "A template's whole definition (create and update alike). The playbook fixes the\ntemplate's project; everything else must live in it.",
         "properties": {
@@ -12894,6 +12906,7 @@
     },
     "/api/runs": {
       "get": {
+        "description": "Newest first; `status` (repeatable) keeps only runs in those states, `limit` the newest N.",
         "operationId": "list_runs_api_runs_get",
         "parameters": [
           {
@@ -12910,6 +12923,43 @@
                 }
               ],
               "title": "Project Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/RunStatus"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 500,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
             }
           },
           {
