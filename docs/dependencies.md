@@ -76,10 +76,12 @@ AnsiDeck's own code is MIT. Dependencies must use one of these licenses (SPDX id
   `Unlicense`, `CC0-1.0`, `BlueOak-1.0.0`, `PSF-2.0`, `Python-2.0`;
 - weak copyleft: `MPL-2.0`, `LGPL-2.1-only`, `LGPL-2.1-or-later`, `LGPL-3.0-only`, `LGPL-3.0-or-later`;
 - fonts: `OFL-1.1`;
-- `GPL-3.0-only` and `GPL-3.0-or-later`, **for Ansible and its collections only**: AnsiDeck exists to run
-  Ansible, and the backend image ships it under its own license.
+- `GPL-3.0-only` and `GPL-3.0-or-later`, **for Ansible, its collections, and the Ansible project's own
+  tools AnsiDeck runs (`ansible-lint` and its dependency `yamllint`) only**: AnsiDeck exists to run
+  Ansible, and the backend image ships them under their own licenses and runs the tools as separate
+  processes.
 
-Any other license, a missing license, or a new GPL dependency other than Ansible is a violation: the
+Any other license, a missing license, or a new GPL dependency other than those is a violation: the
 dependency review check fails, and the dependency isn't added until the maintainer has decided, in the
 pull request, to replace it or to extend this list (with the reason).
 

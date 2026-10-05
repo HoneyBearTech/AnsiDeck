@@ -9,6 +9,9 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- The backend image now includes `ansible-lint` and `yamllint` (Ansible-project tools, GPL-3.0, allowed
+  by the dependency policy alongside Ansible), the groundwork for checking playbooks in the editor.
+
 - **Run templates**: save a run's playbook, inventory and target, credential, vault password, options and
   extra vars under a name, and start it again in one step from the new Templates page, with the limit and
   check mode changeable per run. Operators and admins manage them (saving one that runs as root needs that

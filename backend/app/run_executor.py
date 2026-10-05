@@ -290,6 +290,29 @@ def inventory_in_worker(
     return outcome.get("rc"), "".join(chunks), outcome.get("stderr", "")
 
 
+def lint_in_worker(
+    job: dict,
+    env: dict[str, str],
+    handle: ExecutionHandle | None = None,
+    identity: RunIdentity | None = None,
+    stdin_tail: bytes | None = None,
+) -> dict | None:
+    """A playbook check in the run process (app.run_worker, mode "lint"), as `identity` when
+    given; `stdin_tail` is the repository of a synced playbook. Returns the "lint_result"
+    message, or None if the process died without one. RunRefused if it couldn't be set up."""
+    outcome: dict = {}
+
+    def on_message(message: dict) -> None:
+        if message["type"] == "lint_result":
+            outcome.update(message)
+
+    run_in_worker(
+        {**job, "mode": "lint"}, env, lambda _event: None, handle, identity,
+        stdin_tail=stdin_tail, on_message=on_message,
+    )  # fmt: skip
+    return outcome or None
+
+
 class RunRefused(Exception):
     """The run process refused to start the run (its message is safe to show)."""
 

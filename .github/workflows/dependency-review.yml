@@ -2,7 +2,8 @@ name: Dependency review
 
 # Every pull request: block dependencies it adds or changes that have a known vulnerability of
 # moderate or higher severity, or a license outside the allowlist (docs/dependencies.md).
-# GPL is allowed for Ansible only.
+# GPL is allowed for Ansible and the Ansible project's own tools AnsiDeck runs (ansible-lint,
+# yamllint) only.
 
 on: pull_request
 
@@ -24,4 +25,5 @@ jobs:
             MIT, MIT-0, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, Zlib, Unlicense, CC0-1.0,
             BlueOak-1.0.0, PSF-2.0, Python-2.0, MPL-2.0, LGPL-2.1-only, LGPL-2.1-or-later,
             LGPL-3.0-only, LGPL-3.0-or-later, OFL-1.1
-          allow-dependencies-licenses: pkg:pypi/ansible-core, pkg:pypi/ansible
+          allow-dependencies-licenses: >-
+            pkg:pypi/ansible-core, pkg:pypi/ansible, pkg:pypi/ansible-lint, pkg:pypi/yamllint
