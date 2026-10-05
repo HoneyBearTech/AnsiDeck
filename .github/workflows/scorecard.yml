@@ -6,7 +6,9 @@ on:
   schedule:
     - cron: "41 2 * * 6" # weekly, Saturday 02:41 UTC
 
-permissions: read-all
+# Read-only at the top; the job asks for exactly what it needs.
+permissions:
+  contents: read
 
 jobs:
   analysis:

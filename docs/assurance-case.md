@@ -54,6 +54,27 @@ vulnerabilities in Ansible, its plugins or the managed hosts; deployments expose
 | B7 | API → secret store | Project-scoped secret reads | Paths built from the credential's project, never from the request; token or AppRole secret read from a file; optional single-use child token limited to one project (`app/secret_store.py`); TLS verified (custom CA supported). |
 | B8 | Prometheus / Grafana → API metrics and analytics views | Counts and curated fields | Separate port with bearer token, throttled and audited (`app/metrics_api.py`); a read-only database role limited to the `analytics` views (`app/analytics.py`). |
 
+### Attack surface
+
+What an attacker can reach, from where, and what protects it. Each entry is detailed in
+[interfaces.md](interfaces.md).
+
+| Entry point | Reachable by | Main protections | Critical code paths |
+| --- | --- | --- | --- |
+| Web UI and HTTP API (port 8080 → 8000) | anyone who can reach your proxy | authentication on every route, per-project authorization, Origin check, throttling, CSP, input schemas | `app/dependencies.py`, `app/permissions.py`, `app/scoping.py`, `app/routers/` |
+| Run output WebSocket | signed-in users and API keys | the same authentication and read permission, Origin check | `app/routers/runs.py` |
+| Worker API (port 8001) | anything on the workers' network | `WORKER_TOKEN` (constant-time), per-claim tokens, size limits, not published | `app/internal_api.py` |
+| Metrics (port 8002) | Prometheus | bearer token, throttled and audited, counts only, not published | `app/metrics_api.py` |
+| Git repositories | whoever can push to a synced repository | SSRF guard, hardened git, size limits, data-only tar unpacking by the run user | `app/git_sync.py`, `app/run_worker.py` |
+| Inventory source responses | whoever controls NetBox, a cloud account, or the plugin's API | runs only in isolated workers, bounded parsing, name checks, `!unsafe` rendering | `app/inventory_sources.py`, `app/inventory_render.py` |
+| Playbooks, roles, collections | operators and Galaxy publishers | per-slot Linux users, sweep after each run, no keys or database on workers | `app/run_isolation.py`, `app/worker/` |
+| Notification destinations | project admins (choosing URLs) | SSRF guard, no redirects, TLS verification | `app/netguard.py`, `app/notifications/` |
+| Secret store | whoever controls the store or its network | per-project paths built server-side, TLS, short-lived child tokens | `app/secret_store.py` |
+| The release pipeline | the maintainer, GitHub Actions | protected `main`, pinned actions, Trivy gate, keyless signing | `.github/workflows/docker-publish.yml` |
+
+The threats, boundaries and countermeasures in this document are reviewed whenever a feature adds an
+entry point or changes one of these paths (the pull request says so), and at each release.
+
 ## 3. Secure design principles
 
 The principles below are Saltzer and Schroeder's, plus the additional ones the OpenSSF badge lists.

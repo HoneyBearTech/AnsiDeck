@@ -12,8 +12,9 @@ on:
   workflow_dispatch:
     inputs:
       seconds:
-        description: "Fuzzing time per target, in seconds"
-        default: "600"
+        description: "Fuzzing time per target, in seconds (1 to 3600)"
+        type: number
+        default: 600
 
 permissions:
   contents: read
@@ -56,6 +57,11 @@ jobs:
           TARGET: ${{ matrix.target }}
           SECONDS_PER_TARGET: ${{ inputs.seconds || (github.event_name == 'pull_request' && '60') || '600' }}
         run: |
+          # A manual run's input: a whole number of seconds within bounds, nothing else.
+          if ! [[ "$SECONDS_PER_TARGET" =~ ^[0-9]+$ ]] || (( 10#$SECONDS_PER_TARGET < 1 || 10#$SECONDS_PER_TARGET > 3600 )); then
+            echo "seconds must be a whole number from 1 to 3600, got: $SECONDS_PER_TARGET"
+            exit 1
+          fi
           mkdir -p "$RUNNER_TEMP/crashes"
           uv run --frozen python fuzz/fuzz_properties.py "$TARGET" \
             -max_total_time="$SECONDS_PER_TARGET" -timeout=10 \

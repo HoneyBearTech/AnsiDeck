@@ -17,6 +17,18 @@ before you start.
 
 ## Development setup
 
+What you need:
+
+- **Docker** with Compose (Engine 26 or later) for the whole stack, the images and the database;
+- for working on the backend outside Docker: **Python 3.12** (3.12.11 or later) and
+  [**uv**](https://docs.astral.sh/uv/), which installs every Python dependency from `backend/uv.lock`,
+  including Ansible;
+- for the frontend: **Node.js 24** and npm, which install every package from `frontend/package-lock.json`;
+- `git` and `openssh-client`, which the backend calls for git sources and runs.
+
+Dependencies come only from these lockfiles, the digest-pinned base images and the images' OS packages;
+how they're chosen and kept up to date is in [docs/dependencies.md](docs/dependencies.md).
+
 The whole stack, with hot reload (backend on `:8000`, frontend on `:5173`):
 
 ```sh
@@ -39,6 +51,35 @@ npm install
 npm run dev
 ```
 
+### Building the release images
+
+The production images are the `runtime` targets of the two Dockerfiles. They also copy the repository's
+LICENSE, through a build context named `repo`:
+
+```sh
+docker build --target runtime --build-context repo=. -t ansideck-backend backend
+docker build --target runtime --build-context repo=. -t ansideck-frontend frontend
+```
+
+`npm run build` (in `frontend/`) produces the static UI in `frontend/dist/`; two builds from the same
+sources are byte-identical. The backend isn't compiled: the image installs it with `uv sync --frozen`.
+Releases are built by `.github/workflows/docker-publish.yml`, see [docs/verifying-releases.md](docs/verifying-releases.md).
+
+## When and how tests run
+
+| Suite | What it tests | Runs locally with | Runs in CI |
+| --- | --- | --- | --- |
+| Backend (pytest, `backend/tests/`) | API, permissions, queue and workers, real `ansible-playbook` / `ansible-inventory` runs, migrations, security properties | `uv run pytest` (needs the compose Postgres) | every pull request and push to `main` (required) |
+| Frontend (Vitest, `frontend/src/**/*.test.tsx`) | every page through the real routing and permission checks, against a fake API; accessibility (axe) | `npm test`, `npm run coverage` | every pull request and push to `main` (required) |
+| Coverage floors | backend ≥ 80% branches, frontend ≥ 80% statements | as above | with the suites (required) |
+| Fuzzing (Atheris, `backend/fuzz/`) | secret scrubbing, vault, inventory rendering | `uv run python fuzz/fuzz_properties.py <target>` | pull requests that touch `backend/` (1 min per target), weekly (10 min) |
+| Static analysis | CodeQL security queries; ruff (incl. bandit) and oxlint | `uv run ruff check .`, `npm run lint` | every pull request, `main` and weekly (required) |
+| Dependency checks | pip-audit, npm audit, dependency review | `uvx pip-audit …`, `npm audit` | every pull request (required) |
+| Image smoke tests | the runtime images start, refuse insecure settings, serve security headers, run end-to-end checks | see `.github/workflows/docker-build.yml` | every pull request and push to `main` (required) |
+
+A pull request can only merge when the required checks pass. A failing check's log in the pull request
+names the failing test with its assertion; a coverage failure prints the uncovered lines.
+
 ## Before you open a pull request
 
 Run the same checks CI runs and make sure they pass. The backend tests need Postgres:
@@ -48,6 +89,9 @@ Run the same checks CI runs and make sure they pass. The backend tests need Post
 Schema changes go through Alembic: edit `app/models.py`, then generate a migration with
 `uv run alembic revision --autogenerate -m "..."`, review it, and commit it with the model change. A test fails
 if the models and the migrations disagree.
+
+After changing a route or a request/response schema, regenerate the committed API description with
+`uv run python scripts/export_openapi.py` (in `backend/`); a test fails when `docs/api/` is out of date.
 
 ```sh
 # backend/
