@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import path from "node:path";
 
 import tailwindcss from "@tailwindcss/vite";
@@ -18,6 +19,19 @@ export default defineConfig(({ mode }) => {
       // Never inline assets as data: URIs: the Content-Security-Policy (frontend/docker/nginx.conf)
       // only allows fonts and images from the app's own origin.
       assetsInlineLimit: 0,
+    },
+    test: {
+      environment: "jsdom",
+      setupFiles: ["./src/test/setup.ts"],
+      include: ["src/**/*.test.{ts,tsx}"],
+      coverage: {
+        provider: "v8",
+        include: ["src/**/*.{ts,tsx}"],
+        // The entry point only mounts <App/>; the test helpers aren't the product.
+        exclude: ["src/main.tsx", "src/vite-env.d.ts", "src/test/**", "src/**/*.test.{ts,tsx}"],
+        reporter: ["text-summary", "text", "json-summary"],
+        thresholds: { statements: 80 },
+      },
     },
     server: {
       host: true,

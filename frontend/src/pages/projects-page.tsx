@@ -169,7 +169,7 @@ function MembersPanel({ project }: { project: ProjectSummary }) {
                   )
                 }
               >
-                <SelectTrigger className="h-8 w-32">
+                <SelectTrigger className="h-8 w-32" aria-label={`Role of ${member.username}`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -205,7 +205,7 @@ function MembersPanel({ project }: { project: ProjectSummary }) {
           />
         </div>
         <Select value={role} onValueChange={(v) => setRole(v as ProjectMember["role"])}>
-          <SelectTrigger className="w-32">
+          <SelectTrigger className="w-32" aria-label="Role for the new member">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

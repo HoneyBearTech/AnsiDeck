@@ -110,9 +110,9 @@ function CreateUserDialog({ onCreated }: { onCreated: () => void }) {
             </p>
           </div>
           <div className="flex flex-col gap-2">
-            <Label>Role</Label>
+            <Label htmlFor="new-user-role">Role</Label>
             <Select value={role} onValueChange={(v) => setRole(v as AdminUser["role"])}>
-              <SelectTrigger>
+              <SelectTrigger id="new-user-role">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -127,9 +127,9 @@ function CreateUserDialog({ onCreated }: { onCreated: () => void }) {
           </div>
           {role !== "admin" && (
             <div className="flex flex-col gap-2">
-              <Label>Add to project</Label>
+              <Label htmlFor="new-user-project">Add to project</Label>
               <Select value={projectId} onValueChange={setProjectId}>
-                <SelectTrigger>
+                <SelectTrigger id="new-user-project">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -335,7 +335,7 @@ export function UsersPage() {
                       )
                     }
                   >
-                    <SelectTrigger className="w-32">
+                    <SelectTrigger className="w-32" aria-label={`Role of ${u.username}`}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

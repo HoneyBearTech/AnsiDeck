@@ -4,3 +4,4 @@ dist/
 *.tsbuildinfo
 .git/
 .env
+coverage/

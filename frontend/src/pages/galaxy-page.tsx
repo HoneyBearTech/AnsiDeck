@@ -41,7 +41,7 @@ function waitingForRuns(count: number | null): string {
 function ItemList({ title, items }: { title: string; items: GalaxyItem[] }) {
   return (
     <div className="flex flex-col gap-2">
-      <Label>{title}</Label>
+      <h3 className="text-sm font-medium leading-none">{title}</h3>
       {items.length === 0 ? (
         <p className="text-sm text-muted-foreground">None installed.</p>
       ) : (

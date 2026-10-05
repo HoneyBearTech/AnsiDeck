@@ -320,7 +320,10 @@ export function InventorySourcesPanel({
   const [sources, setSources] = React.useState<InventorySource[]>([]);
   const [targets, setTargets] = React.useState<InventoryTargets | null>(null);
   const [snapshot, setSnapshot] = React.useState<InventorySnapshot | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
+  // Kept apart: a reload after a failed action must not wipe the action's error.
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [actionError, setActionError] = React.useState<string | null>(null);
+  const error = actionError ?? loadError;
   const [editing, setEditing] = React.useState<InventorySource | "new" | null>(null);
   const [version, setVersion] = React.useState(0);
   const wasBusy = React.useRef(false);
@@ -335,7 +338,7 @@ export function InventorySourcesPanel({
         setSources(list);
         setTargets(t);
         setSnapshot(s);
-        setError(null);
+        setLoadError(null);
         const now = busy(t.last_refresh);
         if (wasBusy.current && !now) {
           setVersion((v) => v + 1);
@@ -343,7 +346,7 @@ export function InventorySourcesPanel({
         }
         wasBusy.current = now;
       })
-      .catch((err) => setError(errorMessage(err)));
+      .catch((err) => setLoadError(errorMessage(err)));
   }, [inventoryId, onRefreshed]);
 
   React.useEffect(() => {
@@ -358,11 +361,11 @@ export function InventorySourcesPanel({
   }, [refreshing, load]);
 
   async function act(action: () => Promise<unknown>) {
-    setError(null);
+    setActionError(null);
     try {
       await action();
     } catch (err) {
-      setError(errorMessage(err));
+      setActionError(errorMessage(err));
     }
     load();
   }

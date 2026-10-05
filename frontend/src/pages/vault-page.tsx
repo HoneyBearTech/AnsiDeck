@@ -130,6 +130,7 @@ function CreateVaultPasswordDialog({
 }
 
 function CopyableOutput({ label, hint, value }: { label: string; hint: string; value: string }) {
+  const id = React.useId();
   const [copied, setCopied] = React.useState(false);
 
   async function handleCopy() {
@@ -142,30 +143,32 @@ function CopyableOutput({ label, hint, value }: { label: string; hint: string; v
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <div>
-          <Label>{label}</Label>
+          <Label htmlFor={id}>{label}</Label>
           <p className="text-xs text-muted-foreground">{hint}</p>
         </div>
         <Button variant="outline" size="sm" onClick={handleCopy}>
           {copied ? "Copied" : "Copy"}
         </Button>
       </div>
-      <Textarea readOnly value={value} className="min-h-28 font-mono" spellCheck={false} />
+      <Textarea id={id} readOnly value={value} className="min-h-28 font-mono" spellCheck={false} />
     </div>
   );
 }
 
 function VaultPasswordSelect({
+  id,
   vaultPasswords,
   value,
   onChange,
 }: {
+  id: string;
   vaultPasswords: VaultPassword[];
   value: string;
   onChange: (value: string) => void;
 }) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger>
+      <SelectTrigger id={id}>
         <SelectValue placeholder="Select a vault password" />
       </SelectTrigger>
       <SelectContent>
@@ -210,8 +213,9 @@ function EncryptCard({ vaultPasswords }: { vaultPasswords: VaultPassword[] }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
-          <Label>Vault password</Label>
+          <Label htmlFor="encrypt-vault-password">Vault password</Label>
           <VaultPasswordSelect
+            id="encrypt-vault-password"
             vaultPasswords={vaultPasswords}
             value={vaultPasswordId}
             onChange={setVaultPasswordId}
@@ -291,8 +295,9 @@ function DecryptCard({ vaultPasswords }: { vaultPasswords: VaultPassword[] }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
-          <Label>Vault password</Label>
+          <Label htmlFor="decrypt-vault-password">Vault password</Label>
           <VaultPasswordSelect
+            id="decrypt-vault-password"
             vaultPasswords={vaultPasswords}
             value={vaultPasswordId}
             onChange={setVaultPasswordId}

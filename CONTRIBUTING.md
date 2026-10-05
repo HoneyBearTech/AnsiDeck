@@ -59,10 +59,16 @@ uv run pytest --cov              # prints coverage; CI requires 80% branch cover
 # frontend/
 npm run lint
 npm run typecheck
+npm test                         # `npm run coverage` adds coverage; CI requires 80% of statements
 npm run build
 ```
 
-CI also enforces a floor of 80% branch coverage for the backend, audits dependencies for known
+Frontend tests live next to the code they test (`src/**/*.test.tsx`). Most render the whole app at a route
+against an in-memory fake of the API (`src/test/render.tsx`, `src/test/fake-api.ts`), so a test drives
+the page the way a person would: by labels, roles and visible text.
+
+CI also enforces a floor of 80% branch coverage for the backend and 80% statement coverage for the
+frontend, checks that the frontend build is reproducible, audits dependencies for known
 vulnerabilities, and runs CodeQL and Docker image builds. Pull requests that touch `backend/` are also
 fuzzed for a minute per target: Atheris drives the Hypothesis properties in `backend/tests/test_properties.py`
 through `backend/fuzz/fuzz_properties.py` (Linux x86_64 only; `uv sync --group fuzz`). If a fuzz job fails,
@@ -89,12 +95,13 @@ merged.
 ## Test policy
 
 - **New functionality must come with automated tests.** When a pull request adds or changes major
-  functionality, it must add tests for it to the automated test suites (`backend/tests/`, and the frontend
-  tests once they exist), covering both the expected behaviour and the ways it should refuse input or
+  functionality, it must add tests for it to the automated test suites (`backend/tests/`, and `frontend/src/**/*.test.tsx`
+  for the UI), covering both the expected behaviour and the ways it should refuse input or
   access.
 - **Bug fixes must come with a regression test** that fails without the fix, unless that is impractical,
   in which case the pull request says why.
-- **Coverage must not drop below the floors CI enforces** (80% branch coverage for the backend).
+- **Coverage must not drop below the floors CI enforces** (80% branch coverage for the backend, 80% statement
+  coverage for the frontend).
 - Security-relevant changes should include a test that proves the protection works (for example a request
   from another project that must be refused).
 

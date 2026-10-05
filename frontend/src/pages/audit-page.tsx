@@ -92,9 +92,9 @@ export function AuditPage() {
           />
         </div>
         <div className="flex flex-col gap-2">
-          <Label>Outcome</Label>
+          <Label htmlFor="audit-outcome">Outcome</Label>
           <Select value={outcome} onValueChange={resetOffset(setOutcome)}>
-            <SelectTrigger className="w-36">
+            <SelectTrigger id="audit-outcome" className="w-36">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

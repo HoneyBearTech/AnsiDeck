@@ -259,7 +259,7 @@ function ChannelDialog({
             </div>
           )}
           <div className="flex flex-col gap-2">
-            <Label>Events</Label>
+            <p className="text-sm font-medium leading-none">Events</p>
             {[...new Set(available.map((e) => e.group))].map((group) => (
               <fieldset key={group} className="flex flex-col gap-2">
                 <legend className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
