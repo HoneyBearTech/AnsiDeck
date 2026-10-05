@@ -7,7 +7,7 @@ see [security.md](security.md) and the [assurance case](assurance-case.md).
 ## Components
 
 ```mermaid
-flowchart LR
+flowchart TB
     browser["Browser<br/>(React SPA)"]
     ci["CI / scripts<br/>(API keys)"]
     proxy["Your reverse proxy<br/>(TLS)"]
