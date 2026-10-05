@@ -32,14 +32,16 @@ jobs:
           persist-credentials: false
 
       - name: Compute the image name
+        id: image
         # GHCR image paths must be all-lowercase; github.repository_owner
-        # preserves the org/user's actual casing (e.g. "HoneyBearTech").
+        # preserves the org/user's actual casing (e.g. "HoneyBearTech"). A step output (not
+        # $GITHUB_ENV) so editors and linters can see where it comes from.
         env:
           OWNER: ${{ github.repository_owner }}
           SERVICE: ${{ matrix.service }}
         run: |
           owner=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
-          echo "IMAGE=ghcr.io/${owner}/ansideck-${SERVICE}" >> "$GITHUB_ENV"
+          echo "name=ghcr.io/${owner}/ansideck-${SERVICE}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -52,7 +54,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ env.IMAGE }}
+          images: ${{ steps.image.outputs.name }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
