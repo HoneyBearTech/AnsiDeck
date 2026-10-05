@@ -233,6 +233,14 @@ jobs:
           python3 backend/scripts/smoke_inventory.py http://localhost:8000 ci-test "$RUNNER_TEMP/smoke_key" \
             || { docker logs smoke-worker 2>&1 | tail -40; docker logs smoke 2>&1 | tail -40; exit 1; }
 
+      - name: Smoke test playbook checks with the backend runtime image
+        if: matrix.service == 'backend' && matrix.target == 'runtime'
+        # The isolated worker above runs ansible-lint as a slot user: known problems come back
+        # with their rules and lines, broken YAML as an error, a saved playbook by id.
+        run: |
+          python3 backend/scripts/smoke_lint.py http://localhost:8000 ci-test \
+            || { docker logs smoke-worker 2>&1 | tail -40; docker logs smoke 2>&1 | tail -40; exit 1; }
+
       - name: Smoke test the secret store with the backend runtime image
         if: matrix.service == 'backend' && matrix.target == 'runtime'
         # An OpenBao dev server set up by backend/scripts/openbao_dev_setup.py (as the compose

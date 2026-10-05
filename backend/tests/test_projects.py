@@ -1,9 +1,11 @@
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from starlette.websockets import WebSocketDisconnect
 
 from app.db import get_sessionmaker
 from app.main import app
+from app.models import LintJob, User
 from app.permissions import Permission, Scope
 from tests.conftest import make_user_client
 from tests.routes import iter_api_routes
@@ -82,6 +84,22 @@ def _populate(admin: TestClient, project_id: int, tag: str) -> dict:
         },
     )
     assert template.status_code == 201, template.text
+    # A finished playbook check of the admin's in this project (rows only: no worker time).
+    db = get_sessionmaker()()
+    admin_id = db.scalar(select(User.id).where(User.username == "admin"))
+    lint = LintJob(
+        project_id=project_id,
+        requested_by_user_id=admin_id,
+        requested_by="admin",
+        target="playbook.yml",
+        status="success",
+        timeout_seconds=60,
+        findings=[],
+    )
+    db.add(lint)
+    db.commit()
+    lint_id = lint.id
+    db.close()
     return {
         "project": project_id,
         "playbook": playbook.json()["id"],
@@ -92,6 +110,7 @@ def _populate(admin: TestClient, project_id: int, tag: str) -> dict:
         "vault": vault.json()["id"],
         "run": run.json()["id"],
         "template": template.json()["id"],
+        "lint": lint_id,
     }
 
 
@@ -151,6 +170,8 @@ def _idor_calls(b: dict) -> list[tuple[str, str, dict | None]]:
         ("GET", f"/api/runs/{run}", None),
         ("POST", f"/api/runs/{run}/cancel", None),
         ("POST", f"/api/runs/{run}/rerun", None),
+        ("POST", f"/api/playbooks/{b['playbook']}/lint", None),
+        ("GET", f"/api/lint-jobs/{b['lint']}", None),
         ("GET", f"/api/runs/{run}/log", None),
         ("GET", f"/api/run-templates/{b['template']}", None),
         ("PUT", f"/api/run-templates/{b['template']}", _template_body(b, name="hijack")),
@@ -280,6 +301,8 @@ def test_every_project_scoped_route_with_an_id_is_covered_by_the_idor_matrix() -
         ("GET", "/api/runs/{run_id}"),
         ("POST", "/api/runs/{run_id}/cancel"),
         ("POST", "/api/runs/{run_id}/rerun"),
+        ("POST", "/api/playbooks/{playbook_id}/lint"),
+        ("GET", "/api/lint-jobs/{lint_id}"),
         ("GET", "/api/runs/{run_id}/log"),
         ("GET", "/api/run-templates/{template_id}"),
         ("PUT", "/api/run-templates/{template_id}"),

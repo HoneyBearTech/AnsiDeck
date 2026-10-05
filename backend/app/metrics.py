@@ -145,6 +145,20 @@ INVENTORY_REFRESH_DURATION = Histogram(
 )
 for _outcome in ("success", "failed", "timed_out"):
     INVENTORY_REFRESHES.labels(_outcome)
+LINT_JOBS = Counter(
+    "ansideck_lint_jobs",
+    "Playbook checks (ansible-lint), by how they ended",
+    ["outcome"],
+    registry=REGISTRY,
+)
+LINT_DURATION = Histogram(
+    "ansideck_lint_duration_seconds",
+    "Time one playbook check took, from its start in a worker to its result",
+    buckets=(1, 2.5, 5, 10, 20, 30, 60, 120, 300),
+    registry=REGISTRY,
+)
+for _outcome in ("success", "failed", "timed_out", "cancelled"):
+    LINT_JOBS.labels(_outcome)
 SECRET_STORE_READS = Counter(
     "ansideck_secret_store_reads",
     "Reads from the secret store, by outcome (ok or the error kind)",
@@ -235,6 +249,12 @@ def inventory_refresh_finished(outcome: str, seconds: float | None) -> None:
     INVENTORY_REFRESHES.labels(outcome[:20]).inc()
     if seconds is not None and outcome == "success":
         INVENTORY_REFRESH_DURATION.observe(seconds)
+
+
+def lint_finished(outcome: str, seconds: float | None) -> None:
+    LINT_JOBS.labels(outcome[:20]).inc()
+    if seconds is not None and outcome == "success":
+        LINT_DURATION.observe(seconds)
 
 
 def git_sync_finished(outcome: str, seconds: float) -> None:

@@ -21,11 +21,12 @@
             "items": {
               "enum": [
                 "run",
-                "refresh"
+                "refresh",
+                "lint"
               ],
               "type": "string"
             },
-            "maxItems": 2,
+            "maxItems": 3,
             "minItems": 1,
             "title": "Kinds",
             "type": "array"
@@ -71,7 +72,8 @@
             "default": "run",
             "enum": [
               "run",
-              "refresh"
+              "refresh",
+              "lint"
             ],
             "title": "Kind",
             "type": "string"
@@ -175,6 +177,86 @@
         "title": "EventsIn",
         "type": "object"
       },
+      "FindingIn": {
+        "properties": {
+          "column": {
+            "anyOf": [
+              {
+                "maximum": 10000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Column"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "level": {
+            "enum": [
+              "error",
+              "warning"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "line": {
+            "maximum": 10000000.0,
+            "minimum": 1.0,
+            "title": "Line",
+            "type": "integer"
+          },
+          "message": {
+            "maxLength": 500,
+            "title": "Message",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 1024,
+            "title": "Path",
+            "type": "string"
+          },
+          "rule": {
+            "maxLength": 100,
+            "title": "Rule",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "pattern": "^https://",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "rule",
+          "level",
+          "message",
+          "path",
+          "line"
+        ],
+        "title": "FindingIn",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -200,6 +282,15 @@
               }
             ],
             "title": "Isolated"
+          },
+          "lints": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/HeartbeatLint"
+            },
+            "maxItems": 256,
+            "title": "Lints",
+            "type": "array"
           },
           "refreshes": {
             "default": [],
@@ -237,6 +328,25 @@
           "runs"
         ],
         "title": "HeartbeatIn",
+        "type": "object"
+      },
+      "HeartbeatLint": {
+        "properties": {
+          "claim_token": {
+            "maxLength": 200,
+            "title": "Claim Token",
+            "type": "string"
+          },
+          "lint_id": {
+            "title": "Lint Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lint_id",
+          "claim_token"
+        ],
+        "title": "HeartbeatLint",
         "type": "object"
       },
       "HeartbeatRefresh": {
@@ -289,6 +399,84 @@
           "job_token"
         ],
         "title": "JobIn",
+        "type": "object"
+      },
+      "LintCompleteIn": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "external": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "External",
+            "type": "integer"
+          },
+          "findings": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FindingIn"
+            },
+            "maxItems": 500,
+            "title": "Findings",
+            "type": "array"
+          },
+          "repo_config": {
+            "default": false,
+            "title": "Repo Config",
+            "type": "boolean"
+          },
+          "scrubbed": {
+            "default": false,
+            "title": "Scrubbed",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "success",
+              "failed",
+              "timed_out"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "LintCompleteIn",
         "type": "object"
       },
       "RefreshCompleteIn": {
@@ -479,6 +667,176 @@
           }
         },
         "summary": "Heartbeat"
+      }
+    },
+    "/internal/lints/{lint_id}/complete": {
+      "post": {
+        "description": "Records the findings, or why the check failed.",
+        "operationId": "lint_complete_internal_lints__lint_id__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lint_id",
+            "required": true,
+            "schema": {
+              "title": "Lint Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-claim-token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "title": "X-Claim-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LintCompleteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Lint Complete Internal Lints  Lint Id  Complete Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Lint Complete"
+      }
+    },
+    "/internal/lints/{lint_id}/job": {
+      "post": {
+        "description": "Hands the check's job out exactly once.",
+        "operationId": "lint_job_internal_lints__lint_id__job_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lint_id",
+            "required": true,
+            "schema": {
+              "title": "Lint Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-claim-token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "title": "X-Claim-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Lint Job Internal Lints  Lint Id  Job Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Lint Job"
+      }
+    },
+    "/internal/lints/{lint_id}/snapshot": {
+      "post": {
+        "description": "The repository a check of a synced playbook runs in (checked by size and hash).",
+        "operationId": "lint_snapshot_internal_lints__lint_id__snapshot_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lint_id",
+            "required": true,
+            "schema": {
+              "title": "Lint Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-claim-token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "title": "X-Claim-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Lint Snapshot Internal Lints  Lint Id  Snapshot Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Lint Snapshot"
       }
     },
     "/internal/ping": {

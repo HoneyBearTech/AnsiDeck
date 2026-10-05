@@ -34,6 +34,7 @@ from app.routers import (
     health,
     inventories,
     inventory_sources,
+    lint,
     notifications,
     playbooks,
     projects,
@@ -222,6 +223,7 @@ app.include_router(galaxy.router, prefix="/api/galaxy", tags=["galaxy"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(runs.router, prefix="/api/runs", tags=["runs"])
 app.include_router(run_templates.router, prefix="/api/run-templates", tags=["run-templates"])
+app.include_router(lint.router, prefix="/api/lint-jobs", tags=["playbooks"])
 app.include_router(api_keys.router, prefix="/api/projects/{project_id}/api-keys", tags=["api-keys"])
 app.include_router(
     git_sources.router, prefix="/api/projects/{project_id}/git-sources", tags=["git-sources"]

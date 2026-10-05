@@ -2216,6 +2216,246 @@
         "title": "LastDelivery",
         "type": "object"
       },
+      "LintContentIn": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "LintContentIn",
+        "type": "object"
+      },
+      "LintFindingOut": {
+        "properties": {
+          "column": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Column"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "in_target": {
+            "title": "In Target",
+            "type": "boolean"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "line": {
+            "title": "Line",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "rule",
+          "level",
+          "message",
+          "path",
+          "line",
+          "in_target"
+        ],
+        "title": "LintFindingOut",
+        "type": "object"
+      },
+      "LintJobOut": {
+        "properties": {
+          "ansible_lint_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ansible Lint Version"
+          },
+          "commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "external": {
+            "default": 0,
+            "title": "External",
+            "type": "integer"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/LintFindingOut"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "playbook_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playbook Id"
+          },
+          "queued_at": {
+            "format": "date-time",
+            "title": "Queued At",
+            "type": "string"
+          },
+          "repo_config": {
+            "default": false,
+            "title": "Repo Config",
+            "type": "boolean"
+          },
+          "scrubbed": {
+            "default": false,
+            "title": "Scrubbed",
+            "type": "boolean"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "wait_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wait Reason"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "target",
+          "playbook_id",
+          "commit",
+          "queued_at",
+          "started_at",
+          "finished_at",
+          "error"
+        ],
+        "title": "LintJobOut",
+        "type": "object"
+      },
       "LoginRequest": {
         "properties": {
           "password": {
@@ -8807,6 +9047,80 @@
         ]
       }
     },
+    "/api/lint-jobs/{lint_id}": {
+      "get": {
+        "operationId": "get_lint_job_api_lint_jobs__lint_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lint_id",
+            "required": true,
+            "schema": {
+              "title": "Lint Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LintJobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Lint Job",
+        "tags": [
+          "playbooks"
+        ]
+      }
+    },
     "/api/notifications/catalog": {
       "get": {
         "operationId": "catalog_api_notifications_catalog_get",
@@ -9545,6 +9859,82 @@
         ]
       }
     },
+    "/api/playbooks/lint": {
+      "post": {
+        "description": "Checks text with ansible-lint (unsaved, even invalid YAML) in a worker, with the\nGalaxy collections and roles. Poll GET /api/lint-jobs/{id} for the findings.",
+        "operationId": "lint_content_api_playbooks_lint_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LintContentIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LintJobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Lint Content",
+        "tags": [
+          "playbooks"
+        ]
+      }
+    },
     "/api/playbooks/{playbook_id}": {
       "delete": {
         "operationId": "delete_playbook_api_playbooks__playbook_id__delete",
@@ -9761,6 +10151,81 @@
           }
         },
         "summary": "Update Playbook",
+        "tags": [
+          "playbooks"
+        ]
+      }
+    },
+    "/api/playbooks/{playbook_id}/lint": {
+      "post": {
+        "description": "Checks a saved playbook; one synced from git inside its repository at the source's\ncurrent commit, with the repository's own ansible-lint config, roles and collections.",
+        "operationId": "lint_playbook_api_playbooks__playbook_id__lint_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "playbook_id",
+            "required": true,
+            "schema": {
+              "title": "Playbook Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LintJobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Lint Playbook",
         "tags": [
           "playbooks"
         ]

@@ -7,6 +7,7 @@ Rules, in this order:
 - one running run per inventory (also a partial unique index);
 - per inventory, runs start in the order they were queued: only the oldest queued run of an
   inventory may be claimed, so a busy inventory's runs can't overtake each other.
+Inventory refreshes and playbook checks (lints) are claimed the same way, before runs.
 """
 
 import hashlib
@@ -22,7 +23,7 @@ from sqlalchemy.orm import Session, object_session
 
 from app import metrics
 from app.config import get_settings
-from app.db import GALAXY_GATE_KEY
+from app.db import GALAXY_GATE_KEY, LINT_CLAIM_KEY
 from app.jobs import unrunnable_reason
 from app.models import GalaxyInstall, Run, RunStatus, Worker
 from app.notifications.events import run_finished
@@ -101,9 +102,42 @@ _CLAIM_REFRESH = text(
 )
 
 
+# A playbook check (Phase 5B): the oldest queued one whose requester has none running, while
+# fewer than :max_running run in all (claims hold LINT_CLAIM_KEY, so the count is exact).
+_CLAIM_LINT = text(
+    """
+    WITH candidate AS (
+        SELECT l.id FROM lint_jobs l
+        WHERE l.status = 'queued'
+          AND NOT EXISTS (
+              SELECT 1 FROM lint_jobs busy
+              WHERE busy.requested_by_user_id = l.requested_by_user_id
+                AND busy.status = 'running')
+          AND (SELECT count(*) FROM lint_jobs r WHERE r.status = 'running') < :max_running
+        ORDER BY l.queued_at, l.id
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+    )
+    UPDATE lint_jobs SET
+        status = 'running',
+        claimed_at = now(),
+        heartbeat_at = now(),
+        lease_expires_at = now() + make_interval(secs => :lease),
+        worker_id = :worker_id,
+        claim_token_hash = :claim_hash,
+        job_token_hash = :job_hash,
+        job_token_expires_at = now() + make_interval(secs => :job_ttl)
+    FROM candidate
+    WHERE lint_jobs.id = candidate.id
+    RETURNING lint_jobs.id
+    """
+)
+
+
 @dataclass(frozen=True)
 class Claim:
-    """A claimed run, or (kind "refresh") a claimed inventory refresh with that id."""
+    """A claimed run, or (kind "refresh" / "lint") a claimed inventory refresh or playbook
+    check with that id."""
 
     run_id: int
     claim_token: str
@@ -198,13 +232,42 @@ def wait_reason(db: Session, run: Run) -> str:
 
 
 def claim_next(db: Session, worker_id: str, kinds: tuple[str, ...] = ("run",)) -> Claim | None:
-    """Refreshes first (they are short, and someone may be waiting for the hosts), then runs.
-    A worker that doesn't list "refresh" (from before 4G) never gets one."""
+    """Checks first, then refreshes (both short, and someone is waiting for them), then runs.
+    A worker gets only the kinds it lists: one from before 4G never gets a refresh, one from
+    before 5B never a check."""
+    if "lint" in kinds and (claim := _claim_lint(db, worker_id)) is not None:
+        return claim
     if "refresh" in kinds and (claim := _claim_refresh(db, worker_id)) is not None:
         return claim
     if "run" not in kinds:
         return None
     return _claim_run(db, worker_id)
+
+
+def _claim_lint(db: Session, worker_id: str) -> Claim | None:
+    claim_token, job_token = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+    settings = get_settings()
+    db.execute(text("SELECT pg_advisory_xact_lock_shared(:key)"), {"key": GALAXY_GATE_KEY})
+    if install_pending(db):
+        db.rollback()
+        return None
+    db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": LINT_CLAIM_KEY})
+    lint_id = db.scalar(
+        _CLAIM_LINT,
+        {
+            "max_running": settings.lint_max_running,
+            "lease": settings.run_lease_seconds,
+            "worker_id": worker_id[:255],
+            "claim_hash": hash_token(claim_token),
+            "job_hash": hash_token(job_token),
+            "job_ttl": JOB_TOKEN_SECONDS,
+        },
+    )
+    if lint_id is None:
+        db.rollback()
+        return None
+    db.commit()
+    return Claim(lint_id, claim_token, job_token, kind="lint")
 
 
 def _claim_refresh(db: Session, worker_id: str) -> Claim | None:

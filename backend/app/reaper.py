@@ -17,7 +17,13 @@ from app.git_sync import prune_snapshots
 from app.inventory_sources import due_inventories, end_refresh, enqueue_refresh
 from app.inventory_sources import prune_snapshots as prune_inventory_snapshots
 from app.jobs import UNRUNNABLE, unrunnable_reason
-from app.models import GalaxyInstall, InventoryRefresh, Run, RunStatus, Worker
+from app.lint import (
+    QUEUE_TIMEOUT_SECONDS as LINT_QUEUE_TIMEOUT_SECONDS,
+)
+from app.lint import TIMEOUT_GRACE_SECONDS as LINT_TIMEOUT_GRACE_SECONDS
+from app.lint import end_lint, prune_lint_jobs
+from app.lint import wait_reason as lint_wait_reason
+from app.models import GalaxyInstall, InventoryRefresh, LintJob, Run, RunStatus, Worker
 from app.notifications import WORKER_OFFLINE, WORKER_UNISOLATED
 from app.notifications.alerts import clear_alerts
 from app.notifications.dispatch import prune as prune_deliveries
@@ -101,6 +107,47 @@ def reap_refreshes(db: Session) -> list[dict]:
     return pending
 
 
+def reap_lints(db: Session) -> bool:
+    """Playbook checks (Phase 5B): ends those whose worker went away or overran, fails those
+    nobody claimed in time (with the reason they waited) and prunes old ones. Returns whether
+    any ended (the queue can move on)."""
+    ended = False
+
+    def lock(*where) -> list[LintJob]:
+        return list(
+            db.scalars(
+                select(LintJob)
+                .where(*where)
+                .order_by(LintJob.id)
+                .limit(_BATCH)
+                .with_for_update(skip_locked=True)
+            )
+        )
+
+    running = LintJob.status == RunStatus.RUNNING.value
+    for lint in lock(running, LintJob.lease_expires_at < func.now()):
+        why = f"worker lost: no heartbeat from {lint.worker_id} since {_at(lint.heartbeat_at)}"
+        end_lint(lint, RunStatus.FAILED.value, error=why)
+        ended = True
+    began = func.coalesce(LintJob.started_at, LintJob.claimed_at)
+    limit = func.make_interval(
+        0, 0, 0, 0, 0, 0, LintJob.timeout_seconds + LINT_TIMEOUT_GRACE_SECONDS
+    )
+    for lint in lock(running, began + limit < func.now()):
+        why = (
+            f"timed out after {format_duration(lint.timeout_seconds)} (its worker did not stop it)"
+        )
+        end_lint(lint, RunStatus.TIMED_OUT.value, error=why)
+        ended = True
+    stale = func.now() - func.make_interval(0, 0, 0, 0, 0, 0, LINT_QUEUE_TIMEOUT_SECONDS)
+    for lint in lock(LintJob.status == RunStatus.QUEUED.value, LintJob.queued_at < stale):
+        end_lint(lint, RunStatus.FAILED.value, error=f"not checked: {lint_wait_reason(db, lint)}")
+        ended = True
+    prune_lint_jobs(db)
+    db.commit()
+    return ended
+
+
 def reap_once() -> list[int]:
     """One pass; returns the ids of the runs it ended."""
     ended: list[tuple[int, str | None, int, str | None]] = []  # id, audit action, project, worker
@@ -163,6 +210,13 @@ def reap_once() -> list[int]:
         except Exception:  # the next pass tries again
             db.rollback()
             logger.exception("could not reap inventory refreshes")
+
+        try:
+            if reap_lints(db):
+                notifier.notify(QUEUE_TOPIC)
+        except Exception:  # the next pass tries again
+            db.rollback()
+            logger.exception("could not reap playbook checks")
 
         retention = func.make_interval(0, 0, 0, 0, 0, 0, WORKER_RETENTION_SECONDS)
         gone = db.scalars(

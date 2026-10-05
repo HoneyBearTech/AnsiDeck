@@ -24,7 +24,7 @@ from sqlalchemy import func, select, text, update
 
 from app.config import get_settings
 from app.db import GALAXY_GATE_KEY, get_sessionmaker
-from app.models import GalaxyInstall, InventoryRefresh, Run, RunStatus
+from app.models import GalaxyInstall, InventoryRefresh, LintJob, Run, RunStatus
 from app.notify import notifier
 from app.storage import (
     galaxy_collections_dir,
@@ -354,6 +354,8 @@ def try_start_install() -> int | None:
             .limit(1)
         ):
             return None  # inventory plugins load collections too
+        if db.scalar(select(LintJob.id).where(LintJob.status == RunStatus.RUNNING.value).limit(1)):
+            return None  # so do playbook checks
         lease = get_settings().run_lease_seconds
         install.status = RunStatus.RUNNING.value
         install.started_at = func.now()

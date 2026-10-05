@@ -33,7 +33,8 @@ from app.inventory_sources import (
     store_snapshot,
 )
 from app.jobs import build_job
-from app.models import GitSnapshot, InventoryRefresh, Run, RunStatus
+from app.lint import LintJobError, build_lint_job, end_lint
+from app.models import GitSnapshot, InventoryRefresh, LintJob, Run, RunStatus
 from app.notifications.events import run_finished
 from app.notifications.ops import secret_store_failed
 from app.notify import notifier, run_topic
@@ -130,12 +131,12 @@ class ClaimIn(BaseModel):
     isolated: bool | None = None  # None: a worker from before Phase 4C
     wait_seconds: float = Field(MAX_CLAIM_WAIT_SECONDS, ge=0, le=MAX_CLAIM_WAIT_SECONDS)
     # What the worker can do; one from before 4G (no kinds) is only ever given runs.
-    kinds: list[Literal["run", "refresh"]] = Field(["run"], min_length=1, max_length=2)
+    kinds: list[Literal["run", "refresh", "lint"]] = Field(["run"], min_length=1, max_length=3)
 
 
 class ClaimOut(BaseModel):
-    # "refresh": run_id is an inventory refresh's id.
-    kind: Literal["run", "refresh"] = "run"
+    # "refresh" / "lint": run_id is an inventory refresh's or a playbook check's id.
+    kind: Literal["run", "refresh", "lint"] = "run"
     run_id: int
     claim_token: str
     job_token: str
@@ -160,12 +161,42 @@ class HeartbeatRefresh(BaseModel):
     claim_token: str = Field(max_length=200)
 
 
+class HeartbeatLint(BaseModel):
+    lint_id: int
+    claim_token: str = Field(max_length=200)
+
+
 class HeartbeatIn(BaseModel):
     worker_id: str = Field(min_length=1, max_length=255)
     slots: int = Field(1, ge=1, le=256)
     isolated: bool | None = None
     runs: list[HeartbeatRun] = Field(max_length=256)
     refreshes: list[HeartbeatRefresh] = Field([], max_length=256)
+    lints: list[HeartbeatLint] = Field([], max_length=256)
+
+
+class FindingIn(BaseModel):
+    rule: str = Field(max_length=100)
+    level: Literal["error", "warning"]
+    message: str = Field(max_length=500)
+    details: str | None = Field(None, max_length=2000)
+    path: str = Field(max_length=1024)
+    line: int = Field(ge=1, le=10_000_000)
+    column: int | None = Field(None, ge=0, le=10_000_000)
+    url: str | None = Field(None, max_length=300, pattern=r"^https://")
+
+
+class LintCompleteIn(BaseModel):
+    status: Literal["success", "failed", "timed_out"]
+    findings: list[FindingIn] = Field([], max_length=500)
+    total: int = Field(0, ge=0)
+    truncated: bool = False
+    external: int = Field(0, ge=0)
+    repo_config: bool = False
+    error: str | None = Field(None, max_length=1000)
+    # The worker redacted a secret's value somewhere in the findings.
+    scrubbed: bool = False
+    version: str | None = Field(None, max_length=40)
 
 
 class RefreshCompleteIn(BaseModel):
@@ -314,10 +345,15 @@ def snapshot(
     run = _locked_run(db, run_id, x_claim_token)
     if run is None:
         return _gone()
-    snapshot_row = db.get(GitSnapshot, run.git_snapshot_id) if run.git_snapshot_id else None
+    return _snapshot_file(db, run.git_snapshot_id)
+
+
+def _snapshot_file(db: Session, snapshot_id: int | None) -> Any:
+    """A repository snapshot's tar (its path comes from the job's row, never the request)."""
+    snapshot_row = db.get(GitSnapshot, snapshot_id) if snapshot_id else None
     db.commit()
     if snapshot_row is None:
-        return JSONResponse({"detail": "This run has no repository snapshot"}, 404)
+        return JSONResponse({"detail": "This job has no repository snapshot"}, 404)
     path = snapshot_path(snapshot_row)
     if not path.is_file():
         return JSONResponse({"detail": "The repository snapshot is gone"}, 404)
@@ -391,8 +427,24 @@ def heartbeat(body: HeartbeatIn, db: Session = Depends(get_db)) -> dict[str, lis
         refreshes.append(
             {"refresh_id": item.refresh_id, "state": "ok" if renewed is not None else "gone"}
         )
+    lints: list[dict] = []
+    for item in body.lints:
+        renewed = db.execute(
+            update(LintJob)
+            .where(
+                LintJob.id == item.lint_id,
+                LintJob.status == RunStatus.RUNNING.value,
+                LintJob.claim_token_hash == hash_token(item.claim_token),
+            )
+            .values(
+                heartbeat_at=func.now(),
+                lease_expires_at=func.now() + func.make_interval(0, 0, 0, 0, 0, 0, lease),
+            )
+            .returning(LintJob.id)
+        ).first()
+        lints.append({"lint_id": item.lint_id, "state": "ok" if renewed is not None else "gone"})
     db.commit()
-    return {"runs": answers, "refreshes": refreshes}
+    return {"runs": answers, "refreshes": refreshes, "lints": lints}
 
 
 @router.post("/runs/{run_id}/complete")
@@ -589,6 +641,105 @@ def refresh_complete(
     refresh.output_bytes = len(raw)
     store_snapshot(db, refresh, snapshot, warnings)
     _end_refresh(db, refresh, RunStatus.SUCCESS.value, None)
+    return {}
+
+
+# --- playbook checks (Phase 5B) ------------------------------------------------------------
+
+
+def _locked_lint(db: Session, lint_id: int, claim_token: str) -> LintJob | None:
+    """The check, row-locked, if this claim still owns it."""
+    lint = db.scalars(select(LintJob).where(LintJob.id == lint_id).with_for_update()).first()
+    if (
+        lint is None
+        or lint.status != RunStatus.RUNNING.value
+        or lint.claim_token_hash is None
+        or not hmac.compare_digest(lint.claim_token_hash, hash_token(claim_token))
+    ):
+        return None
+    return lint
+
+
+def _end_lint(
+    db: Session, lint: LintJob, status: str, error: str | None, result: dict | None = None
+) -> None:
+    end_lint(lint, status, error=error, result=result)
+    db.commit()
+    notifier.notify(QUEUE_TOPIC)  # the next check may start, and a waiting install
+    try_start_install()
+
+
+@router.post("/lints/{lint_id}/job")
+def lint_job(
+    lint_id: int,
+    body: JobIn,
+    x_claim_token: str = Header(max_length=200),
+    db: Session = Depends(get_db),
+) -> Any:
+    """Hands the check's job out exactly once."""
+    lint = _locked_lint(db, lint_id, x_claim_token)
+    if (
+        lint is None
+        or lint.job_token_hash is None
+        or not hmac.compare_digest(lint.job_token_hash, hash_token(body.job_token))
+        or lint.job_token_expires_at <= db.scalar(select(func.now()))
+    ):
+        return _gone()
+    lint.job_token_hash = None
+    lint.job_token_expires_at = None
+    try:
+        payload = build_lint_job(db, lint)
+    except LintJobError as exc:
+        _end_lint(db, lint, RunStatus.FAILED.value, str(exc))
+        return _gone()
+    except Exception:  # never echo details
+        logger.exception("could not build the job for check %s", lint_id)
+        _end_lint(
+            db, lint, RunStatus.FAILED.value, "could not prepare the check (see the server log)"
+        )
+        return _gone()
+    lint.started_at = func.now()
+    db.commit()
+    return payload
+
+
+@router.post("/lints/{lint_id}/snapshot")
+def lint_snapshot(
+    lint_id: int,
+    x_claim_token: str = Header(max_length=200),
+    db: Session = Depends(get_db),
+) -> Any:
+    """The repository a check of a synced playbook runs in (checked by size and hash)."""
+    lint = _locked_lint(db, lint_id, x_claim_token)
+    if lint is None:
+        return _gone()
+    return _snapshot_file(db, lint.git_snapshot_id)
+
+
+@router.post("/lints/{lint_id}/complete")
+def lint_complete(
+    lint_id: int,
+    body: LintCompleteIn,
+    x_claim_token: str = Header(max_length=200),
+    db: Session = Depends(get_db),
+) -> Any:
+    """Records the findings, or why the check failed."""
+    lint = _locked_lint(db, lint_id, x_claim_token)
+    if lint is None:
+        return _gone()
+    if body.status != RunStatus.SUCCESS.value:
+        _end_lint(db, lint, body.status, body.error or body.status.replace("_", " "))
+        return {}
+    result = {
+        "findings": [finding.model_dump() for finding in body.findings],
+        "total": max(body.total, len(body.findings)),
+        "truncated": body.truncated,
+        "external": body.external,
+        "repo_config": body.repo_config,
+        "scrubbed": body.scrubbed,
+        "version": body.version,
+    }
+    _end_lint(db, lint, RunStatus.SUCCESS.value, None, result)
     return {}
 
 

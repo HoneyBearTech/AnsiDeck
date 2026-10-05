@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     inventory_max_hosts: int = Field(20_000, ge=1)
     inventory_max_groups: int = Field(5_000, ge=1)
 
+    # Playbook checks (app.lint): ansible-lint in a worker, a few at a time across all workers.
+    lint_timeout_seconds: int = Field(120, ge=10, le=600)
+    lint_max_running: int = Field(2, ge=1, le=64)
+
     # Secret store (app.secret_store): credentials and vault passwords may live in OpenBao or
     # HashiCorp Vault (KV v2) instead of AnsiDeck's database. Off unless the URL is set. Each
     # project's secrets live under <kv mount>/<path prefix>/<project id>/; AnsiDeck reads them

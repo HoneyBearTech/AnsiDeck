@@ -28,6 +28,8 @@ _MIGRATION_LOCK_KEY = 0x616E_7369_6465_636B  # "ansideck"
 # Claims take it shared, starting a galaxy install takes it exclusive: an install starts only
 # when no run is running, and no run is claimed while an install waits or runs.
 GALAXY_GATE_KEY = 0x616E_7369_6761_6C78  # "ansigalx"
+# Serialises playbook-check claims, so the cap on checks running at once holds.
+LINT_CLAIM_KEY = 0x616E_7369_6C69_6E74  # "ansilint"
 
 
 class Base(DeclarativeBase):

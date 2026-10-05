@@ -102,10 +102,10 @@ def list_runs(
     return [_run_out(db, run, user) for run in query.order_by(Run.id.desc()).all()]
 
 
-def _pin_snapshot(db: Session, playbook: Playbook) -> dict:
+def pin_snapshot(db: Session, playbook: Playbook) -> dict:
     """A synced playbook runs inside its repository at the source's current commit. The
     snapshot row is share-locked until the run is committed, so a sync can't supersede (and
-    the reaper can't prune) it in between; afterwards the queued run pins it."""
+    the reaper can't prune) it in between; afterwards the queued run (or check) pins it."""
     if playbook.missing_at is not None:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "This playbook is no longer in its git repository"
@@ -229,7 +229,7 @@ def queue_run(
         "Playbook not found",
     )
     project_id = playbook.project_id
-    git = _pin_snapshot(db, playbook) if playbook.source_id is not None else None
+    git = pin_snapshot(db, playbook) if playbook.source_id is not None else None
     if payload.become and Permission.RUNS_BECOME not in project_permissions(
         db, current_user, project_id
     ):
@@ -291,7 +291,7 @@ def queue_run(
         _require_same_project(vault_password, project_id, "Vault password")
 
     # The run executes the playbook as it is now, whatever happens to it while queued; a
-    # synced one inside its repository at the commit current now (see _pin_snapshot).
+    # synced one inside its repository at the commit current now (see pin_snapshot).
     playbook_text = git["text"].encode() if git else playbook_path(playbook.id).read_bytes()
     if len(playbook_text) > MAX_PLAYBOOK_SNAPSHOT_BYTES:
         raise HTTPException(
