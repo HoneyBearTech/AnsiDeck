@@ -1,14 +1,25 @@
+import logging
+
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import GitSnapshot, GitSource, Playbook, User
+from app.lint import CONTENT_TARGET, MAX_LINT_CONTENT_BYTES, enqueue_lint
+from app.models import GitSnapshot, GitSource, LintJob, Playbook, User
+from app.notify import notifier
 from app.permissions import Permission, Scope, guard
+from app.queue import QUEUE_TOPIC
+from app.routers.lint import lint_out
+from app.routers.runs import pin_snapshot
+from app.schemas.lint import LintContentIn, LintJobOut
 from app.schemas.playbooks import PlaybookCreate, PlaybookDetail, PlaybookSummary, PlaybookUpdate
 from app.scoping import get_scoped, readable_project_ids, resolve_write_project
 from app.storage import playbook_path
+
+logger = logging.getLogger(__name__)
 
 _guard = guard(Permission.CONTENT_READ, Permission.CONTENT_WRITE, scope=Scope.PROJECT)
 router = APIRouter(dependencies=[Depends(_guard)])
@@ -155,3 +166,78 @@ def delete_playbook(
     db.delete(playbook)
     db.commit()
     playbook_path(playbook.id).unlink(missing_ok=True)
+
+
+# --- playbook checks (Phase 5B) -------------------------------------------------------------
+
+
+def _too_large(content: str) -> None:
+    if len(content.encode()) > MAX_LINT_CONTENT_BYTES:
+        raise HTTPException(
+            status.HTTP_413_CONTENT_TOO_LARGE,
+            f"The playbook is too large to check (over {MAX_LINT_CONTENT_BYTES // 1024} KiB)",
+        )
+
+
+def _queued(db: Session, lint: LintJob) -> LintJobOut:
+    try:
+        db.commit()
+    except IntegrityError as exc:  # another check of yours was queued at the same moment
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Another check of yours is being queued: try again"
+        ) from exc
+    db.refresh(lint)
+    logger.info("check %s queued by %s (%s)", lint.id, lint.requested_by, lint.target)
+    notifier.notify(QUEUE_TOPIC)  # wake the workers waiting for a claim
+    return lint_out(db, lint)
+
+
+@router.post("/lint", response_model=LintJobOut, status_code=status.HTTP_202_ACCEPTED)
+def lint_content(
+    payload: LintContentIn,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> LintJobOut:
+    """Checks text with ansible-lint (unsaved, even invalid YAML) in a worker, with the
+    Galaxy collections and roles. Poll GET /api/lint-jobs/{id} for the findings."""
+    project_id = resolve_write_project(
+        db, user, request, payload.project_id, Permission.CONTENT_WRITE
+    )
+    _too_large(payload.content)
+    lint = enqueue_lint(db, user, project_id, target=CONTENT_TARGET, content=payload.content)
+    return _queued(db, lint)
+
+
+@router.post("/{playbook_id}/lint", response_model=LintJobOut, status_code=status.HTTP_202_ACCEPTED)
+def lint_playbook(
+    playbook_id: int,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> LintJobOut:
+    """Checks a saved playbook; one synced from git inside its repository at the source's
+    current commit, with the repository's own ansible-lint config, roles and collections."""
+    playbook = get_scoped(
+        db, user, request, Playbook, playbook_id, Permission.CONTENT_WRITE, "Playbook not found"
+    )
+    if playbook.source_id is not None:
+        git = pin_snapshot(db, playbook)["columns"]
+        lint = enqueue_lint(
+            db,
+            user,
+            playbook.project_id,
+            target=git["playbook_path"],
+            playbook_id=playbook.id,
+            snapshot_id=git["git_snapshot_id"],
+            commit=git["git_commit"],
+        )
+    else:
+        content = playbook_path(playbook.id).read_text(encoding="utf-8")
+        _too_large(content)
+        lint = enqueue_lint(
+            db, user, playbook.project_id, target=CONTENT_TARGET, content=content,
+            playbook_id=playbook.id,
+        )  # fmt: skip
+    return _queued(db, lint)

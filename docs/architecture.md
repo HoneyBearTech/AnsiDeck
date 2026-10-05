@@ -57,7 +57,7 @@ flowchart TB
 | **Background loops** | `app/reaper.py`, `app/notifications/`, `app/git_sync.py`, `app/secret_store.py` | Run inside the API process. The reaper ends work nobody will finish (lost workers, timeouts, unconfirmed cancels), schedules inventory refreshes and prunes old data. The dispatcher delivers notifications with retries. The git loop polls git sources. The probe checks that the secret store is reachable. |
 | **Postgres** | `app/models.py`, `backend/migrations/` | The single source of truth for state and the job queue. Jobs are rows claimed with `UPDATE … FOR UPDATE SKIP LOCKED` (`app/queue.py`); partial unique indexes enforce one running run per inventory. Schema changes go through Alembic migrations. An optional `analytics` schema holds read-only views for Grafana. |
 | **Data volume** | `app/run_log.py`, `app/storage.py`, `app/galaxy.py` | Playbook files, run output (append-only JSONL, its length committed with the run's row), git mirrors and the snapshots runs pin, and Galaxy roles/collections (mounted read-only into workers). |
-| **Workers** | `backend/app/worker/`, `app/run_worker.py`, `app/run_isolation.py` | Claim playbook runs and inventory refreshes over the internal API, then execute each in a slot: a child process running as that slot's own Linux user (`ansideck-run<n>`), with no capabilities, a private home, and its files and processes cleared after every job. Workers have no database access and no encryption key. A heartbeat thread renews leases and applies cancels and timeouts. |
+| **Workers** | `backend/app/worker/`, `app/run_worker.py`, `app/run_isolation.py` | Claim playbook runs, inventory refreshes and playbook checks over the internal API, then execute each in a slot: a child process running as that slot's own Linux user (`ansideck-run<n>`), with no capabilities, a private home, and its files and processes cleared after every job. Workers have no database access and no encryption key. A heartbeat thread renews leases and applies cancels and timeouts. |
 | **Secret store** (optional) | `app/secret_store.py` | OpenBao or HashiCorp Vault (KV v2). Credentials and vault passwords can be references into a per-project subtree, read by the API when a job starts and handed only to the worker that claimed it. |
 | **Metrics** (optional) | `app/metrics.py`, `app/metrics_api.py`, `grafana/` | Prometheus metrics on port 8002 (bearer token), plus provisioned Grafana dashboards reading the analytics views. |
 
@@ -78,7 +78,10 @@ flowchart TB
    everything its user still runs is killed and its files are deleted.
 
 Inventory refreshes follow the same path, with `ansible-inventory` in place of `ansible-playbook`; the
-API validates and normalises the output before storing it as a snapshot.
+API validates and normalises the output before storing it as a snapshot. Playbook checks do too, with
+`ansible-lint` over an editor's text or a synced playbook's repository (`app/lint.py`): at most a few run
+at once, each person has one queued, and the findings, private to whoever asked, are pruned after an
+hour.
 
 ## Key properties
 

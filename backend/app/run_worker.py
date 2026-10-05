@@ -460,6 +460,7 @@ def run_lint(job: dict, emit) -> None:
                 "external": external,
                 "error": error[:1000] if error else None,
                 "version": version("ansible-lint"),
+                "repo_config": config != "/dev/null",
             }
         )
         emit({"type": "result", "status": "failed" if error else "successful", "rc": rc})

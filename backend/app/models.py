@@ -644,6 +644,70 @@ class RunTemplate(Base):
     )
 
 
+class LintJob(Base):
+    """A playbook check (Phase 5B): ansible-lint over an editor's text, or over a synced
+    playbook in its repository at the source's current commit. Claimed by a worker like a
+    refresh; its findings are private to whoever asked and pruned after an hour."""
+
+    __tablename__ = "lint_jobs"
+    __table_args__ = (
+        # One queued check per person: a newer one replaces it.
+        Index(
+            "ux_lint_jobs_queued_user",
+            "requested_by_user_id",
+            unique=True,
+            postgresql_where=text("status = 'queued'"),
+        ),
+        Index("ix_lint_jobs_queue", "queued_at", "id", postgresql_where=text("status = 'queued'")),
+        Index(
+            "ix_lint_jobs_lease", "lease_expires_at", postgresql_where=text("status = 'running'")
+        ),
+        Index("ix_lint_jobs_finished_at", "finished_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    requested_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    requested_by: Mapped[str] = mapped_column(String(150))
+    playbook_id: Mapped[int | None] = mapped_column(
+        ForeignKey("playbooks.id", ondelete="SET NULL"), default=None
+    )
+    # The file checked: "playbook.yml" for an editor's text, else its path in the repository.
+    target: Mapped[str] = mapped_column(String(1024))
+    # The editor's text, kept only until the check ends.
+    content: Mapped[str | None] = mapped_column(Text, default=None)
+    content_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
+    git_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("git_snapshots.id", ondelete="SET NULL"), default=None
+    )
+    git_commit: Mapped[str | None] = mapped_column(String(64), default=None)
+    status: Mapped[str] = mapped_column(String(20), default=RunStatus.QUEUED.value)
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    timeout_seconds: Mapped[int] = mapped_column(Integer)
+    worker_id: Mapped[str | None] = mapped_column(String(255), default=None)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    claim_token_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    job_token_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    job_token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    findings: Mapped[list | None] = mapped_column(JSON, default=None)
+    findings_total: Mapped[int | None] = mapped_column(Integer, default=None)
+    truncated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Findings in files outside the project (an installed collection), left out.
+    external: Mapped[int] = mapped_column(Integer, default=0)
+    # Whether the repository's own ansible-lint config was used.
+    repo_config: Mapped[bool] = mapped_column(Boolean, default=False)
+    error: Mapped[str | None] = mapped_column(String(1000), default=None)
+    # A secret's value appeared in a finding and was redacted.
+    scrubbed: Mapped[bool] = mapped_column(Boolean, default=False)
+    ansible_lint_version: Mapped[str | None] = mapped_column(String(40), default=None)
+
+
 class Worker(Base):
     """A worker process as it last reported in (every claim and heartbeat). Only feeds the
     admin Workers page and the "why is my run still queued" hints; claiming never reads it.

@@ -9,9 +9,14 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- **Playbook checks** (API, for the editor's Check button coming next): `POST /api/playbooks/lint`
+  checks text (unsaved, even invalid YAML) and `POST /api/playbooks/{id}/lint` a saved playbook; one
+  synced from git is checked inside its repository at the current commit with the repository's own
+  `.ansible-lint`. ansible-lint runs offline in an isolated worker; findings (rule, level, line, message,
+  docs link) are polled from `GET /api/lint-jobs/{id}`, private to whoever asked, kept for an hour.
+  Operators and admins can check; `LINT_TIMEOUT_SECONDS` and `LINT_MAX_RUNNING` set the limits.
 - The backend image now includes `ansible-lint` and `yamllint` (Ansible-project tools, GPL-3.0, allowed
   by the dependency policy alongside Ansible), the groundwork for checking playbooks in the editor.
-
 - **Run templates**: save a run's playbook, inventory and target, credential, vault password, options and
   extra vars under a name, and start it again in one step from the new Templates page, with the limit and
   check mode changeable per run. Operators and admins manage them (saving one that runs as root needs that
@@ -26,6 +31,11 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 - Releases carry SLSA build provenance for their files: a signed attestation stored by GitHub
   (`gh attestation verify`) and attached as `ansideck-<version>.intoto.jsonl`
   ([docs/verifying-releases.md](docs/verifying-releases.md#build-provenance-from-v011)).
+
+### Upgrading
+
+- Upgrade the workers together with the API (the compose files do): a worker from 0.1.x doesn't take
+  playbook checks, and a check no worker takes fails after two minutes with the reason.
 
 ## [0.1.0] - 2026-10-05
 

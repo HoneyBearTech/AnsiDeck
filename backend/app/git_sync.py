@@ -40,14 +40,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, text, union, update
 from sqlalchemy.orm import Session
 
 from app import audit, metrics
 from app.config import get_settings
 from app.crypto import decrypt_secret
 from app.db import get_engine, get_sessionmaker
-from app.models import Credential, GitSnapshot, GitSource, Playbook, Run, RunStatus
+from app.models import Credential, GitSnapshot, GitSource, LintJob, Playbook, Run, RunStatus
 from app.netguard import DestinationError, literal, resolve, vet
 from app.scrub import _PlaybookLoader
 from app.secret_store import SecretStoreError, explain, resolve_credential
@@ -991,10 +991,13 @@ def due_sources(db: Session) -> list[int]:
 
 def prune_snapshots(db: Session) -> int:
     """Deletes snapshots superseded a while ago that no source points at and no queued or
-    running run is pinned to (their tars too)."""
-    pinned = select(Run.git_snapshot_id).where(
-        Run.status.in_((RunStatus.QUEUED.value, RunStatus.RUNNING.value)),
-        Run.git_snapshot_id.is_not(None),
+    running run or playbook check is pinned to (their tars too)."""
+    active = (RunStatus.QUEUED.value, RunStatus.RUNNING.value)
+    pinned = union(
+        select(Run.git_snapshot_id).where(Run.status.in_(active), Run.git_snapshot_id.is_not(None)),
+        select(LintJob.git_snapshot_id).where(
+            LintJob.status.in_(active), LintJob.git_snapshot_id.is_not(None)
+        ),
     )
     current = select(GitSource.current_snapshot_id).where(
         GitSource.current_snapshot_id.is_not(None)

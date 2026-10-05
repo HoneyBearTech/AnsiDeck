@@ -18,6 +18,7 @@ from app.run_executor import (
     format_duration,
     host_counts,
     inventory_in_worker,
+    lint_in_worker,
     run_in_worker,
     sweep,
 )
@@ -86,8 +87,30 @@ def refresh_error(stderr: str, secrets: list[str], rc: int | None) -> str:
     return (summary or f"ansible-inventory failed (exit code {rc})")[-1000:]
 
 
+_JOB_PATHS = {"run": "runs", "refresh": "refreshes", "lint": "lints"}
+_FINDING_TEXT_FIELDS = ("rule", "message", "details", "path")
+
+
+def scrub_findings(findings: list[dict], secrets: list[str]) -> tuple[list[dict], bool]:
+    """A check's findings with the secrets' values removed from their text (a finding can
+    quote a line of the playbook or a repository file); and whether anything was removed."""
+    scrubber = Scrubber(secrets)
+    scrubbed = False
+    cleaned: list[dict] = []
+    for finding in findings:
+        item = dict(finding)
+        for field in _FINDING_TEXT_FIELDS:
+            if isinstance(item.get(field), str):
+                text = scrubber.scrub_text(item[field])
+                scrubbed = scrubbed or text != item[field]
+                item[field] = text
+        cleaned.append(item)
+    return cleaned, scrubbed
+
+
 class RunTask:
-    """A claimed run, or (kind "refresh") an inventory refresh: run_id is then its id."""
+    """A claimed run, or (kind "refresh" / "lint") an inventory refresh or a playbook check:
+    run_id is then its id."""
 
     def __init__(self, run_id: int, claim_token: str, kind: str = "run") -> None:
         self.run_id = run_id
@@ -321,7 +344,7 @@ class Worker:
                         "slots": self.slots,
                         "isolated": self.isolated,
                         "wait_seconds": self.claim_wait_seconds,
-                        "kinds": ["run", "refresh"],
+                        "kinds": ["run", "refresh", "lint"],
                     },
                     timeout=self.claim_wait_seconds + 15,
                 )
@@ -346,6 +369,8 @@ class Worker:
             try:
                 if task.kind == "refresh":
                     self._execute_refresh(task, claim["job_token"], identity)
+                elif task.kind == "lint":
+                    self._execute_lint(task, claim["job_token"], identity)
                 else:
                     self._execute(task, claim["job_token"], identity)
             except Exception:  # one job's failure must not end the slot
@@ -358,7 +383,7 @@ class Worker:
             sweep(identity)
 
     def _fetch_job(self, task: RunTask, job_token: str) -> dict | None:
-        path = "refreshes" if task.kind == "refresh" else "runs"
+        path = _JOB_PATHS[task.kind]
         for delay in (1, 2, 4, 8, 16, None):
             try:
                 response = self.client.post(
@@ -384,7 +409,7 @@ class Worker:
         for delay in (1, 2, 4, 8, None):
             try:
                 data = self.client.download(
-                    f"/internal/runs/{task.run_id}/snapshot",
+                    f"/internal/{_JOB_PATHS[task.kind]}/{task.run_id}/snapshot",
                     {},
                     claim_token=task.claim_token,
                     max_bytes=expected,
@@ -541,6 +566,100 @@ class Worker:
         else:
             self._upload_refresh(task, output, secrets)
 
+    # ------------------------------------------------------------------ playbook checks
+
+    def _execute_lint(
+        self, task: RunTask, job_token: str, identity: RunIdentity | None = None
+    ) -> None:
+        """A playbook check: ansible-lint in the slot's run process (in the repository for a
+        synced playbook), its findings scrubbed of the secrets' values, then the outcome."""
+        job = self._fetch_job(task, job_token)
+        if job is None:
+            return
+        task.timeout_seconds = job["timeout_seconds"]
+        task.deadline = time.monotonic() + task.timeout_seconds
+        secrets = job["secrets"]
+        logger.info("%s: starting", task.label)
+        snapshot: bytes | None = None
+        if job.get("project"):
+            snapshot = self._fetch_snapshot(task, job["project"])
+            if snapshot is None:
+                self._complete_lint(
+                    task, {"status": "failed", "error": "could not fetch the repository"}
+                )
+                return
+        result: dict | None = None
+        refused: str | None = None
+        try:
+            result = lint_in_worker(
+                {
+                    "content": job["content"],
+                    "project": {"playbook": job["project"]["playbook"]} if snapshot else None,
+                    "prefix": f"ansideck-lint-{task.run_id}-",
+                    "own_home": identity is not None,
+                    "max_findings": job["max_findings"],
+                },
+                clean_env(self._galaxy_env()),
+                task.handle,
+                identity,
+                stdin_tail=snapshot,
+            )
+        except RunRefused as exc:
+            refused = str(exc)
+        except Exception:  # reported as a failed check below
+            if task.handle.stop_reason is None:
+                logger.exception("%s: could not run ansible-lint", task.label)
+        finally:
+            del job
+
+        reason = task.handle.stop_reason
+        if reason == GONE:
+            return
+        if reason is not None:
+            outcome, why = self._outcome(task, reason, None, False)
+            self._complete_lint(task, {"status": outcome, "error": why})
+        elif refused is not None:
+            self._complete_lint(
+                task, {"status": "failed", "error": Scrubber(secrets).scrub_text(refused)}
+            )
+        elif result is None:
+            self._complete_lint(
+                task, {"status": "failed", "error": "the check ended without a result"}
+            )
+        elif result.get("error"):
+            error = Scrubber(secrets).scrub_text(result["error"])
+            self._complete_lint(task, {"status": "failed", "error": error})
+        else:
+            findings, scrubbed = scrub_findings(result["findings"], secrets)
+            self._complete_lint(
+                task,
+                {
+                    "status": "success",
+                    "findings": findings,
+                    "total": result["total"],
+                    "truncated": result["truncated"],
+                    "external": result["external"],
+                    "repo_config": result.get("repo_config", False),
+                    "scrubbed": scrubbed,
+                    "version": result.get("version"),
+                },
+            )
+
+    def _complete_lint(self, task: RunTask, body: dict) -> None:
+        deadline = time.monotonic() + _FLUSH_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            try:
+                response = self.client.post(
+                    f"/internal/lints/{task.run_id}/complete", body, claim_token=task.claim_token
+                )
+            except ApiUnavailable as exc:
+                logger.warning("%s: reporting failed (%s); retrying", task.label, exc)
+                time.sleep(1)
+                continue
+            logger.info("%s: %s (HTTP %s)", task.label, body["status"], response.status_code)
+            return
+        logger.error("%s: could not report the result in time", task.label)
+
     def _upload_refresh(self, task: RunTask, output: str, secrets: list[str]) -> None:
         try:
             data = loads_bounded(output, _MAX_OUTPUT_DEPTH)
@@ -691,6 +810,11 @@ class Worker:
                         for t in tasks
                         if t.kind == "refresh"
                     ],
+                    "lints": [
+                        {"lint_id": t.run_id, "claim_token": t.claim_token}
+                        for t in tasks
+                        if t.kind == "lint"
+                    ],
                 },
                 timeout=max(self.heartbeat_seconds, 2.0),
             )
@@ -702,7 +826,14 @@ class Worker:
                 for answer in answers.get("refreshes", []):
                     answer["run_id"] = answer["refresh_id"]
                     answer["kind"] = "refresh"
-                for answer in [*answers["runs"], *answers.get("refreshes", [])]:
+                for answer in answers.get("lints", []):
+                    answer["run_id"] = answer["lint_id"]
+                    answer["kind"] = "lint"
+                for answer in [
+                    *answers["runs"],
+                    *answers.get("refreshes", []),
+                    *answers.get("lints", []),
+                ]:
                     task = by_key.get((answer.get("kind", "run"), answer["run_id"]))
                     if task is None:
                         continue
