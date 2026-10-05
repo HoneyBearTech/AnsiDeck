@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useParams } from "react-router-dom";
 
+import { InventorySourcesPanel } from "@/components/inventory-sources-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -206,6 +207,8 @@ export function InventoryDetailPage() {
         <h1 className="text-xl font-semibold">{inventory.name}</h1>
         {inventory.description && <p className="text-sm text-muted-foreground">{inventory.description}</p>}
       </div>
+
+      <InventorySourcesPanel inventoryId={inventoryId} projectId={inventory.project_id} />
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">

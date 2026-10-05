@@ -192,6 +192,77 @@ export interface InventoryDetail extends InventorySummary {
   hosts: InventoryHost[];
 }
 
+/** A dynamic inventory source: an inventory plugin's config, refreshed in a worker. */
+export interface InventorySource {
+  id: number;
+  inventory_id: number;
+  name: string;
+  plugin: string;
+  config: string;
+  credential_id: number | null;
+  credential_name: string | null;
+  enabled: boolean;
+  position: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InventorySourceInput {
+  name: string;
+  config: string;
+  credential_id: number | null;
+  enabled: boolean;
+}
+
+export type RefreshStatus = "queued" | "running" | "success" | "failed" | "timed_out";
+
+export interface InventoryRefresh {
+  id: number;
+  status: RefreshStatus;
+  trigger: "manual" | "schedule" | "sources_changed" | "static_changed";
+  requested_by: string | null;
+  queued_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  worker_id: string | null;
+  error: string | null;
+  snapshot_id: number | null;
+}
+
+export interface InventorySnapshot {
+  id: number;
+  created_at: string;
+  refresh_id: number | null;
+  host_count: number;
+  group_count: number;
+  warnings: string[];
+  sources: { id: number; name: string; plugin: string }[];
+  vars: Record<string, unknown>;
+  groups: { name: string; hosts: number; children: string[]; vars: Record<string, unknown> }[];
+}
+
+export type HostOrigin = "static" | "source" | "both";
+
+export interface MergedHost {
+  name: string;
+  origin: HostOrigin;
+  groups: string[];
+  vars: Record<string, unknown>;
+  // Keys whose source value the inventory's own vars replace.
+  overridden: string[];
+}
+
+export interface InventoryTargets {
+  has_sources: boolean;
+  hosts: number;
+  groups: { name: string; hosts: number; origin: HostOrigin }[];
+  snapshot_id: number | null;
+  snapshot_at: string | null;
+  last_refresh: InventoryRefresh | null;
+  refresh_interval_seconds: number;
+}
+
 // Where a credential's key or a vault password lives: encrypted in AnsiDeck, or a reference
 // into the secret store (OpenBao / Vault), read when a run starts.
 export interface SecretRef {
@@ -639,6 +710,35 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   deleteInventory: (id: number) => request<void>(`/inventories/${id}`, { method: "DELETE" }),
+
+  listInventorySources: (id: number) => request<InventorySource[]>(`/inventories/${id}/sources`),
+  createInventorySource: (id: number, input: InventorySourceInput) =>
+    request<InventorySource>(`/inventories/${id}/sources`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateInventorySource: (id: number, sourceId: number, input: Partial<InventorySourceInput>) =>
+    request<InventorySource>(`/inventories/${id}/sources/${sourceId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  deleteInventorySource: (id: number, sourceId: number) =>
+    request<void>(`/inventories/${id}/sources/${sourceId}`, { method: "DELETE" }),
+  refreshInventory: (id: number) =>
+    request<InventoryRefresh | null>(`/inventories/${id}/refresh`, { method: "POST" }),
+  listInventoryRefreshes: (id: number, limit = 10) =>
+    request<InventoryRefresh[]>(`/inventories/${id}/refreshes?limit=${limit}`),
+  getInventorySnapshot: (id: number) => request<InventorySnapshot | null>(`/inventories/${id}/snapshot`),
+  inventoryHosts: (id: number, q: string, page = 1) =>
+    request<{ total: number; hosts: MergedHost[] }>(
+      `/inventories/${id}/hosts?page=${page}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+    ),
+  inventoryTargets: (id: number) => request<InventoryTargets>(`/inventories/${id}/targets`),
+  setInventoryRefreshInterval: (id: number, seconds: number) =>
+    request<InventoryTargets>(`/inventories/${id}/refresh-settings`, {
+      method: "PUT",
+      body: JSON.stringify({ refresh_interval_seconds: seconds }),
+    }),
 
   createGroup: (inventoryId: number, name: string) =>
     request<InventoryGroup>(`/inventories/${inventoryId}/groups`, {

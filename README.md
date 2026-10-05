@@ -248,10 +248,14 @@ A source that needs an API token gets it from an **environment-variables credent
 secrets themselves, since anyone who can see the inventory can read them. Text that comes from a source (a
 NetBox description, a cloud tag) is never treated as a template in a run.
 
-Project admins manage sources (`POST /api/inventories/{id}/sources`, `PATCH`/`DELETE …/sources/{source id}`,
-`PUT …/refresh-settings`); operators can `POST …/refresh`; anyone who can see the inventory can read
-`…/sources`, `…/refreshes`, `…/snapshot`, `…/hosts` and `…/targets`. Plugins that need Python packages the
-image doesn't have (AWS needs boto3, Proxmox needs requests) don't work yet.
+On an inventory's page, **Dynamic sources** lists its sources (with examples for NetBox, constructed and
+generator), the last refresh and its error, the groups the sources found and every host a run will see, marked
+by where it came from. **New Run** offers the sources' groups as targets and says how old the snapshot is.
+Project admins manage sources (through the API too: `POST /api/inventories/{id}/sources`,
+`PATCH`/`DELETE …/sources/{source id}`, `PUT …/refresh-settings`); operators can refresh (`POST …/refresh`);
+anyone who can see the inventory can read `…/sources`, `…/refreshes`, `…/snapshot`, `…/hosts` and `…/targets`.
+The image includes what the NetBox plugin needs; plugins that need other Python packages (AWS needs boto3,
+Proxmox needs requests) don't work yet.
 
 ## Notifications
 

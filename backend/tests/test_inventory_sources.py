@@ -2,6 +2,7 @@
 real ansible-inventory, snapshots normalised as untrusted data, runs that use them."""
 
 import json
+import re
 import time
 
 from fastapi.testclient import TestClient
@@ -16,6 +17,7 @@ from app.models import (
     NotificationAlert,
 )
 from app.storage import run_log_path
+from app.worker.runner import refresh_error
 from tests.conftest import start_worker
 from tests.test_runs import _create_credential, _create_playbook, _login, _wait_for_completion
 
@@ -35,6 +37,7 @@ keyed_groups:
     prefix: role
 compose:
   composed: "'from-' ~ role"
+  owner: "'a source'"
 """
 
 
@@ -43,7 +46,10 @@ def _inventory(client: TestClient, name: str = "dyn") -> int:
     for hostname, role in (("web1", "web"), ("db1", "db")):
         response = client.post(
             f"/api/inventories/{inventory_id}/hosts",
-            json={"hostname": hostname, "vars": {"role": role, "ansible_connection": "local"}},
+            json={
+                "hostname": hostname,
+                "vars": {"role": role, "ansible_connection": "local", "owner": "the inventory"},
+            },
         )
         assert response.status_code == 201, response.text
     return inventory_id
@@ -90,7 +96,9 @@ def test_sources_are_refreshed_by_a_worker_and_runs_use_them(client: TestClient)
     assert hosts["total"] == 1
     web1 = hosts["hosts"][0]
     assert web1["origin"] == "both" and web1["groups"] == ["role_web"]
-    assert web1["vars"]["composed"] == "from-web" and "role" in web1["overridden"]
+    assert web1["vars"]["composed"] == "from-web"
+    # The source changed `owner` (the inventory's value wins); `role` came back unchanged.
+    assert web1["overridden"] == ["owner"] and web1["vars"]["owner"] == "the inventory"
 
     playbook_id = _create_playbook(
         client,
@@ -134,7 +142,9 @@ def test_a_broken_source_fails_the_refresh_and_alerts_once(client: TestClient) -
     )
     failed = _wait_refresh(client, inventory_id)
     assert failed["status"] == "failed"
-    assert f"src{broken['id']}.nb_inventory.yml" in failed["error"]  # names the source's file
+    # names the source's file and the plugin's own reason
+    assert re.match(rf"\d\d-src{broken['id']}\.nb_inventory\.yml: .*refused", failed["error"])
+    assert "Completely failed" not in failed["error"]
     assert "nb-sentinel-token-123" not in failed["error"]
     # Runs keep using the last good snapshot.
     targets = client.get(f"/api/inventories/{inventory_id}/targets").json()
@@ -239,3 +249,22 @@ def test_a_refresh_that_overruns_is_stopped(client: TestClient) -> None:
         client.worker.stop()
     assert refresh["status"] == "timed_out", refresh
     assert refresh["error"].startswith("timed out after")
+
+
+def test_a_failed_refresh_says_which_source_failed_and_why() -> None:
+    stderr = (
+        "[WARNING]: Failed to parse inventory with 'auto' plugin: pytz must be installed\n"
+        "Failed to parse inventory with 'auto' plugin.\n"
+        "[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML "
+        "file, not YAML inventory\n"
+        "[ERROR]: Completely failed to parse inventory source "
+        "/tmp/ansideck-refresh-4-ab12/inventory/10-src1.nb_inventory.yml\n"
+        "[WARNING]: Failed to parse inventory with 'auto' plugin: token sekret-123 refused\n"
+        "[ERROR]: Completely failed to parse inventory source "
+        "/tmp/ansideck-refresh-4-ab12/inventory/11-src2.nb_inventory.yml\n"
+    )
+    assert refresh_error(stderr, ["sekret-123"], 1) == (
+        "10-src1.nb_inventory.yml: pytz must be installed\n"
+        "11-src2.nb_inventory.yml: token [REDACTED] refused"
+    )
+    assert refresh_error("", [], 3) == "ansible-inventory failed (exit code 3)"
