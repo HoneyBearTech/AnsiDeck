@@ -77,7 +77,7 @@ def _run_out(db: Session, run: Run, user: User) -> RunOut:
         out.commit_url = commit_url(source.web_url if source else None, run.git_commit)
     can_see = Permission.RUNS_READ_EXTRA_VARS in project_permissions(db, user, run.project_id)
     if out.extra_vars and not can_see:
-        out.extra_vars = {key: HIDDEN for key in out.extra_vars}
+        out.extra_vars = dict.fromkeys(out.extra_vars, HIDDEN)
     return out
 
 

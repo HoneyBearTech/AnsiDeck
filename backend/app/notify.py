@@ -24,7 +24,7 @@ class Listener:
         with contextlib.suppress(RuntimeError):  # the listener's loop has already closed
             self._loop.call_soon_threadsafe(self._event.set)
 
-    async def wait(self, timeout: float) -> bool:
+    async def wait(self, timeout: float) -> bool:  # noqa: ASYNC109 - callers wait for a wake-up OR a timeout
         """True if notified since the previous wait() (or since listening began), False on
         timeout. Notifications that arrive while the caller is busy are not lost."""
         try:

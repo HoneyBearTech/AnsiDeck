@@ -11,6 +11,7 @@ the later migrations then run on the imported rows in the same transaction, so t
 backfills apply exactly as they did on installs that were already on Postgres.
 """
 
+import contextlib
 import sqlite3
 import tempfile
 from collections.abc import Callable
@@ -144,7 +145,8 @@ def _backfill_projects(engine: Engine) -> None:
         default_id = row[0]
         for table in _PROJECT_SCOPED_TABLES:
             conn.exec_driver_sql(
-                f"UPDATE {table} SET project_id = ? WHERE project_id IS NULL", (default_id,)
+                f"UPDATE {table} SET project_id = ? WHERE project_id IS NULL",  # noqa: S608 - fixed table names
+                (default_id,),
             )
         conn.exec_driver_sql(
             "INSERT OR IGNORE INTO project_members (project_id, user_id, role) "
@@ -202,12 +204,16 @@ def _problems(table: Table, row: dict, known_ids: dict[str, set], fixes: list[st
         value = row.get(column.name)
         if isinstance(value, datetime) and value.tzinfo is None:
             row[column.name] = value.replace(tzinfo=UTC)  # the app always stored UTC
-        if isinstance(column.type, String) and column.type.length and isinstance(value, str):
-            if len(value) > column.type.length:
-                found.append(
-                    f"{where}: {column.name} is {len(value)} characters, "
-                    f"the limit is {column.type.length}"
-                )
+        if (
+            isinstance(column.type, String)
+            and column.type.length
+            and isinstance(value, str)
+            and len(value) > column.type.length
+        ):
+            found.append(
+                f"{where}: {column.name} is {len(value)} characters, "
+                f"the limit is {column.type.length}"
+            )
         for fk in column.foreign_keys:
             target = fk.column.table.name
             if value is None or value in known_ids.get(target, set()):
@@ -253,7 +259,9 @@ def _reset_to_sqlite_era_schema(dst: Connection) -> list[Table]:
     existing.reflect(dst, only=lambda name, _: name in ours)
     non_empty = [
         t.name
-        for t in existing.sorted_tables
+        # Any order: today's schema has foreign-key cycles (use_alter), which sorted_tables
+        # can't order once reflected.
+        for t in sorted(existing.tables.values(), key=lambda t: t.name)
         if t.name != "alembic_version" and dst.execute(select(func.count()).select_from(t)).scalar()
     ]
     if non_empty:
@@ -310,7 +318,7 @@ def _copy(
                 ):
                     dst.execute(
                         text(
-                            f"SELECT setval(pg_get_serial_sequence(:t, 'id'), "
+                            f"SELECT setval(pg_get_serial_sequence(:t, 'id'), "  # noqa: S608 - constants and quoted identifiers only
                             f'COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) FROM "{table.name}"'
                         ),
                         {"t": table.name},
@@ -349,7 +357,8 @@ def import_sqlite(
         try:
             original = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
             try:
-                with sqlite3.connect(copy) as duplicate:
+                # closing(): sqlite3's own context manager commits but never closes.
+                with contextlib.closing(sqlite3.connect(copy)) as duplicate:
                     original.backup(duplicate)
             finally:
                 original.close()

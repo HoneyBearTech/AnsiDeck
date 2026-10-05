@@ -116,7 +116,7 @@ VIEWS = {
                    END
                END AS client_network
         FROM public.audit_events a
-    """,
+    """,  # noqa: S608 - the reasons are constants
     "notification_deliveries": """
         SELECT d.id AS delivery_id, d.channel_id, c.name AS channel, c.kind, c.project_id,
                d.event, d.status, d.attempts, d.last_status_code, d.created_at, d.sent_at

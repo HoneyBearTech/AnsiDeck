@@ -5,6 +5,7 @@ controls. Never import ansible.cli here (blocking-IO crash); ansible.parsing
 via app.vault is safe.
 """
 
+import contextlib
 import json
 import re
 from collections.abc import Callable, Iterable
@@ -154,10 +155,8 @@ def collect_secrets(
         for data in repo_vars:
             _collect_vault_texts(data, vaulted)
         for text in vaulted:
-            try:
+            with contextlib.suppress(VaultError):
                 secrets.add(decrypt_vault_text(text, vault_password))
-            except VaultError:
-                pass
     return secrets
 
 
@@ -172,8 +171,8 @@ def _variants(secret: str) -> set[str]:
     secret = secret.strip("\r\n")
     variants = {secret, json.dumps(secret)[1:-1]}
     if "\n" in secret:
-        for line in secret.splitlines():
-            line = line.strip()
+        for raw in secret.splitlines():
+            line = raw.strip()
             if len(line) >= _MIN_LINE_LEN:
                 variants.add(line)
                 variants.add(json.dumps(line)[1:-1])

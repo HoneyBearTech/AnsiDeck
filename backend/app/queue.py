@@ -153,7 +153,7 @@ def record_worker(db: Session, worker_id: str, slots: int, isolated: bool | None
     try:
         with db.begin_nested():
             worker_seen(db, worker_id, slots, isolated)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("could not check worker %s for notifications", worker_id)
 
 

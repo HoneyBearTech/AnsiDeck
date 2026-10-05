@@ -669,9 +669,9 @@ export const api = {
   listAudit: (params: {
     limit: number;
     offset: number;
-    action?: string;
-    actor?: string;
-    outcome?: string;
+    action?: string | undefined;
+    actor?: string | undefined;
+    outcome?: string | undefined;
   }) => {
     const query = new URLSearchParams({
       limit: String(params.limit),

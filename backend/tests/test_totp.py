@@ -243,7 +243,7 @@ def test_a_correct_password_does_not_reset_the_throttle_before_the_code(
     client: TestClient, clock
 ) -> None:
     _login(client)
-    secret, _ = _enable(client, clock)
+    _secret, _ = _enable(client, clock)
     browser = TestClient(app)
     for _ in range(5):
         _login(browser)

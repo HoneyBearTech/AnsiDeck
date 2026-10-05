@@ -24,7 +24,10 @@ import { useAuth } from "@/context/auth-context";
 import { api, ApiError, type Credential, type CredentialKind, type SecretStoreInfo } from "@/lib/api";
 import { useSecretStoreInfo } from "@/lib/secret-store";
 
-type EnvRow = { name: string; value: string };
+type EnvRow = { id: number; name: string; value: string };
+
+let nextRowId = 0;
+const newEnvRow = (): EnvRow => ({ id: nextRowId++, name: "", value: "" });
 
 const KIND_LABELS: Record<CredentialKind, string> = {
   ssh: "SSH key",
@@ -40,7 +43,7 @@ function EnvRows({ rows, onChange }: { rows: EnvRow[]; onChange: (rows: EnvRow[]
     <div className="flex flex-col gap-2">
       <Label>Variables</Label>
       {rows.map((row, index) => (
-        <div key={index} className="flex items-center gap-2">
+        <div key={row.id} className="flex items-center gap-2">
           <Input
             aria-label={`Variable ${index + 1} name`}
             value={row.name}
@@ -74,7 +77,7 @@ function EnvRows({ rows, onChange }: { rows: EnvRow[]; onChange: (rows: EnvRow[]
           type="button"
           variant="outline"
           size="sm"
-          onClick={() => onChange([...rows, { name: "", value: "" }])}
+          onClick={() => onChange([...rows, newEnvRow()])}
         >
           Add variable
         </Button>
@@ -100,7 +103,7 @@ function CreateCredentialDialog({
   const [description, setDescription] = React.useState("");
   const [privateKey, setPrivateKey] = React.useState("");
   const [kind, setKind] = React.useState<CredentialKind>("ssh");
-  const [envRows, setEnvRows] = React.useState<EnvRow[]>([{ name: "", value: "" }]);
+  const [envRows, setEnvRows] = React.useState<EnvRow[]>(() => [newEnvRow()]);
   const [mode, setMode] = React.useState<SourceMode>("ansideck");
   const [storePath, setStorePath] = React.useState("");
   const [storeKey, setStoreKey] = React.useState("private_key");
@@ -141,7 +144,7 @@ function CreateCredentialDialog({
       setName("");
       setDescription("");
       setPrivateKey("");
-      setEnvRows([{ name: "", value: "" }]);
+      setEnvRows([newEnvRow()]);
       setStorePath("");
       setOpen(false);
       onCreated();
@@ -174,21 +177,21 @@ function CreateCredentialDialog({
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
-          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Credential kind">
+          <fieldset className="flex flex-wrap gap-2">
+            <legend className="sr-only">Credential kind</legend>
             {(["ssh", "env"] as const).map((value) => (
               <Button
                 key={value}
                 type="button"
                 size="sm"
-                role="radio"
-                aria-checked={kind === value}
+                aria-pressed={kind === value}
                 variant={kind === value ? "default" : "outline"}
                 onClick={() => setKind(value)}
               >
                 {KIND_LABELS[value]}
               </Button>
             ))}
-          </div>
+          </fieldset>
           {kind === "ssh" ? (
             <SecretSourcePicker
               info={store}

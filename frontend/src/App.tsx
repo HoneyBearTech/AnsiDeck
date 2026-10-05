@@ -1,27 +1,30 @@
+import * as React from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { AppShell } from "@/components/app-shell";
 import { ProtectedRoute } from "@/components/protected-route";
 import { RequirePermission } from "@/components/require-permission";
 import { AuthProvider } from "@/context/auth-context";
-import { AccountPage } from "@/pages/account-page";
-import { AuditPage } from "@/pages/audit-page";
-import { CredentialsPage } from "@/pages/credentials-page";
 import { DashboardPage } from "@/pages/dashboard-page";
-import { GalaxyPage } from "@/pages/galaxy-page";
-import { InventoriesPage } from "@/pages/inventories-page";
-import { InventoryDetailPage } from "@/pages/inventory-detail-page";
 import { LoginPage } from "@/pages/login-page";
-import { NotificationsPage } from "@/pages/notifications-page";
-import { PlaybookDetailPage } from "@/pages/playbook-detail-page";
-import { PlaybooksPage } from "@/pages/playbooks-page";
-import { ProjectsPage } from "@/pages/projects-page";
-import { RunDetailPage } from "@/pages/run-detail-page";
-import { RunTriggerPage } from "@/pages/run-trigger-page";
-import { RunsPage } from "@/pages/runs-page";
-import { UsersPage } from "@/pages/users-page";
-import { VaultPage } from "@/pages/vault-page";
-import { WorkersPage } from "@/pages/workers-page";
+
+// Pages other than sign-in and the dashboard load on first visit, keeping the initial bundle small.
+const AccountPage = React.lazy(() => import("@/pages/account-page").then((m) => ({ default: m.AccountPage })));
+const AuditPage = React.lazy(() => import("@/pages/audit-page").then((m) => ({ default: m.AuditPage })));
+const CredentialsPage = React.lazy(() => import("@/pages/credentials-page").then((m) => ({ default: m.CredentialsPage })));
+const GalaxyPage = React.lazy(() => import("@/pages/galaxy-page").then((m) => ({ default: m.GalaxyPage })));
+const InventoriesPage = React.lazy(() => import("@/pages/inventories-page").then((m) => ({ default: m.InventoriesPage })));
+const InventoryDetailPage = React.lazy(() => import("@/pages/inventory-detail-page").then((m) => ({ default: m.InventoryDetailPage })));
+const NotificationsPage = React.lazy(() => import("@/pages/notifications-page").then((m) => ({ default: m.NotificationsPage })));
+const PlaybookDetailPage = React.lazy(() => import("@/pages/playbook-detail-page").then((m) => ({ default: m.PlaybookDetailPage })));
+const PlaybooksPage = React.lazy(() => import("@/pages/playbooks-page").then((m) => ({ default: m.PlaybooksPage })));
+const ProjectsPage = React.lazy(() => import("@/pages/projects-page").then((m) => ({ default: m.ProjectsPage })));
+const RunDetailPage = React.lazy(() => import("@/pages/run-detail-page").then((m) => ({ default: m.RunDetailPage })));
+const RunTriggerPage = React.lazy(() => import("@/pages/run-trigger-page").then((m) => ({ default: m.RunTriggerPage })));
+const RunsPage = React.lazy(() => import("@/pages/runs-page").then((m) => ({ default: m.RunsPage })));
+const UsersPage = React.lazy(() => import("@/pages/users-page").then((m) => ({ default: m.UsersPage })));
+const VaultPage = React.lazy(() => import("@/pages/vault-page").then((m) => ({ default: m.VaultPage })));
+const WorkersPage = React.lazy(() => import("@/pages/workers-page").then((m) => ({ default: m.WorkersPage })));
 
 function App() {
   return (

@@ -86,7 +86,7 @@ def revoke(db: Session, role: str) -> None:
     _role(db, role)
     quoted = _quoted(db, role)
     db.execute(
-        text(f"ALTER DEFAULT PRIVILEGES IN SCHEMA {SCHEMA} REVOKE SELECT ON TABLES FROM {quoted}")
+        text(f"ALTER DEFAULT PRIVILEGES IN SCHEMA {SCHEMA} REVOKE SELECT ON TABLES FROM {quoted}")  # noqa: S608 - constants and quoted identifiers only
     )
     db.execute(text(f"REVOKE ALL ON ALL TABLES IN SCHEMA {SCHEMA} FROM {quoted}"))
     db.execute(text(f"REVOKE ALL ON SCHEMA {SCHEMA} FROM {quoted}"))

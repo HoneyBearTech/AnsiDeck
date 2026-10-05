@@ -54,6 +54,7 @@ export function AuditPage() {
   }, [offset, action, actor, outcome]);
 
   React.useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- loads from the API whenever the filters change
     load();
   }, [load]);
 

@@ -348,7 +348,7 @@ class Worker:
                     self._execute_refresh(task, claim["job_token"], identity)
                 else:
                     self._execute(task, claim["job_token"], identity)
-            except Exception:  # noqa: BLE001 - one job's failure must not end the slot
+            except Exception:  # one job's failure must not end the slot
                 logger.exception("%s: the worker failed", task.label)
             finally:
                 dirty = True
@@ -469,7 +469,7 @@ class Worker:
             )
         except RunRefused as exc:
             refused = str(exc)
-        except Exception:  # noqa: BLE001 - reported as a failed run below
+        except Exception:  # reported as a failed run below
             if task.handle.stop_reason is None:
                 logger.exception("run %s: could not run the playbook", task.run_id)
             crashed = True  # (a stopped run's last, cut-off output line can land here)
@@ -520,7 +520,7 @@ class Worker:
             )
         except RunRefused as exc:
             refused = str(exc)
-        except Exception:  # noqa: BLE001 - reported as a failed refresh below
+        except Exception:  # reported as a failed refresh below
             if task.handle.stop_reason is None:
                 logger.exception("%s: could not run ansible-inventory", task.label)
         finally:
@@ -663,7 +663,7 @@ class Worker:
         while not self._heartbeat_stop.wait(self.heartbeat_seconds):
             try:
                 self.beat()
-            except Exception:  # noqa: BLE001 - the heartbeat must keep going
+            except Exception:  # the heartbeat must keep going
                 logger.exception("heartbeat failed")
 
     def beat(self) -> None:

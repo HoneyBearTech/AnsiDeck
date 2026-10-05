@@ -210,9 +210,8 @@ def test_a_key_is_confined_to_its_own_project(world) -> None:
     # Mixing: A's playbook with B's credential is refused too.
     mixed = _run_body(a, credential_id=b["credential"])
     assert key.post("/api/runs", json=mixed).status_code in (400, 404)
-    with pytest.raises(WebSocketDisconnect):
-        with key.websocket_connect(f"/api/runs/{b['run']}/ws"):
-            pass
+    with pytest.raises(WebSocketDisconnect), key.websocket_connect(f"/api/runs/{b['run']}/ws"):
+        pass
 
 
 def test_a_key_cannot_use_become(world) -> None:
@@ -436,8 +435,8 @@ def test_websocket_log_stream_accepts_a_key_header(world) -> None:
     assert "event" in first
 
     for headers in ({}, {"Authorization": "Bearer ansd_00000000_nope"}):
-        with pytest.raises(WebSocketDisconnect):
-            with TestClient(app).websocket_connect(
-                f"/api/runs/{a['run']}/ws", headers=headers
-            ) as ws:
-                ws.receive_text()
+        with (
+            pytest.raises(WebSocketDisconnect),
+            TestClient(app).websocket_connect(f"/api/runs/{a['run']}/ws", headers=headers) as ws,
+        ):
+            ws.receive_text()

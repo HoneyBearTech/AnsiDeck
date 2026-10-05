@@ -27,8 +27,8 @@ def public(address: Address) -> bool:
 
 
 def allowlisted(host: str, address: Address, allowlist: list[str]) -> bool:
-    for entry in allowlist:
-        entry = entry.strip().lower()
+    for raw in allowlist:
+        entry = raw.strip().lower()
         if not entry:
             continue
         try:

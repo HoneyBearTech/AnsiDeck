@@ -106,7 +106,7 @@ def run_finished(db: Session, run: Run) -> None:
     try:
         with db.begin_nested():
             emit(db, event, project_id=run.project_id, data=data)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("could not queue %s for run %s", event, run.id)
 
 

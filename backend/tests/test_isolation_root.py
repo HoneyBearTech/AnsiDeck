@@ -58,7 +58,7 @@ def _run(
     playbook: str, slot: int, handle=None, run_id: int = 1, repository: bytes | None = None, **env
 ):
     events: list[dict] = []
-    status, rc = run_in_worker(
+    status, _rc = run_in_worker(
         {
             "files": {"playbook": playbook, "inventory": INVENTORY},
             "project": {"playbook": "site.yml"} if repository else None,

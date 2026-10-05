@@ -5,6 +5,7 @@ Each property is a plain Hypothesis test so a coverage-guided fuzzer can
 reuse it later via `test_x.hypothesis.fuzz_one_input`.
 """
 
+import contextlib
 import json
 import re
 import time
@@ -233,10 +234,8 @@ vault_envelopes = st.builds(
 @example("\ud800", "pw")
 @settings(deadline=None)
 def test_decrypt_raises_only_vault_error(text: str, password: str) -> None:
-    try:
+    with contextlib.suppress(VaultError):
         decrypt_vault_text(text, password)
-    except VaultError:
-        pass
 
 
 @given(any_text, any_text)
@@ -244,10 +243,8 @@ def test_decrypt_raises_only_vault_error(text: str, password: str) -> None:
 @example("\ud800", "pw")
 @settings(max_examples=30, deadline=None)
 def test_encrypt_raises_only_vault_error(plaintext: str, password: str) -> None:
-    try:
+    with contextlib.suppress(VaultError):
         encrypt_to_vault_envelope(plaintext, password)
-    except VaultError:
-        pass
 
 
 @given(

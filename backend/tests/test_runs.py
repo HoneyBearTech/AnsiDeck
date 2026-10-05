@@ -1,3 +1,4 @@
+import contextlib
 import glob
 import json
 import sys
@@ -524,7 +525,7 @@ def _run_topics() -> set[str]:
 
 def _receive_until_closed(ws) -> tuple[list[str], int]:
     lines = []
-    with pytest.raises(WebSocketDisconnect) as closed:
+    with pytest.raises(WebSocketDisconnect) as closed:  # noqa: PT012 - read until the server closes
         while True:
             lines.append(ws.receive_text())
     return lines, closed.value.code
@@ -582,9 +583,11 @@ def test_run_websocket_resumes_from_a_line(client: TestClient, tmp_path) -> None
         with client.websocket_connect(f"/api/runs/{run_id}/ws?from={start}") as ws:
             assert _receive_until_closed(ws) == (log[start:], 1000)
 
-    with pytest.raises(WebSocketDisconnect) as rejected:
-        with client.websocket_connect(f"/api/runs/{run_id}/ws?from=-1"):
-            pass
+    with (
+        pytest.raises(WebSocketDisconnect) as rejected,
+        client.websocket_connect(f"/api/runs/{run_id}/ws?from=-1"),
+    ):
+        pass
     assert rejected.value.code == 1008
 
 
@@ -957,11 +960,9 @@ def test_run_output_is_scrubbed_in_log_stream_and_replay(client: TestClient, tmp
     log_text = (tmp_path / "runs" / f"{run_id}.jsonl").read_text()
     with client.websocket_connect(f"/api/runs/{run_id}/ws") as ws:
         replay_text = ""
-        try:
+        with contextlib.suppress(Exception):  # the server closes the socket when replay ends
             while True:
                 replay_text += ws.receive_text()
-        except Exception:  # noqa: BLE001 - server closes the socket when replay ends
-            pass
     api_text = client.get(f"/api/runs/{run_id}").text + client.get("/api/runs").text
 
     for name, text in {

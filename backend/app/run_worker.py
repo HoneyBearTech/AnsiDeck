@@ -68,7 +68,7 @@ def unpack_project(stream, project: Path) -> None:
         return tarfile.data_filter(member, path)
 
     with tarfile.open(fileobj=stream, mode="r|") as tar:
-        tar.extractall(project, filter=guarded)
+        tar.extractall(project, filter=guarded)  # noqa: S202 - guarded by a data filter
     while stream.read(65536):  # the archive's padding: the sender is still writing it
         pass
 
@@ -94,14 +94,12 @@ def _search_path(project: Path, variable: str, keys: tuple[str, ...], default: s
     cfg = project / "ansible.cfg"
     if cfg.is_file():
         parser = configparser.ConfigParser(interpolation=None, strict=False)
-        try:
+        with contextlib.suppress(configparser.Error, UnicodeDecodeError):
             parser.read(cfg, encoding="utf-8")
-        except (configparser.Error, UnicodeDecodeError):
-            pass
         inside = os.path.realpath(project) + os.sep
         for key in keys:
-            for entry in parser.get("defaults", key, fallback="").split(os.pathsep):
-                entry = entry.strip()
+            for raw in parser.get("defaults", key, fallback="").split(os.pathsep):
+                entry = raw.strip()
                 if not entry or entry.startswith("~"):
                     continue
                 path = Path(os.path.realpath(project / entry))
@@ -120,7 +118,7 @@ def prepare(job: dict) -> str:
     own_home = job.pop("own_home", False)
     repository = job.pop("project", None)
     # Short paths: SSH's control and agent sockets live in here (104-108 byte limit).
-    base = "/tmp" if os.path.isdir("/tmp") else None
+    base = "/tmp" if os.path.isdir("/tmp") else None  # noqa: S108 - short socket paths; mkdtemp is private
     pdd = Path(tempfile.mkdtemp(prefix=job.pop("prefix", "ansideck-run-"), dir=base))
     project = pdd / "project"
     project.mkdir()
@@ -191,7 +189,7 @@ def run_inventory(job: dict, emit) -> None:
     "result". The plugins run in a grandchild that can't reach the message pipe."""
     import subprocess
 
-    base = "/tmp" if os.path.isdir("/tmp") else None
+    base = "/tmp" if os.path.isdir("/tmp") else None  # noqa: S108 - short socket paths; mkdtemp is private
     pdd = Path(tempfile.mkdtemp(prefix=job.get("prefix", "ansideck-refresh-"), dir=base))
     emit({"type": "started", "private_data_dir": str(pdd)})
     try:
@@ -222,7 +220,7 @@ def run_inventory(job: dict, emit) -> None:
             command += ["-i", path]
         command += ["--list", "--export", "--output", str(output)]
         with open(stderr, "wb") as err:
-            rc = subprocess.run(
+            rc = subprocess.run(  # noqa: S603 - argument list, no shell
                 command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
                 env=env, cwd=pdd, check=False,
             ).returncode  # fmt: skip

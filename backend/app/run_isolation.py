@@ -27,10 +27,10 @@ RUN_UID_BASE = 20000
 MAX_SLOTS = 64  # the image has this many run users; WorkerSettings caps WORKER_SLOTS to it
 # Where a run can leave files behind: the shared writable temp dirs (the worker's root
 # filesystem is read-only). Its private data dir lives under /tmp, so it is swept too.
-SWEEP_DIRS = ("/tmp", "/var/tmp", "/dev/shm")
+SWEEP_DIRS = ("/tmp", "/var/tmp", "/dev/shm")  # noqa: S108 - fixed paths in the container
 # Root-owned, so no run user can create (squat) another slot's home. The image's passwd
 # entries point here (backend/Dockerfile).
-HOME_ROOT = "/tmp/ansideck-home"
+HOME_ROOT = "/tmp/ansideck-home"  # noqa: S108 - fixed paths in the container
 # Bit numbers in the capability sets (linux/capability.h).
 REQUIRED_CAPS = {"CHOWN": 0, "KILL": 5, "SETGID": 6, "SETUID": 7}
 SETPRIV_FALLBACK = "/usr/bin/setpriv"

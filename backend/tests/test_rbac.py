@@ -124,9 +124,11 @@ def test_every_route_carries_a_permission_guard_or_is_explicitly_public() -> Non
         guarded = any(
             getattr(d.call, "_is_permission_guard", False) for d in _walk(route.dependant)
         )
-        for method in route.methods:
-            if not guarded and (route.path, method) not in PUBLIC:
-                unguarded.append((method, route.path))
+        unguarded.extend(
+            (method, route.path)
+            for method in route.methods
+            if not guarded and (route.path, method) not in PUBLIC
+        )
     assert unguarded == []
 
 
@@ -225,14 +227,15 @@ def test_viewer_sees_hidden_extra_vars_but_operator_sees_values(
 
 def test_websocket_requires_auth_permission_and_valid_origin(client: TestClient) -> None:
     clients = _clients(client)
-    with pytest.raises(WebSocketDisconnect):
-        with TestClient(app).websocket_connect("/api/runs/1/ws"):
-            pass
-    with pytest.raises(WebSocketDisconnect):
-        with clients["admin"].websocket_connect(
+    with pytest.raises(WebSocketDisconnect), TestClient(app).websocket_connect("/api/runs/1/ws"):
+        pass
+    with (
+        pytest.raises(WebSocketDisconnect),
+        clients["admin"].websocket_connect(
             "/api/runs/1/ws", headers={"origin": "http://evil.example"}
-        ):
-            pass
+        ),
+    ):
+        pass
 
     admin = clients["admin"]
     admin.patch("/api/users/1", json={"is_active": True})
@@ -240,9 +243,8 @@ def test_websocket_requires_auth_permission_and_valid_origin(client: TestClient)
     user_id = admin.get("/api/users").json()
     viewer_id = next(u["id"] for u in user_id if u["username"] == "viewer1")
     assert admin.patch(f"/api/users/{viewer_id}", json={"is_active": False}).status_code == 200
-    with pytest.raises(WebSocketDisconnect):
-        with clients["viewer"].websocket_connect("/api/runs/1/ws"):
-            pass
+    with pytest.raises(WebSocketDisconnect), clients["viewer"].websocket_connect("/api/runs/1/ws"):
+        pass
 
 
 # ---------- Origin check (CSRF)

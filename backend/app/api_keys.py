@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.models import ApiKey, User
 
-TOKEN_PREFIX = "ansd"
+TOKEN_PREFIX = "ansd"  # noqa: S105 - public key prefix
 KEY_PRESETS = ("trigger", "read-only")
 KEY_ROLE_PREFIX = "key:"
 MAX_TOKEN_LENGTH = 200
@@ -60,7 +60,7 @@ def principal_for(key: ApiKey) -> User:
     # "apikey:" can't collide with a real username (usernames may not contain ":").
     principal = User(
         username=f"apikey:{key.name}",
-        password_hash="!",  # never verifiable
+        password_hash="!",  # noqa: S106 - never verifiable
         role="viewer",
         is_active=True,
         session_version=0,

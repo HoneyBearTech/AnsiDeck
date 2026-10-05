@@ -93,9 +93,9 @@ function ChangePasswordCard({ username }: { username: string }) {
           {problem && <p className="text-sm text-destructive">{problem}</p>}
           {error && <p className="text-sm text-destructive">{error}</p>}
           {done && (
-            <p className="text-sm text-status-ok" role="status">
+            <output className="block text-sm text-status-ok">
               Password changed. Your other sessions have been signed out.
-            </p>
+            </output>
           )}
           <Button type="submit" disabled={saving || !ready} className="self-start">
             {saving ? "Saving…" : "Change password"}
@@ -257,6 +257,7 @@ function TwoFactorCard({ username, enabled }: { username: string; enabled: boole
             id="totp-password"
             type="password"
             autoComplete="current-password"
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- shown after the user starts 2FA setup; the field is the next step
             autoFocus
             value={password}
             onChange={(e) => setPassword(e.target.value)}

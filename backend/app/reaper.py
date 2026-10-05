@@ -160,7 +160,7 @@ def reap_once() -> list[int]:
 
         try:
             pending_audits += reap_refreshes(db)
-        except Exception:  # noqa: BLE001 - the next pass tries again
+        except Exception:  # the next pass tries again
             db.rollback()
             logger.exception("could not reap inventory refreshes")
 
@@ -175,7 +175,7 @@ def reap_once() -> list[int]:
         db.commit()
         try:
             prune_snapshots(db)
-        except Exception:  # noqa: BLE001 - the next pass tries again
+        except Exception:  # the next pass tries again
             db.rollback()
             logger.exception("could not prune git snapshots")
 
@@ -183,7 +183,7 @@ def reap_once() -> list[int]:
             try:
                 with db.begin_nested():
                     check()
-            except Exception:  # noqa: BLE001 - notifications must never stop the reaper
+            except Exception:  # notifications must never stop the reaper
                 logger.exception("notification check failed")
         db.commit()
 

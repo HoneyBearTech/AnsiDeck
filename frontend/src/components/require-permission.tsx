@@ -20,5 +20,5 @@ export function RequirePermission({
     );
   }
 
-  return <>{children}</>;
+  return children;
 }

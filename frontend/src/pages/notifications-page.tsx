@@ -106,8 +106,8 @@ function ChannelDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, channel]);
 
-  function toggleEvent(name: string, on: boolean) {
-    setEvents((current) => (on ? [...current, name] : current.filter((e) => e !== name)));
+  function toggleEvent(eventName: string, on: boolean) {
+    setEvents((current) => (on ? [...current, eventName] : current.filter((e) => e !== eventName)));
   }
 
   function secrets(): ChannelUpdate {

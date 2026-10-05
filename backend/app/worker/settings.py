@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from app.run_isolation import MAX_SLOTS
 
 # Same values as app.config, which this module must not import.
-DEFAULT_WORKER_TOKEN = "change-me-dev-only-worker-token"
+DEFAULT_WORKER_TOKEN = "change-me-dev-only-worker-token"  # noqa: S105 - dev default, refused in production
 MIN_WORKER_TOKEN_LENGTH = 32
 
 

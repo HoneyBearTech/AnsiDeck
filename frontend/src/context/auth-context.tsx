@@ -122,27 +122,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [user],
   );
 
+  const value = React.useMemo(
+    () => ({
+      user,
+      loading,
+      login,
+      completeMfa,
+      logout,
+      refreshUser,
+      can,
+      canInProject,
+      activeProjectId,
+      activeProject,
+      setActiveProject,
+    }),
+    [
+      user,
+      loading,
+      login,
+      completeMfa,
+      logout,
+      refreshUser,
+      can,
+      canInProject,
+      activeProjectId,
+      activeProject,
+      setActiveProject,
+    ],
+  );
+
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        loading,
-        login,
-        completeMfa,
-        logout,
-        refreshUser,
-        can,
-        canInProject,
-        activeProjectId,
-        activeProject,
-        setActiveProject,
-      }}
-    >
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );
 }
 
+// oxlint-disable-next-line react/only-export-components -- the hook belongs with its provider
 export function useAuth() {
   const context = React.useContext(AuthContext);
   if (!context) {

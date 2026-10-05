@@ -1,3 +1,4 @@
+import * as React from "react";
 import { NavLink, Outlet } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
@@ -42,7 +43,7 @@ function ProjectSwitcher() {
 
   const isAdmin = user.role === "admin";
   if (!isAdmin && user.projects.length === 1) {
-    return <span className="text-sm text-muted-foreground">{user.projects[0].name}</span>;
+    return <span className="text-sm text-muted-foreground">{user.projects[0]?.name}</span>;
   }
 
   return (
@@ -122,7 +123,9 @@ export function AppShell() {
           </div>
         ) : (
           // Re-key on the active project so every page reloads its data when it changes.
-          <Outlet key={activeProjectId ?? "all"} />
+          <React.Suspense fallback={<p className="text-sm text-muted-foreground">Loading…</p>}>
+            <Outlet key={activeProjectId ?? "all"} />
+          </React.Suspense>
         )}
       </main>
     </div>

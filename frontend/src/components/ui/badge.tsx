@@ -30,4 +30,5 @@ function Badge({ className, variant, ...props }: BadgeProps) {
   return <span className={cn(badgeVariants({ variant, className }))} {...props} />;
 }
 
+// oxlint-disable-next-line react/only-export-components -- variants are part of the component's API
 export { Badge, badgeVariants };

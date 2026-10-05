@@ -360,7 +360,7 @@ def merged_hosts(
         found = source_hosts.get(name) or {}
         added = [k for k in found if own is None or k not in own]
         overridden = sorted(k for k in found if own is not None and k in own and own[k] != found[k])
-        if own is None:
+        if own is None:  # noqa: SIM108 - a nested conditional expression reads worse
             origin = "source"
         else:
             origin = "both" if added or overridden else "static"

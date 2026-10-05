@@ -53,7 +53,7 @@ def upgrade() -> None:
     for table in ("runs", "galaxy_installs"):
         op.execute(
             sa.text(
-                f"UPDATE {table} SET status = 'failed', status_reason = :reason, "
+                f"UPDATE {table} SET status = 'failed', status_reason = :reason, "  # noqa: S608 - constants and quoted identifiers only
                 "finished_at = COALESCE(finished_at, now()) "
                 "WHERE status IN ('queued', 'running')"
             ).bindparams(reason=INTERRUPTED)

@@ -94,14 +94,14 @@ class _NoTimeout:
     def __init__(self, http: TestClient) -> None:
         self.http = http
 
-    def post(  # noqa: ARG002 - timeout
+    def post(
         self, path: str, *, headers: dict, timeout: float, json: dict | None = None, content=None
     ):
         if content is not None:
             return self.http.post(path, content=content, headers=headers)
         return self.http.post(path, json=json, headers=headers)
 
-    def stream(self, method: str, path: str, *, json: dict, headers: dict, timeout: float):  # noqa: ARG002
+    def stream(self, method: str, path: str, *, json: dict, headers: dict, timeout: float):
         return self.http.stream(method, path, json=json, headers=headers)
 
 
