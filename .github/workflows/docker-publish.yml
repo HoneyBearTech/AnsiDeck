@@ -101,9 +101,11 @@ jobs:
 
       - name: Sign the image
         env:
+          IMAGE: ${{ steps.image.outputs.name }}
           DIGEST: ${{ steps.push.outputs.digest }}
           SERVICE: ${{ matrix.service }}
         run: |
+          : "${IMAGE:?no image name}" "${DIGEST:?no image digest}"
           cosign sign --yes "${IMAGE}@${DIGEST}"
           echo "${IMAGE}@${DIGEST}" > "image-${SERVICE}.txt"
 
