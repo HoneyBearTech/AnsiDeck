@@ -7,6 +7,12 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+### Fixed
+
+- [docs/verifying-releases.md](docs/verifying-releases.md) asked for cosign 2.0 or later, but the image
+  signatures (since v0.1.0) are in Sigstore's bundle format, which needs cosign 3.0, or cosign 2.6 with
+  `--new-bundle-format`.
+
 ## [0.2.0] - 2026-10-05
 
 Run templates and re-runs, a code editor with ansible-lint checks, a reworked dashboard and a cleaner,

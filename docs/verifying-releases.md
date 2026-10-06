@@ -17,8 +17,9 @@ can check that what you run came from that workflow, unchanged:
   built them from which commit;
 - the **version tag** in git is signed with the maintainer's SSH key.
 
-You need [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) 2.0 or later. The
-examples use v0.2.0.
+You need [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) 3.0 or later: the images
+are signed in Sigstore's bundle format, which older versions don't look for ("no signatures found").
+With cosign 2.6, add `--new-bundle-format` to `cosign verify`. The examples use v0.2.0.
 
 ## The images
 
