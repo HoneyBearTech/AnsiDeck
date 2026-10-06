@@ -1,5 +1,3 @@
-from typing import Any
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -24,7 +22,7 @@ from app.schemas.inventories import (
     InventoryUpdate,
 )
 from app.scoping import get_scoped, readable_project_ids, resolve_write_project
-from app.scrub import REDACTED, mask_secret_keys
+from app.scrub import mask_for_display
 
 _guard = guard(Permission.CONTENT_READ, Permission.CONTENT_WRITE, scope=Scope.PROJECT)
 router = APIRouter(dependencies=[Depends(_guard)])
@@ -66,23 +64,11 @@ def _resolve_groups(db: Session, inventory_id: int, group_ids: list[int]) -> lis
     return groups
 
 
-def _masked(value: Any) -> Any:
-    """Host vars as a reader who can't edit them sees them: secret-looking keys and any
-    vault-encrypted string (whatever its key) replaced."""
-    if isinstance(value, dict):
-        return {k: _masked(v) for k, v in mask_secret_keys(value).items()}
-    if isinstance(value, list):
-        return [_masked(v) for v in value]
-    if isinstance(value, str) and value.lstrip().startswith("$ANSIBLE_VAULT"):
-        return REDACTED
-    return value
-
-
 def _to_host_out(host: InventoryHost, masked: bool = False) -> HostOut:
     return HostOut(
         id=host.id,
         hostname=host.hostname,
-        vars=_masked(host.vars or {}) if masked else host.vars,
+        vars=mask_for_display(host.vars or {}) if masked else host.vars,
         group_ids=[g.id for g in host.groups],
     )
 

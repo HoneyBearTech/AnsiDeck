@@ -166,6 +166,11 @@ def test_readers_who_cant_edit_get_secret_host_vars_masked(client: TestClient) -
     assert response.json()["hosts"][0]["vars"] == masked
     for secret in ("hunter2-hunter2", "6161616161", "tok-123456789"):
         assert secret not in response.text
+    # The merged host list (inventory sources panel, group graph) masks the same way, for everyone.
+    for reader in (viewer, client):
+        listed = reader.get(f"{path}/hosts")
+        assert listed.json()["hosts"][0]["vars"] == masked
+        assert "6161616161" not in listed.text
     # API keys can't read inventories at all (the router's guard doesn't allow keys).
     key = client.post("/api/projects/1/api-keys", json={"name": "ro", "preset": "read-only"})
     reader = TestClient(app, headers={"Authorization": f"Bearer {key.json()['token']}"})
