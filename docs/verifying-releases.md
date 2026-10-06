@@ -19,27 +19,27 @@ can check that what you run came from that workflow, unchanged:
 
 You need [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) 3.0 or later: the images
 are signed in Sigstore's bundle format, which older versions don't look for ("no signatures found").
-With cosign 2.6, add `--new-bundle-format` to `cosign verify`. The examples use v0.2.0.
+With cosign 2.6, add `--new-bundle-format` to `cosign verify`. The examples use v0.3.0.
 
 ## The images
 
 ```sh
 for image in ansideck-backend ansideck-frontend; do
-  cosign verify "ghcr.io/honeybeartech/${image}:0.2.0" \
+  cosign verify "ghcr.io/honeybeartech/${image}:0.3.0" \
     --certificate-identity-regexp '^https://github\.com/HoneyBearTech/AnsiDeck/\.github/workflows/docker-publish\.yml@refs/tags/v' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 done
 ```
 
 cosign prints the verified signatures, including the commit and tag they were built from. A tag such as
-`0.2.0` can be moved, a digest can't: for production, pin the digests from the release's `images.txt`
+`0.3.0` can be moved, a digest can't: for production, pin the digests from the release's `images.txt`
 (after verifying it, below), for example `ghcr.io/honeybeartech/ansideck-backend@sha256:…`.
 
 To see the SBOM and the provenance:
 
 ```sh
-docker buildx imagetools inspect ghcr.io/honeybeartech/ansideck-backend:0.2.0 --format '{{ json .SBOM }}'
-docker buildx imagetools inspect ghcr.io/honeybeartech/ansideck-backend:0.2.0 --format '{{ json .Provenance }}'
+docker buildx imagetools inspect ghcr.io/honeybeartech/ansideck-backend:0.3.0 --format '{{ json .SBOM }}'
+docker buildx imagetools inspect ghcr.io/honeybeartech/ansideck-backend:0.3.0 --format '{{ json .Provenance }}'
 ```
 
 ## The release files
@@ -63,14 +63,14 @@ With the [GitHub CLI](https://cli.github.com/), check that a downloaded release 
 repository's release workflow:
 
 ```sh
-gh attestation verify ansideck-0.2.0.tar.gz --repo HoneyBearTech/AnsiDeck \
+gh attestation verify ansideck-0.3.0.tar.gz --repo HoneyBearTech/AnsiDeck \
   --signer-workflow HoneyBearTech/AnsiDeck/.github/workflows/docker-publish.yml
 gh attestation verify images.txt --repo HoneyBearTech/AnsiDeck \
   --signer-workflow HoneyBearTech/AnsiDeck/.github/workflows/docker-publish.yml
 ```
 
 It prints the verified attestation, including the commit and workflow run. To verify offline, add
-`--bundle ansideck-0.2.0.provenance.sigstore.json`. Every file listed in `SHA256SUMS` is covered.
+`--bundle ansideck-0.3.0.provenance.sigstore.json`. Every file listed in `SHA256SUMS` is covered.
 
 ## The git tag
 
@@ -79,7 +79,7 @@ The maintainer signs version tags with an SSH key whose public half is in
 
 ```sh
 git clone https://github.com/HoneyBearTech/AnsiDeck.git && cd AnsiDeck
-git -c gpg.ssh.allowedSignersFile=.github/allowed_signers tag -v v0.2.0
+git -c gpg.ssh.allowedSignersFile=.github/allowed_signers tag -v v0.3.0
 ```
 
 It should print `Good "git" signature for 31805425+HoneyBearTech@users.noreply.github.com`. Check

@@ -7,8 +7,28 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-06
+
+A security fix for dynamic inventory sources, host vars masked for viewers, a group graph for inventories,
+and a layout that works on phones, checked in a real browser on every pull request.
+
+### Upgrading
+
+- Follow [docs/upgrading.md](docs/upgrading.md) (back up, set `ANSIDECK_VERSION=0.3.0`, pull, restart).
+  This release has no database migrations.
+- **Dynamic inventory sources** may now only set `ansible_host`, `ansible_port`, `ansible_user`,
+  `ansible_network_os` and a remote `ansible_connection`. Any other `ansible_*` variable a source returns
+  is dropped, and the next refresh lists it in its warnings: set those on the inventory's own hosts or in
+  the playbook instead.
+- Viewers now see secret-looking host vars masked; operators and admins see them as stored.
+- The full navigation bar shows from 1280 px wide; below that, use the menu button.
+
 ### Security
 
+- Dynamic inventory sources can no longer set Ansible connection settings beyond where and as whom to
+  connect (`ansible_host`, `ansible_port`, `ansible_user`, `ansible_network_os`, and `ansible_connection`
+  limited to remote connection types). Other `ansible_*` variables from a source are dropped with a
+  refresh warning, also in snapshots stored before upgrading. See the security advisory for details.
 - Viewers (anyone who can see an inventory but not edit it) no longer receive the inventory's host vars in
   full: secret-looking keys (passwords, tokens, keys) and vault-encrypted values are masked in
   `GET /api/inventories/{id}`. Operators and admins still get the real values, which the Edit host
@@ -141,6 +161,7 @@ come with SBOM and provenance attestations; see [docs/verifying-releases.md](doc
   need the usual pull-and-restart: database migrations run on start-up. An installation still on the
   old SQLite database must run the one-time import first (see [docs/upgrading.md](docs/upgrading.md)).
 
-[Unreleased]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/HoneyBearTech/AnsiDeck/releases/tag/v0.1.0

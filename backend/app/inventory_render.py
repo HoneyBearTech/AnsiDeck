@@ -26,6 +26,34 @@ GROUP_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 HOSTNAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:%-]*$")
 
 
+# The only Ansible connection variables a dynamic source may set: where and as whom to connect,
+# never how (no ssh/shell/become executables or arguments, no local connection, no interpreter).
+SOURCE_CONNECTION_VARS = frozenset(
+    {
+        "ansible_host",
+        "ansible_port",
+        "ansible_user",
+        "ansible_ssh_host",
+        "ansible_ssh_port",
+        "ansible_ssh_user",
+        "ansible_network_os",
+        "ansible_connection",
+    }
+)
+SOURCE_CONNECTIONS = frozenset({"ssh", "network_cli", "netconf", "httpapi", "winrm", "psrp"})
+
+
+def source_var_problem(key: str, value: Any) -> str | None:
+    """Why a variable from a dynamic source can't be passed to runs, or None."""
+    if not key.lower().startswith("ansible_"):
+        return None
+    if key not in SOURCE_CONNECTION_VARS:
+        return "is an Ansible setting sources may not set"
+    if key == "ansible_connection" and value not in SOURCE_CONNECTIONS:
+        return f"may only be one of {', '.join(sorted(SOURCE_CONNECTIONS))}"
+    return None
+
+
 def hostname_problem(name: object) -> str | None:
     """Why ansible wouldn't see exactly this one host, or None. The YAML inventory re-parses
     host keys: 'db:5432' becomes db with a port and 'web[1:3]' three hosts."""
@@ -125,16 +153,18 @@ def merge(static: dict, snapshot: dict | None = None) -> dict:
     if snapshot is not None:
         was_static = set(snapshot.get("static_hosts") or ())
         gone = was_static - static_hosts.keys()
-        all_vars = mark_unsafe(snapshot.get("vars") or {})
+        # Snapshots are filtered when a refresh stores them; filtering again here also covers
+        # snapshots stored before that rule existed.
+        all_vars = mark_unsafe(_source_vars(snapshot.get("vars")))
         for name, host_vars in snapshot["hosts"].items():
             if name not in gone:
-                hosts[name] = mark_unsafe(host_vars or {})
+                hosts[name] = mark_unsafe(_source_vars(host_vars))
         for name, group in snapshot["groups"].items():
             skip = gone | (was_static if name in static["groups"] else set())
             groups[name] = {
                 "hosts": {h: None for h in group.get("hosts") or () if h not in skip},
                 "children": list(group.get("children") or ()),
-                "vars": mark_unsafe(group.get("vars") or {}),
+                "vars": mark_unsafe(_source_vars(group.get("vars"))),
             }
     for name, host_vars in static_hosts.items():
         merged = hosts.get(name, {})
@@ -146,6 +176,10 @@ def merge(static: dict, snapshot: dict | None = None) -> dict:
     for group in groups.values():
         group["hosts"] = list(group["hosts"])
     return {"vars": all_vars, "hosts": hosts, "groups": groups}
+
+
+def _source_vars(source_vars: dict | None) -> dict:
+    return {k: v for k, v in (source_vars or {}).items() if not source_var_problem(k, v)}
 
 
 def target_hosts(graph: dict, group: str) -> set[str]:
