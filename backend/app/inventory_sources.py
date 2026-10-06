@@ -23,7 +23,14 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.env_credentials import resolve_env
-from app.inventory_render import group_problem, hostname_problem, merge, render, static_data
+from app.inventory_render import (
+    group_problem,
+    hostname_problem,
+    merge,
+    render,
+    source_var_problem,
+    static_data,
+)
 from app.json_limits import TooDeep, loads_bounded
 from app.models import (
     Credential,
@@ -281,15 +288,24 @@ def _unwrap(value: Any, depth: int = 0) -> Any:
     raise SourceError("unexpected output from ansible-inventory")
 
 
-def _vars(value: Any, where: str, warnings: list[str]) -> dict:
+def _vars(value: Any, where: str, warnings: list[str], quiet: bool = False) -> dict:
+    """A source's vars, minus vault values and the Ansible settings sources may not set.
+    `quiet`: a static host's echo of its own vars (they win in merge anyway), so dropping its
+    connection settings is no news."""
     if not isinstance(value, dict):
         raise SourceError(f"{where}: vars must be a mapping")
     out = {}
     for key, item in value.items():
         try:
-            out[str(key)] = _unwrap(item, 1)
+            unwrapped = _unwrap(item, 1)
         except _Vaulted:
             _warn(warnings, f"{where}: dropped {key}, a vault-encrypted value")
+            continue
+        if problem := source_var_problem(str(key), unwrapped):
+            if not quiet:
+                _warn(warnings, f"{where}: dropped {str(key)[:100]}: it {problem}")
+            continue
+        out[str(key)] = unwrapped
     return out
 
 
@@ -326,6 +342,7 @@ def normalise(raw: bytes, static_hosts: list[str]) -> tuple[dict, list[str]]:
 
     hosts: dict[str, dict] = {}
     skipped: set[str] = set()
+    static = set(static_hosts)
 
     def add_host(name: Any) -> bool:
         if name in hosts:
@@ -343,7 +360,7 @@ def normalise(raw: bytes, static_hosts: list[str]) -> tuple[dict, list[str]]:
 
     for name, host_vars in hostvars.items():
         if add_host(name):
-            hosts[name] = _vars(host_vars, f"host {name}", warnings)
+            hosts[name] = _vars(host_vars, f"host {name}", warnings, quiet=name in static)
 
     all_vars: dict = {}
     raw_groups: dict[str, dict] = {}

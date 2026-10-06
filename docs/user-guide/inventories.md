@@ -57,6 +57,11 @@ More about sources:
   keep using the last good snapshot. Admins can be notified (**Inventory refresh failed**).
 - A run uses the snapshot current when it starts, and a run can't start until the first refresh worked.
 - Turn a source off with its switch, **Edit** it, or **Delete** it (after a confirmation).
+- A source can say where and as whom to connect to a host, but not how: of Ansible's own variables it may
+  only set `ansible_host`, `ansible_port`, `ansible_user` (and their `ansible_ssh_` forms),
+  `ansible_network_os`, and `ansible_connection` as `ssh`, `network_cli`, `netconf`, `httpapi`, `winrm` or
+  `psrp`. Any other `ansible_*` variable from a source is dropped, with a refresh warning naming it; set
+  those on the inventory's own hosts or in the playbook instead.
 - Strings that come from a source are never templated by Ansible, so data in NetBox or a cloud API can't
   run code in your playbooks. Which plugins are allowed, and what a refresh may return, is described in
   the README's [Dynamic inventory sources](../../README.md#dynamic-inventory-sources-optional).

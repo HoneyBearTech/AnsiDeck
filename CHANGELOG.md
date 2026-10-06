@@ -7,6 +7,13 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+### Security
+
+- Dynamic inventory sources can no longer set Ansible connection settings beyond where and as whom to
+  connect (`ansible_host`, `ansible_port`, `ansible_user`, `ansible_network_os`, and `ansible_connection`
+  limited to remote connection types). Other `ansible_*` variables from a source are dropped with a
+  refresh warning, also in snapshots stored before upgrading. See the security advisory for details.
+
 ### Added
 
 - **Group graph** for inventories (`/inventories/{id}/graph`, linked from the inventory page): an
