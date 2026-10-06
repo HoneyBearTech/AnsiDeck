@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import yaml
 
 from app.scrub import (
     REDACTED,
@@ -27,6 +28,15 @@ from app.vault import encrypt_to_vault_envelope, to_yaml_block
         "auth_token",
         "private_key",
         "credentials",
+        # One-word names.
+        "pwd",
+        "MYSQL_PWD",
+        "apikey",
+        "authtoken",
+        "privatekey",
+        "aws_secretkey",
+        "passcode",
+        "snmp_community",
     ],
 )
 def test_is_secret_key_true(name: str) -> None:
@@ -45,6 +55,8 @@ def test_is_secret_key_true(name: str) -> None:
         "ansible_ssh_private_key_file",
         "key_id",
         "token_name",
+        "community_name",
+        "pwd_file",
         "",
     ],
 )
@@ -100,6 +112,22 @@ def test_json_escaped_form_is_redacted() -> None:
     assert escaped not in scrubber.scrub_text(f"json: {escaped}")
 
 
+def test_non_ascii_json_form_is_redacted() -> None:
+    # Ansible prints JSON without escaping non-ASCII text, but still escapes quotes.
+    secret = 'pässwörd"with-quote'
+    printed = json.dumps({"msg": secret}, ensure_ascii=False)
+    assert secret.split('"')[0] in printed and json.dumps(secret)[1:-1] not in printed
+    out = Scrubber({secret}).scrub_text(printed)
+    assert out == json.dumps({"msg": REDACTED})
+
+
+def test_yaml_single_quoted_form_is_redacted() -> None:
+    secret = "it's: a-long-secret"  # ": " makes YAML quote it
+    printed = yaml.safe_dump({"msg": secret}).strip()
+    assert printed == "msg: 'it''s: a-long-secret'"
+    assert Scrubber({secret}).scrub_text(printed) == f"msg: '{REDACTED}'"
+
+
 def test_short_secrets_do_not_shred_output() -> None:
     scrubber = Scrubber({"abc", "yes"})
     text = "abc yes abcdef yesterday"
@@ -141,6 +169,34 @@ def test_event_structure_is_preserved_and_all_string_fields_scrubbed() -> None:
     assert event["stdout"] == "ok => super-secret-value"  # input not mutated
 
 
+def test_numbers_that_are_secrets_are_replaced_in_structured_events() -> None:
+    # A numeric secret stays a number in a task's result, where text matching can't see it.
+    scrub = build_scrubber({"20251231", "4711.5", " 98765 "})
+    event = {
+        "counter": 3,
+        "event_data": {
+            "res": {"pin": 20251231, "ratio": 4711.5, "code": 98765, "rc": 0, "port": 2025},
+            "items": [20251231, 7],
+            "changed": True,
+        },
+    }
+    out = scrub(event)
+    assert out == {
+        "counter": 3,
+        "event_data": {
+            "res": {"pin": REDACTED, "ratio": REDACTED, "code": REDACTED, "rc": 0, "port": 2025},
+            "items": [REDACTED, 7],
+            "changed": True,
+        },
+    }
+
+
+def test_short_numbers_and_booleans_are_never_replaced() -> None:
+    scrub = build_scrubber({"123", "1", "True"})
+    event = {"res": {"a": 123, "b": 1, "c": True}}
+    assert scrub(event) == event
+
+
 def test_secret_dict_keys_are_redacted_without_dropping_values() -> None:
     scrub = build_scrubber({"tokentokentoken"})
     out = scrub({"res": {"tokentokentoken": 1, "[REDACTED]": 2, "other": 3, "[REDACTED]#2": 4}})
@@ -180,6 +236,13 @@ def test_untouched_lists_are_left_alone() -> None:
         ('{"password": "hunter2 spaced"}', "hunter2"),
         ("API_KEY: abc123def", "abc123def"),
         ("secret='quoted value'", "quoted value"),
+        # Prefixed and suffixed names.
+        ("export DB_PASSWORD=hunter2 &&", "hunter2"),
+        ("PGPASSWORD=pgpw123 psql", "pgpw123"),
+        ("mysql_root_password: rootpw99", "rootpw99"),
+        ('"client_secret": "cs-123abc"', "cs-123abc"),
+        ("github-token=abc-xyz-123", "abc-xyz-123"),
+        ("X_API_KEY_VALUE: k3yk3y", "k3yk3y"),
     ],
 )
 def test_patterns_catch_unknown_secrets(text: str, leaked: str) -> None:
@@ -205,6 +268,12 @@ def test_assignment_pattern_keeps_key_and_quotes() -> None:
         "$ANSIBLE_VAULT;1.1;AES256\n6162636465666768",
         "https://example.com/path",
         "user@example.com",
+        # Names of where a secret lives, not the secret itself.
+        "vault_password_file=/etc/ansible/vault.txt",
+        "client_secret_path: /run/secrets/client",
+        "token_name: deploy-bot",
+        "api_key_id: 42",
+        "max_tokens: 1000",
     ],
 )
 def test_patterns_leave_benign_text_alone(text: str) -> None:

@@ -9,6 +9,14 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Security
 
+- Run output scrubbing catches more forms of a known secret. Runs now always print task results as JSON,
+  even when a repository's `ansible.cfg` asks for YAML, which could fold a long secret across lines past
+  the scrubber. Secrets are also redacted as Ansible prints non-ASCII text in JSON and as YAML quotes
+  them, and a secret that is a number is replaced in structured task results.
+- Unknown secrets in `name=value` and `name: value` text are caught under prefixed and suffixed names too
+  (`DB_PASSWORD=`, `PGPASSWORD=`, `mysql_root_password:`, `client_secret:`), but not names of where a
+  secret lives (`vault_password_file=`). Variables named `pwd`, `apikey`, `authtoken`, `passcode`,
+  `community` and similar one-word names now count as secret.
 - `runs:become` now holds beyond the run's checkbox. Runs started by someone without it (operators,
   trigger API keys) get `ansible_become: false` when they execute, so `become: true` in a playbook, an
   inventory or a source no longer escalates them, and `ansible_become*` extra vars are refused, in runs

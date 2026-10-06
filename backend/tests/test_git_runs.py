@@ -195,6 +195,32 @@ def test_vaulted_repository_vars_never_reach_the_output(admin, tmp_path) -> None
         assert secret not in log, secret
 
 
+def test_a_repositorys_yaml_result_format_cannot_fold_a_secret_past_the_scrubber(
+    admin, tmp_path
+) -> None:
+    # YAML output folds a long value across lines, where the exact match can't find it.
+    words = [f"fold{i:02d}x{i * 7919 % 10007:05d}" for i in range(24)]
+    secret = " ".join(words)
+    repo = make_repo(
+        tmp_path / "repo",
+        {
+            "ansible.cfg": "[defaults]\ncallback_result_format = yaml\n",
+            "site.yml": (
+                "- hosts: all\n  connection: local\n  gather_facts: false\n  tasks:\n"
+                '    - ansible.builtin.debug:\n        msg: "{{ db_password }}"\n'
+            ),
+            "group_vars/all.yml": f"db_password: {secret}\n",
+        },
+    )
+    ids = _synced(admin, repo)
+    run = _trigger(admin, ids["site.yml"], _inventory(admin, tmp_path))
+    assert _wait_for_completion(admin, run["id"], 60)["status"] == "success"
+    log = (tmp_path / "runs" / f"{run['id']}.jsonl").read_text()
+    assert "REDACTED" in log
+    for word in words:
+        assert word not in log, word
+
+
 Member = tuple[tarfile.TarInfo, bytes]
 
 

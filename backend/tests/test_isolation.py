@@ -222,6 +222,20 @@ def test_prepare_leaves_home_alone_unless_asked(monkeypatch) -> None:
         shutil.rmtree(pdd)
 
 
+def test_prepare_forces_json_results(monkeypatch) -> None:
+    # YAML results fold long values across lines, out of the exact-value scrubber's reach;
+    # the environment outranks whatever a repository's ansible.cfg sets.
+    monkeypatch.setenv("ANSIBLE_CALLBACK_RESULT_FORMAT", "yaml")
+    job = {"files": {"playbook": "", "inventory": ""}, "prefix": "ansideck-run-9-"}
+    pdd = run_worker.prepare(job)
+    try:
+        assert os.environ["ANSIBLE_CALLBACK_RESULT_FORMAT"] == "json"
+    finally:
+        import shutil
+
+        shutil.rmtree(pdd)
+
+
 def test_a_run_refuses_a_home_that_holds_someone_elses_files(monkeypatch, tmp_path) -> None:
     home = tmp_path / "home"
     home.mkdir()
