@@ -40,14 +40,14 @@ platform_collector.PlatformCollector(registry=REGISTRY)
 gc_collector.GCCollector(registry=REGISTRY)
 
 try:
-    _VERSION = version("ansideck-backend")
+    VERSION = version("ansideck-backend")  # the installed package's (pyproject.toml)
 except PackageNotFoundError:  # pragma: no cover - only outside an installed project
-    _VERSION = "unknown"
+    VERSION = "unknown"
 
 BUILD_INFO = Gauge(
     "ansideck_build_info", "The running AnsiDeck version (always 1)", ["version"], registry=REGISTRY
 )
-BUILD_INFO.labels(_VERSION).set(1)
+BUILD_INFO.labels(VERSION).set(1)
 
 HTTP_REQUESTS = Counter(
     "ansideck_http_requests",

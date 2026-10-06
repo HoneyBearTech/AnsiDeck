@@ -184,7 +184,7 @@ def test_runs_show_up_in_the_metrics(admin_client, scrape, tmp_path) -> None:
     assert value(after, "ansideck_slots", state="total") == 4
     assert value(after, "ansideck_queue_oldest_age_seconds") == 0
     assert value(after, "ansideck_ops_alerts", kind="queue.stuck") == 0
-    assert value(after, "ansideck_build_info", version="0.1.0") == 1
+    assert value(after, "ansideck_build_info", version=metrics.VERSION) == 1
 
     # HTTP metrics: by route template, public and internal.
     run_route = {

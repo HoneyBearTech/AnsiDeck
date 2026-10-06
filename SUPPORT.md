@@ -14,11 +14,11 @@ best-effort policy, not a contract.
 
 | Version | Supported with | Until |
 | --- | --- | --- |
-| The latest release (currently 0.1.x) | bug fixes and security fixes | the next release is published |
+| The latest release (currently 0.2.x) | bug fixes and security fixes | the next release is published |
 | An older release | nothing | it stopped being supported when the next release came out |
 | `main` | bug fixes and security fixes | always (it's where fixes land first) |
 
-- A fix is released as a new version (a patch release such as 0.1.1 for fixes only), never applied to an
+- A fix is released as a new version (a patch release such as 0.2.1 for fixes only), never applied to an
   older release.
 - **A release stops receiving security updates the moment the next release is published.** The release
   notes and [CHANGELOG.md](CHANGELOG.md) say what changed and whether upgrading needs steps; upgrading is

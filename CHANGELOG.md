@@ -7,6 +7,11 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-05
+
+Run templates and re-runs, a code editor with ansible-lint checks, a reworked dashboard and a cleaner,
+phone-friendly UI. Release files now carry SLSA build provenance.
+
 ### Added
 
 - **A code editor** for playbooks, inventory source configs and Galaxy requirements: YAML highlighting,
@@ -34,7 +39,7 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   (null once deleted).
 - Releases carry SLSA build provenance for their files: a signed attestation stored by GitHub
   (`gh attestation verify`) and attached as `ansideck-<version>.intoto.jsonl`
-  ([docs/verifying-releases.md](docs/verifying-releases.md#build-provenance-from-v011)).
+  ([docs/verifying-releases.md](docs/verifying-releases.md#build-provenance-from-v020)).
 
 ### Changed
 
@@ -52,8 +57,12 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Upgrading
 
+- Follow [docs/upgrading.md](docs/upgrading.md) (back up, set `ANSIDECK_VERSION=0.2.0`, pull, restart).
+  The API applies the new database migrations (0013 run templates, 0014 playbook checks) when it starts.
 - Upgrade the workers together with the API (the compose files do): a worker from 0.1.x doesn't take
   playbook checks, and a check no worker takes fails after two minutes with the reason.
+- Labels changed to sentence case (for example **New run**, and **Start run** instead of Trigger Run);
+  the admin pages moved under the header's **Admin** menu, and Account and Log out under your user name.
 
 ## [0.1.0] - 2026-10-05
 
@@ -93,5 +102,6 @@ come with SBOM and provenance attestations; see [docs/verifying-releases.md](doc
   need the usual pull-and-restart: database migrations run on start-up. An installation still on the
   old SQLite database must run the one-time import first (see [docs/upgrading.md](docs/upgrading.md)).
 
-[Unreleased]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/HoneyBearTech/AnsiDeck/releases/tag/v0.1.0

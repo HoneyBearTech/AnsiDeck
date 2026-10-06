@@ -16,9 +16,10 @@ with Grafana dashboards.
 
 **v0.1.0** (October 2026) was the first release: signed container images and release checksums, user
 guides for every feature, upgrade and backup/restore guides, and a changelog, together with frontend tests
-behind a coverage floor, stricter compiler and lint settings, and an accessibility pass on every page. The
-most recent release is the supported version. Since then, on `main`: saved run templates (also for CI
-keys), running a run again, downloading run output, and a code editor with ansible-lint checks.
+behind a coverage floor, stricter compiler and lint settings, and an accessibility pass on every page.
+**v0.2.0** (October 2026) added saved run templates (also for CI keys), running a run again, downloading
+run output, a code editor with ansible-lint checks, a reworked dashboard and a phone-friendly layout, and
+SLSA build provenance on release files. The most recent release is the supported version.
 
 ## Over the following year
 
@@ -30,7 +31,7 @@ keys), running a run again, downloading run output, and a code editor with ansib
 - More from the editor: completion of module names and options, and ansible-lint's fixes offered as edits.
 
 **Layout and visualisation**
-- A layout that works on phones and tablets, and a visual graph of inventory groups and hosts.
+- A visual graph of inventory groups and hosts, and denser tables for large lists on wide screens.
 
 **Security and operations**
 - Limiting what runs can reach on the network (for example cloud metadata and the API's own ports).
