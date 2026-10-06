@@ -1,6 +1,6 @@
-"""runs:become covers more than the run's checkbox: a run by someone without it carries
-`ansible_become: false` as an extra var (which outranks play, task and inventory settings), and
-`ansible_become*` extra vars are refused."""
+"""runs:become covers more than the run's checkbox: a run by someone without it gets
+`ansible_become: false` as an extra var at execution (which outranks play, task and inventory
+settings), and `ansible_become*` extra vars are refused."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -65,13 +65,17 @@ def test_an_operators_run_never_becomes(world) -> None:
 
     run = operator.post("/api/runs", json=_body(a, extra_vars={"greeting": "hi"}))
     assert run.status_code == 201, run.text
+    # Stored as typed; the job gets ansible_become: false on top.
     stored = world["admin"].get(f"/api/runs/{run.json()['id']}").json()["extra_vars"]
-    assert stored == {"greeting": "hi", "ansible_become": False}
+    assert stored == {"greeting": "hi"}
     assert _job_extravars(run.json()["id"]) == {"greeting": "hi", "ansible_become": False}
 
-    # "Edit and run" sends the stored extra vars back: ansible_become: false is accepted.
-    again = operator.post("/api/runs", json=_body(a, extra_vars=stored))
+    # An explicit ansible_become: false is accepted, and run again stays blocked.
+    explicit = operator.post("/api/runs", json=_body(a, extra_vars={"ansible_become": False}))
+    assert explicit.status_code == 201, explicit.text
+    again = operator.post(f"/api/runs/{run.json()['id']}/rerun")
     assert again.status_code == 201, again.text
+    assert _job_extravars(again.json()["id"]) == {"greeting": "hi", "ansible_become": False}
 
     events = world["admin"].get("/api/audit", params={"action": "permission.denied"}).json()
     assert sum(e["actor_username"] == "op" for e in events["items"]) == 2
@@ -88,6 +92,17 @@ def test_a_trigger_key_never_becomes(world) -> None:
     run = key.post("/api/runs", json=_body(a))
     assert run.status_code == 201, run.text
     assert _job_extravars(run.json()["id"]) == {"ansible_become": False}
+
+
+def test_run_again_follows_whoever_runs_it_again(world) -> None:
+    admin, a = world["admin"], world["a"]
+    operator = _member(admin, "op", {a["project"]: "operator"})
+    run = operator.post("/api/runs", json=_body(a, extra_vars={"greeting": "hi"})).json()
+    assert _job_extravars(run["id"]) == {"greeting": "hi", "ansible_become": False}
+    # An admin's run again of the operator's run may use the playbook's own become.
+    again = admin.post(f"/api/runs/{run['id']}/rerun")
+    assert again.status_code == 201, again.text
+    assert _job_extravars(again.json()["id"]) == {"greeting": "hi"}
 
 
 def test_someone_with_runs_become_keeps_the_playbooks_own_become(world) -> None:

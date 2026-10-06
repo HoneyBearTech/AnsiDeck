@@ -251,13 +251,8 @@ def queue_run(
     project_id = playbook.project_id
     git = pin_snapshot(db, playbook) if playbook.source_id is not None else None
     can_become = Permission.RUNS_BECOME in project_permissions(db, current_user, project_id)
-    extra_vars = payload.extra_vars
-    if not can_become:
-        if payload.become or become_vars(extra_vars):
-            raise denied_become(project_id)
-        # Extra vars outrank every play, task and inventory `become`, so without runs:become
-        # nothing in the playbook, the inventory or a source can turn become on either.
-        extra_vars = {**(extra_vars or {}), "ansible_become": False}
+    if not can_become and (payload.become or become_vars(payload.extra_vars)):
+        raise denied_become(project_id)
 
     inventory = get_scoped(
         db,
@@ -341,7 +336,8 @@ def queue_run(
         check_mode=payload.check_mode,
         diff_mode=payload.diff_mode,
         limit=payload.limit,
-        extra_vars=extra_vars,
+        extra_vars=payload.extra_vars,
+        become_blocked=not can_become,
         triggered_by=current_user.username,
         triggered_by_api_key_id=getattr(current_user, "_api_key_id", None),
         timeout_seconds=payload.timeout_seconds,
