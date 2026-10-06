@@ -166,8 +166,10 @@ describe("dynamic inventory sources", () => {
         "GET /inventories/:id/hosts": (r: { query: URLSearchParams }) =>
           r.query.get("q") === "zzz"
             ? { total: 0, hosts: [] }
-            : {
-                total: 3,
+            : r.query.get("page") === "2"
+              ? { total: 102, hosts: [{ name: "zz-last", origin: "source", groups: [], vars: {}, overridden: [] }] }
+              : {
+                total: 102,
                 hosts: [
                   { name: "web1.example", origin: "both", groups: ["web", "site_lab"], vars: { a: 1 }, overridden: ["ansible_user"] },
                   { name: "nb1", origin: "source", groups: ["site_lab"], vars: {}, overridden: [] },
@@ -181,10 +183,17 @@ describe("dynamic inventory sources", () => {
     expect(screen.getByText(/2 hosts,\s+1 groups/)).toBeInTheDocument();
     expect(screen.getByText("host 'bad name' skipped")).toBeInTheDocument();
     expect(screen.getByText("site_lab · 2")).toBeInTheDocument();
-    expect(await screen.findByText("Hosts a run sees (3)")).toBeInTheDocument();
+    expect(await screen.findByText("Hosts a run sees (102)")).toBeInTheDocument();
     expect(screen.getByText("source + inventory")).toBeInTheDocument();
     expect(screen.getByText(/replace the source's: ansible_user/)).toBeInTheDocument();
-    expect(screen.getByText("Showing 2 of 3: search to narrow down.")).toBeInTheDocument();
+    // 102 hosts: pages of 100 (this fake sends 2 on the first)
+    const pages = screen.getByRole("navigation", { name: "Host pages" });
+    expect(within(pages).getByText("1–2 of 102")).toBeInTheDocument();
+    expect(within(pages).getByRole("button", { name: "Previous" })).toBeDisabled();
+    await user.click(within(pages).getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("zz-last")).toBeInTheDocument();
+    expect(within(pages).getByText("101–101 of 102")).toBeInTheDocument();
+    expect(within(pages).getByRole("button", { name: "Next" })).toBeDisabled();
 
     await user.type(screen.getByLabelText("Search hosts"), "zzz");
     expect(await screen.findByText("No hosts match.")).toBeInTheDocument();

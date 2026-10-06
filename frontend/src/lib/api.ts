@@ -263,6 +263,17 @@ export interface InventoryTargets {
   refresh_interval_seconds: number;
 }
 
+// How an inventory's groups nest (its own and its sources'): names, edges and counts only.
+export interface InventoryGraph {
+  name: string; // the inventory's
+  hosts: number;
+  ungrouped: number; // hosts in no group
+  // `hosts` counts direct members; /hosts?group= gives the group and everything below it.
+  groups: { name: string; hosts: number; children: string[]; origin: HostOrigin }[];
+  snapshot_id: number | null;
+  snapshot_at: string | null;
+}
+
 // Where a credential's key or a vault password lives: encrypted in AnsiDeck, or a reference
 // into the secret store (OpenBao / Vault), read when a run starts.
 export interface SecretRef {
@@ -830,11 +841,15 @@ export const api = {
   listInventoryRefreshes: (id: number, limit = 10) =>
     request<InventoryRefresh[]>(`/inventories/${id}/refreshes?limit=${limit}`),
   getInventorySnapshot: (id: number) => request<InventorySnapshot | null>(`/inventories/${id}/snapshot`),
-  inventoryHosts: (id: number, q: string, page = 1) =>
+  /** Hosts a run sees; `group` narrows to that group and the groups below it. */
+  inventoryHosts: (id: number, q: string, page = 1, group?: string) =>
     request<{ total: number; hosts: MergedHost[] }>(
-      `/inventories/${id}/hosts?page=${page}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+      `/inventories/${id}/hosts?page=${page}${q ? `&q=${encodeURIComponent(q)}` : ""}${
+        group !== undefined ? `&group=${encodeURIComponent(group)}` : ""
+      }`,
     ),
   inventoryTargets: (id: number) => request<InventoryTargets>(`/inventories/${id}/targets`),
+  inventoryGraph: (id: number) => request<InventoryGraph>(`/inventories/${id}/graph`),
   setInventoryRefreshInterval: (id: number, seconds: number) =>
     request<InventoryTargets>(`/inventories/${id}/refresh-settings`, {
       method: "PUT",

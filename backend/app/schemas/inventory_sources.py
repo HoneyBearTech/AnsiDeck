@@ -108,6 +108,24 @@ class TargetGroup(BaseModel):
     origin: str  # static, source or both
 
 
+class GraphGroup(BaseModel):
+    name: str
+    hosts: int  # direct members only; the hosts below it come from /hosts?group=
+    children: list[str]
+    origin: str  # static, source or both
+
+
+class InventoryGraph(BaseModel):
+    """How the inventory's groups nest: names, edges and counts only, never vars."""
+
+    name: str  # the inventory's, so the graph page needs nothing else (the detail has vars)
+    hosts: int
+    ungrouped: int  # hosts in no group
+    groups: list[GraphGroup]
+    snapshot_id: int | None
+    snapshot_at: datetime | None
+
+
 class Targets(BaseModel):
     """What a run of this inventory can target, and how fresh its sources' data is."""
 

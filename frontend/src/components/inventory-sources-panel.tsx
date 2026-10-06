@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { CodeEditor } from "@/components/code-editor";
+import { HostList } from "@/components/host-list";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,12 +22,10 @@ import {
   api,
   ApiError,
   type Credential,
-  type HostOrigin,
   type InventoryRefresh,
   type InventorySnapshot,
   type InventorySource,
   type InventoryTargets,
-  type MergedHost,
 } from "@/lib/api";
 
 const INTERVALS: { value: number; label: string }[] = [
@@ -91,16 +90,6 @@ export function RefreshBadge({ refresh }: { refresh: InventoryRefresh | null }) 
   if (refresh.status === "running") return <Badge variant="changed">refreshing</Badge>;
   if (refresh.status === "success") return <Badge variant="ok">refreshed</Badge>;
   return <Badge variant="failed">{refresh.status === "timed_out" ? "timed out" : "failed"}</Badge>;
-}
-
-export function OriginBadge({ origin }: { origin: HostOrigin }) {
-  if (origin === "static") return <Badge variant="outline">inventory</Badge>;
-  if (origin === "source") return <Badge variant="skipped">source</Badge>;
-  return (
-    <Badge variant="skipped" title="From a source, with some vars set by the inventory itself">
-      source + inventory
-    </Badge>
-  );
 }
 
 function SourceDialog({
@@ -228,72 +217,6 @@ function SourceDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function HostsPreview({ inventoryId, version }: { inventoryId: number; version: number }) {
-  const [query, setQuery] = React.useState("");
-  const [result, setResult] = React.useState<{ total: number; hosts: MergedHost[] } | null>(null);
-
-  React.useEffect(() => {
-    let active = true;
-    const timer = window.setTimeout(() => {
-      api
-        .inventoryHosts(inventoryId, query.trim())
-        .then((r) => active && setResult(r))
-        .catch(() => active && setResult(null));
-    }, 200);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- version changes after a refresh, to reload
-  }, [inventoryId, query, version]);
-
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium">Hosts a run sees{result ? ` (${result.total})` : ""}</span>
-        <Input
-          aria-label="Search hosts"
-          placeholder="Search hosts"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="h-8 max-w-56"
-        />
-      </div>
-      <div className="flex flex-col divide-y divide-border rounded-md border border-border">
-        {result?.hosts.map((host) => (
-          <details key={host.name} className="group px-3 py-2">
-            <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 text-sm">
-              <span className="font-mono">{host.name}</span>
-              <OriginBadge origin={host.origin} />
-              {host.groups.map((group) => (
-                <Badge key={group} variant="outline">
-                  {group}
-                </Badge>
-              ))}
-            </summary>
-            <pre className="mt-2 overflow-x-auto rounded bg-muted/40 p-2 text-xs">
-              {JSON.stringify(host.vars, null, 2)}
-            </pre>
-            {host.overridden.length > 0 && (
-              <p className="mt-1 text-xs text-muted-foreground">
-                The inventory&apos;s own vars replace the source&apos;s: {host.overridden.join(", ")}
-              </p>
-            )}
-          </details>
-        ))}
-        {result && result.hosts.length === 0 && (
-          <p className="px-3 py-2 text-sm text-muted-foreground">No hosts match.</p>
-        )}
-        {result && result.total > result.hosts.length && (
-          <p className="px-3 py-2 text-xs text-muted-foreground">
-            Showing {result.hosts.length} of {result.total}: search to narrow down.
-          </p>
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -516,7 +439,7 @@ export function InventorySourcesPanel({
                 </div>
               </div>
             )}
-            <HostsPreview inventoryId={inventoryId} version={version} />
+            <HostList inventoryId={inventoryId} version={version} title="Hosts a run sees" />
           </>
         )}
       </CardContent>

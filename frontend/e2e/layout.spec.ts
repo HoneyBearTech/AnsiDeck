@@ -7,7 +7,9 @@ import {
   adminUserRow,
   channel,
   credential,
+  graph,
   inventory,
+  mergedHost,
   playbook,
   run,
   runTemplate,
@@ -35,6 +37,18 @@ const LONG_ROUTES: Routes = {
     hosts: [{ id: 1, hostname: `web1.${LONG}.example.com`, vars: { ansible_user: "deploy" }, group_ids: [1, 2] }],
   }),
   "GET /inventories/:id/targets": targets({ groups: [{ name: `${LONG}-webservers`, hosts: 1, origin: "static" }] }),
+  "GET /inventories/:id/graph": graph({
+    name: `${LONG}-inventory`,
+    groups: [
+      { name: `${LONG}-all`, hosts: 0, children: [`${LONG}-webservers`, `${LONG}-databases`], origin: "source" },
+      { name: `${LONG}-databases`, hosts: 3, children: [], origin: "static" },
+      { name: `${LONG}-webservers`, hosts: 12, children: [], origin: "both" },
+    ],
+  }),
+  "GET /inventories/:id/hosts": {
+    total: 1,
+    hosts: [mergedHost({ name: `web1.${LONG}.example.com`, groups: [`${LONG}-webservers`], origin: "both" })],
+  },
   "GET /credentials": [
     credential({ name: `${LONG}-deploy-key` }),
     credential({ id: 2, name: `${LONG}-cloud`, kind: "env", env_names: [`AWS_SECRET_ACCESS_KEY_FOR_${LONG.toUpperCase().replaceAll("-", "_")}`] }),

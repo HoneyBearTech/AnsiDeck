@@ -9,6 +9,12 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- **Group graph** for inventories (`/inventories/{id}/graph`, linked from the inventory page): an
+  accessible tree of how the groups nest, including groups from dynamic sources and groups with several
+  parents, with each group's parents and children and the hosts in it and below it. API:
+  `GET /api/inventories/{id}/graph` (names, edges and counts only, no vars) and a `group` filter on
+  `GET /api/inventories/{id}/hosts`.
+- The host list ("Hosts a run sees") pages through more than 100 hosts.
 - A browser layout check on every pull request (`npm run test:layout`, Playwright in Google Chrome):
   every page at 375, 768, 1024 and 1280 px with long names must not scroll sideways, must pass axe's
   colour-contrast rule, and its "New/Add" dialogs must fit a phone. Not a required check yet.

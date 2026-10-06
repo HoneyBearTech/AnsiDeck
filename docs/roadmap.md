@@ -31,7 +31,8 @@ SLSA build provenance on release files. The most recent release is the supported
 - More from the editor: completion of module names and options, and ansible-lint's fixes offered as edits.
 
 **Layout and visualisation**
-- A visual graph of inventory groups and hosts, and denser tables for large lists on wide screens.
+- Denser tables for large lists on wide screens. (The inventory group graph is done: see the
+  [changelog](../CHANGELOG.md), unreleased.)
 
 **Security and operations**
 - Limiting what runs can reach on the network (for example cloud metadata and the API's own ports).

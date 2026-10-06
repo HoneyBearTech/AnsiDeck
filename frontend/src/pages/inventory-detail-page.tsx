@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 
 import { PageHeader } from "@/components/page-header";
 import { InventorySourcesPanel } from "@/components/inventory-sources-panel";
@@ -200,6 +200,11 @@ export function InventoryDetailPage() {
         title={inventory.name}
         description={inventory.description}
         back={{ to: "/inventories", label: "Inventories" }}
+        actions={
+          <Button variant="outline" size="sm" asChild>
+            <Link to={`/inventories/${inventoryId}/graph`}>Group graph</Link>
+          </Button>
+        }
       />
 
       {deletion.error && <p className="text-sm text-destructive">{deletion.error}</p>}
