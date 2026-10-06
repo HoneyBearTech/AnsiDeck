@@ -16,7 +16,7 @@ describe("vault", () => {
       },
     });
     expect(await screen.findByText(/No vault passwords yet/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "New Vault Password" }));
+    await user.click(screen.getByRole("button", { name: "New vault password" }));
     let dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Name"), "prod-vault");
     await user.type(dialog.getByLabelText("Description"), "prod secrets");
@@ -26,7 +26,7 @@ describe("vault", () => {
     expect(await screen.findByText("prod secrets")).toBeInTheDocument();
     expect(api.requests("POST /vault-passwords")[0]?.body).toMatchObject({ name: "prod-vault", password: "hunter2" });
 
-    await user.click(screen.getByRole("button", { name: "New Vault Password" }));
+    await user.click(screen.getByRole("button", { name: "New vault password" }));
     dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Name"), "bao-vault");
     await user.click(dialog.getByRole("button", { name: "In OpenBao" }));
@@ -97,7 +97,7 @@ describe("vault", () => {
         "POST /vault-passwords": reply(409, { detail: "Name taken" }),
       },
     });
-    await user.click(await screen.findByRole("button", { name: "New Vault Password" }));
+    await user.click(await screen.findByRole("button", { name: "New vault password" }));
     const dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Name"), "prod-vault");
     await user.type(dialog.getByLabelText("Vault password"), "x");

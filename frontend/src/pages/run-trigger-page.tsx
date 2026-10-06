@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
+import { CodeEditor } from "@/components/code-editor";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -8,7 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/auth-context";
 import {
   api,
@@ -31,6 +31,11 @@ const NO_VAULT = "__none__";
 // Mirrors the API: 2 h by default, at most 24 h.
 const DEFAULT_TIMEOUT_MINUTES = 120;
 const MAX_TIMEOUT_MINUTES = 24 * 60;
+
+/** The id of the only item, or "" when there are none or several. */
+function only(items: { id: number }[]): string {
+  return items.length === 1 ? String(items[0]?.id) : "";
+}
 
 /** How fresh a dynamic inventory's hosts are, for the run being set up. */
 function SnapshotNote({ targets }: { targets: InventoryTargets }) {
@@ -127,7 +132,8 @@ export function RunTriggerPage() {
   const [vaultPasswords, setVaultPasswords] = React.useState<VaultPassword[]>([]);
   const [selectedInventory, setSelectedInventory] = React.useState<InventoryTargets | null>(null);
 
-  const [playbookId, setPlaybookId] = React.useState<string>("");
+  // "Run" on a playbook opens this form with it picked (?playbook=<id>).
+  const [playbookId, setPlaybookId] = React.useState<string>(() => searchParams.get("playbook") ?? "");
   const [inventoryId, setInventoryId] = React.useState<string>("");
   const [groupId, setGroupId] = React.useState<string>(ALL_HOSTS);
   const [credentialId, setCredentialId] = React.useState<string>("");
@@ -149,14 +155,23 @@ export function RunTriggerPage() {
     api.listVaultPasswords().then(setVaultPasswords);
   }, []);
 
+  // A run lives in exactly one project: the playbook's. Only offer that project's items. When there's
+  // just one choice, it's picked (until someone picks something else).
+  const playbookChoice = playbookId || only(playbooks.filter((p) => p.missing_at === null));
+  const playbookProjectId = playbooks.find((p) => String(p.id) === playbookChoice)?.project_id;
+  const inProject = <T extends { project_id: number }>(items: T[]) =>
+    playbookProjectId === undefined ? items : items.filter((i) => i.project_id === playbookProjectId);
+  const inventoryChoice = inventoryId || only(inProject(inventories));
+  const credentialChoice = credentialId || only(inProject(credentials));
+
   React.useEffect(() => {
-    if (!inventoryId) {
+    if (!inventoryChoice) {
       // oxlint-disable-next-line react/set-state-in-effect -- clearing the inventory clears its targets
       setSelectedInventory(null);
       return;
     }
     setGroupId(ALL_HOSTS);
-    api.inventoryTargets(Number(inventoryId)).then((targets) => {
+    api.inventoryTargets(Number(inventoryChoice)).then((targets) => {
       setSelectedInventory(targets);
       const wanted = pendingGroup.current;
       pendingGroup.current = null;
@@ -164,7 +179,7 @@ export function RunTriggerPage() {
       if (targets.groups.some((group) => group.name === wanted)) setGroupId(GROUP_PREFIX + wanted);
       else setNotes((current) => [...current, `The group ${wanted} is no longer in this inventory: pick a target.`]);
     });
-  }, [inventoryId]);
+  }, [inventoryChoice]);
 
   React.useEffect(() => {
     if (!fromRun && !fromTemplate) return;
@@ -217,11 +232,6 @@ export function RunTriggerPage() {
     };
   }, [fromRun, fromTemplate, canInProject]);
 
-  // A run lives in exactly one project: the playbook's. Only offer that project's items.
-  const playbookProjectId = playbooks.find((p) => String(p.id) === playbookId)?.project_id;
-  const inProject = <T extends { project_id: number }>(items: T[]) =>
-    playbookProjectId === undefined ? items : items.filter((i) => i.project_id === playbookProjectId);
-
   function handlePlaybookChange(value: string) {
     const next = playbooks.find((p) => String(p.id) === value)?.project_id;
     if (next !== playbookProjectId) {
@@ -233,13 +243,11 @@ export function RunTriggerPage() {
     setPlaybookId(value);
   }
 
-  const canSubmit =
-    playbookId !== "" && inventoryId !== "" && credentialId !== "" && (!become || becomeConfirmed);
+  const picked = playbookChoice !== "" && inventoryChoice !== "" && credentialChoice !== "";
+  const canSubmit = picked && (!become || becomeConfirmed);
 
   const canSaveTemplate =
-    playbookId !== "" &&
-    inventoryId !== "" &&
-    credentialId !== "" &&
+    picked &&
     playbookProjectId !== undefined &&
     canInProject(playbookProjectId, "content:write");
   const canUpdateTemplate = template !== null && canSaveTemplate && template.project_id === playbookProjectId;
@@ -260,10 +268,10 @@ export function RunTriggerPage() {
     }
 
     return {
-      playbook_id: Number(playbookId),
-      inventory_id: Number(inventoryId),
+      playbook_id: Number(playbookChoice),
+      inventory_id: Number(inventoryChoice),
       group_name: groupId === ALL_HOSTS ? null : groupId.slice(GROUP_PREFIX.length),
-      credential_id: Number(credentialId),
+      credential_id: Number(credentialChoice),
       vault_password_id: vaultPasswordId === NO_VAULT ? null : Number(vaultPasswordId),
       become,
       check_mode: checkMode,
@@ -336,7 +344,7 @@ export function RunTriggerPage() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold">New Run</h1>
+        <h1 className="text-xl font-semibold">New run</h1>
         {template && (
           <p className="text-sm text-muted-foreground">
             From the template <span className="font-medium text-foreground">{template.name}</span>: change what you
@@ -353,7 +361,7 @@ export function RunTriggerPage() {
 
       <div className="flex flex-col gap-2">
         <Label htmlFor="run-playbook">Playbook</Label>
-        <Select value={playbookId} onValueChange={handlePlaybookChange}>
+        <Select value={playbookChoice} onValueChange={handlePlaybookChange}>
           <SelectTrigger id="run-playbook">
             <SelectValue placeholder="Select a playbook" />
           </SelectTrigger>
@@ -372,7 +380,7 @@ export function RunTriggerPage() {
 
       <div className="flex flex-col gap-2">
         <Label htmlFor="run-inventory">Inventory</Label>
-        <Select value={inventoryId} onValueChange={setInventoryId}>
+        <Select value={inventoryChoice} onValueChange={setInventoryId}>
           <SelectTrigger id="run-inventory">
             <SelectValue placeholder="Select an inventory" />
           </SelectTrigger>
@@ -408,7 +416,7 @@ export function RunTriggerPage() {
 
       <div className="flex flex-col gap-2">
         <Label htmlFor="run-credential">Credential</Label>
-        <Select value={credentialId} onValueChange={setCredentialId}>
+        <Select value={credentialChoice} onValueChange={setCredentialId}>
           <SelectTrigger id="run-credential">
             <SelectValue placeholder="Select a credential" />
           </SelectTrigger>
@@ -482,13 +490,12 @@ export function RunTriggerPage() {
       </div>
 
       <div className="flex flex-col gap-2">
-        <Label htmlFor="run-extra-vars">Extra vars (JSON)</Label>
-        <Textarea
-          id="run-extra-vars"
+        <Label id="run-extra-vars-label">Extra vars (JSON)</Label>
+        <CodeEditor
+          labelledBy="run-extra-vars-label"
           value={extraVarsText}
-          onChange={(e) => setExtraVarsText(e.target.value)}
-          className="min-h-24 font-mono"
-          spellCheck={false}
+          onChange={setExtraVarsText}
+          className="[&_.cm-editor]:min-h-24"
         />
       </div>
 
@@ -529,9 +536,9 @@ export function RunTriggerPage() {
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <div className="flex flex-wrap gap-3">
-        <Button onClick={handleSubmit} disabled={!canSubmit || submitting}>
-          {submitting ? "Starting…" : "Trigger Run"}
+      <div className="flex flex-wrap items-center gap-3">
+        <Button onClick={handleSubmit} disabled={!canSubmit || submitting} aria-describedby="start-run-hint">
+          {submitting ? "Starting…" : "Start run"}
         </Button>
         {canUpdateTemplate && (
           <Button variant="outline" onClick={handleUpdateTemplate} disabled={submitting}>
@@ -544,6 +551,13 @@ export function RunTriggerPage() {
           </Button>
         )}
       </div>
+      {!canSubmit && (
+        <p id="start-run-hint" className="-mt-3 text-xs text-muted-foreground">
+          {!picked
+            ? "Pick a playbook, an inventory and a credential to start a run."
+            : "Tick the root confirmation above to start this run."}
+        </p>
+      )}
       <SaveTemplateDialog open={saveOpen} onOpenChange={setSaveOpen} onSave={handleSaveTemplate} />
     </div>
   );

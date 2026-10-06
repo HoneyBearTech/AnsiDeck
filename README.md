@@ -113,7 +113,7 @@ Content is grouped into projects, and a `Default` project exists on first start.
    (`db:5432`; set `ansible_port` instead) and no ranges (`web[1:3]`). Group names use letters, digits, `.`,
    `_` and `-`, and `all` and `ungrouped` are ansible's own.
 3. **Playbooks**: write or paste a playbook, or import a YAML file, and **Check** it with ansible-lint.
-4. **Runs → New Run**: pick the playbook, inventory, target and credential. Optionally add a vault password, a
+4. **Runs → New run**: pick the playbook, inventory, target and credential. Optionally add a vault password, a
    host limit, check or diff mode, and extra variables as JSON. The output streams live, and finished runs stay
    in the run history.
 
@@ -279,7 +279,7 @@ NetBox description, a cloud tag) is never treated as a template in a run.
 
 On an inventory's page, **Dynamic sources** lists its sources (with examples for NetBox, constructed and
 generator), the last refresh and its error, the groups the sources found and every host a run will see, marked
-by where it came from. **New Run** offers the sources' groups as targets and says how old the snapshot is.
+by where it came from. **New run** offers the sources' groups as targets and says how old the snapshot is.
 Project admins manage sources (through the API too: `POST /api/inventories/{id}/sources`,
 `PATCH`/`DELETE …/sources/{source id}`, `PUT …/refresh-settings`); operators can refresh (`POST …/refresh`);
 anyone who can see the inventory can read `…/sources`, `…/refreshes`, `…/snapshot`, `…/hosts` and `…/targets`.

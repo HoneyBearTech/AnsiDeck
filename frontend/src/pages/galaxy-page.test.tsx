@@ -48,7 +48,8 @@ describe("galaxy", () => {
       setEditorText(editor, `${editorText(editor)}  - name: ansible.posix\n`);
       expect(screen.getByText("Save your changes first.")).toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: "Save" }));
-      expect(await screen.findByRole("button", { name: "Saved" })).toBeDisabled();
+      expect(await screen.findByText("All changes saved")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
       expect(api.requests("PUT /galaxy/requirements")[0]?.body).toEqual({
         content: "collections:\n  - name: community.general\n  - name: ansible.posix\n",
       });

@@ -479,7 +479,7 @@ export function InventorySourcesPanel({
                 </Button>
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant="destructive-outline"
                   onClick={() => {
                     if (window.confirm(`Delete the source "${source.name}"? Its config can't be recovered.`)) {
                       act(() => api.deleteInventorySource(inventoryId, source.id));

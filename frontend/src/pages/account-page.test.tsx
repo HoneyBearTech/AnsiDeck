@@ -11,7 +11,7 @@ describe("account: password", () => {
     const { api, user, screen } = renderApp("/account", {
       routes: { "POST /auth/change-password": { ok: true } },
     });
-    expect(await screen.findByText("Default: admin")).toBeInTheDocument();
+    expect(await screen.findByText("Default · admin")).toBeInTheDocument();
     expect(screen.getByText("global admin")).toBeInTheDocument();
     const submit = screen.getByRole("button", { name: "Change password" });
 

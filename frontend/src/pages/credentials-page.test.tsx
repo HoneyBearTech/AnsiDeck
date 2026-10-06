@@ -37,7 +37,7 @@ describe("credentials", () => {
       routes: { "GET /credentials": [], "POST /credentials": credential() },
     });
     await screen.findByText("No credentials yet.");
-    await user.click(screen.getByRole("button", { name: "New Credential" }));
+    await user.click(screen.getByRole("button", { name: "New credential" }));
     const dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Name"), "deploy-key");
     await user.type(dialog.getByLabelText("Description"), "web tier");
@@ -60,7 +60,7 @@ describe("credentials", () => {
     const { api, user, screen } = renderApp("/credentials", {
       routes: { "GET /credentials": [], "POST /credentials": credential({ kind: "env" }) },
     });
-    await user.click(await screen.findByRole("button", { name: "New Credential" }));
+    await user.click(await screen.findByRole("button", { name: "New credential" }));
     const dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Name"), "netbox");
     await user.click(dialog.getByRole("button", { name: "Environment variables" }));
@@ -90,7 +90,7 @@ describe("credentials", () => {
         "POST /credentials/:id/check": { ok: true, version: 3, error_kind: null, error: null },
       },
     });
-    await user.click(await screen.findByRole("button", { name: "New Credential" }));
+    await user.click(await screen.findByRole("button", { name: "New credential" }));
     const dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Name"), "vaulted");
     await user.click(dialog.getByRole("button", { name: "In OpenBao" }));
@@ -119,7 +119,7 @@ describe("credentials", () => {
     await user.click(await screen.findByRole("button", { name: "Test" }));
     expect(await screen.findByText("No such secret")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "New Credential" }));
+    await user.click(screen.getByRole("button", { name: "New credential" }));
     const dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Name"), "deploy-key");
     await user.type(dialog.getByLabelText("Private key (PEM)"), "key");
@@ -160,6 +160,6 @@ describe("credentials", () => {
   it("is hidden from people who can't list secrets", async () => {
     const { screen } = renderApp("/credentials", { user: viewerUser(), routes: { "GET /credentials": [] } });
     expect(await screen.findByText("Not permitted")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "New Credential" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New credential" })).not.toBeInTheDocument();
   });
 });

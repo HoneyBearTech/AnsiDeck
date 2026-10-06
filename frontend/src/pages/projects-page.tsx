@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -73,7 +74,7 @@ function ProjectFormDialog({ project, onSaved }: { project?: ProjectSummary; onS
             Rename
           </Button>
         ) : (
-          <Button>New Project</Button>
+          <Button>New project</Button>
         )}
       </DialogTrigger>
       <DialogContent>
@@ -182,7 +183,7 @@ function MembersPanel({ project }: { project: ProjectSummary }) {
               </Select>
               {!locked && (
                 <Button
-                  variant="outline"
+                  variant="destructive-outline"
                   size="sm"
                   onClick={() => {
                     if (window.confirm(`Remove ${member.username} from ${project.name}? They lose access to it at once.`)) {
@@ -338,7 +339,7 @@ function ApiKeysPanel({ project }: { project: ProjectSummary }) {
             </span>
           </div>
           {key.status === "active" && (
-            <Button variant="outline" size="sm" onClick={() => handleRevoke(key)}>
+            <Button variant="destructive-outline" size="sm" onClick={() => handleRevoke(key)}>
               Revoke
             </Button>
           )}
@@ -476,17 +477,11 @@ export function ProjectsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Projects</h1>
-        {isGlobalAdmin && <ProjectFormDialog onSaved={changed} />}
-      </div>
-
-      <p className="text-sm text-muted-foreground">
-        Projects separate who can see and change playbooks, inventories, credentials and runs. Runs are kept
-        apart on the workers (each runs as a user of its own and can't read other runs' files), but they share
-        the workers' network, so only give people who can write playbooks and trigger runs a role you trust
-        them with.
-      </p>
+      <PageHeader
+        title="Projects"
+        description="Projects separate who can see and change playbooks, inventories, credentials and runs. Runs are kept apart on the workers (each runs as a user of its own and can't read other runs' files), but they share the workers' network, so only give people who can write playbooks and start runs a role you trust them with."
+        actions={isGlobalAdmin && <ProjectFormDialog onSaved={changed} />}
+      />
 
       {error && <p className="text-sm text-destructive">{error}</p>}
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -510,7 +505,7 @@ export function ProjectsPage() {
                       <span className="text-xs text-muted-foreground">{project.description}</span>
                     )}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     {canManageMembers && (
                       <Button variant="outline" size="sm" onClick={() => toggle(membersKey)}>
                         {expanded.has(membersKey) ? "Hide members" : "Members"}
@@ -524,7 +519,7 @@ export function ProjectsPage() {
                     {isGlobalAdmin && (
                       <>
                         <ProjectFormDialog project={project} onSaved={changed} />
-                        <Button variant="outline" size="sm" onClick={() => handleDelete(project)}>
+                        <Button variant="destructive-outline" size="sm" onClick={() => handleDelete(project)}>
                           Delete
                         </Button>
                       </>

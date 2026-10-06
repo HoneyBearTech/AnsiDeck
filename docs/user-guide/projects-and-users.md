@@ -26,7 +26,7 @@ A project admin manages the project's members under **Projects → Members**:
 
 Global admins manage accounts on the **Users** page.
 
-- **New User**: a user name, an initial password (at least 12 characters), optionally an email address
+- **New user**: a user name, an initial password (at least 12 characters), optionally an email address
   (needed for single sign-on, below), a role, and the project to add them to. A non-admin user only sees
   the projects they're a member of; the role picked here seeds that first membership. Pick **admin** to make
   a global admin.

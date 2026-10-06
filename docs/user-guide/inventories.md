@@ -5,11 +5,11 @@ edit them; everyone in the project can see them.
 
 ## Hosts and groups
 
-**Inventories → New Inventory** creates one (a name and an optional description). Open it to manage its
+**Inventories → New inventory** creates one (a name and an optional description). Open it to manage its
 contents:
 
-- **Add Group**: group names use letters, digits, `.`, `_` and `-`; `all` and `ungrouped` are Ansible's own.
-- **Add Host**: the **hostname** is exactly what Ansible connects to: a DNS name or address, with no port
+- **Add group**: group names use letters, digits, `.`, `_` and `-`; `all` and `ungrouped` are Ansible's own.
+- **Add host**: the **hostname** is exactly what Ansible connects to: a DNS name or address, with no port
   (use the `ansible_port` var) and no ranges. **Vars (JSON)** holds the host's variables, such as
   `{"ansible_user": "deploy", "ansible_port": 2222}`. Tick the groups the host belongs to.
 - **Edit** a host to change any of this; **Delete** a group (its hosts stay) or a host, after a confirmation.

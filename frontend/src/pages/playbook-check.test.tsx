@@ -50,8 +50,8 @@ describe("checking a playbook", () => {
       );
       expect(screen.getByText("roles/web/tasks/main.yml:4:3")).toBeInTheDocument();
       expect(screen.getByText(/ansible-lint 26\.9\.0 · default rules · showing the first 3 of 5 · 2 findings in installed collections not shown · a secret's value was removed/)).toBeInTheDocument();
-      // marked in the editor (only findings in this file)
-      expect(container.querySelector(".cm-lintRange-error")).toHaveTextContent("shell:");
+      // marked in the editor (only findings in this file); the marks arrive in an effect after the list renders
+      await vi.waitFor(() => expect(container.querySelector(".cm-lintRange-error")).toHaveTextContent("shell:"));
       expect(screen.getAllByRole("button", { name: /Go to line/ })).toHaveLength(2);
       await user.click(screen.getAllByRole("button", { name: "Go to line 2" })[0]!);
       expect(editor).toHaveFocus();
@@ -165,7 +165,7 @@ describe("checking a playbook", () => {
 
   it("checks a new playbook's text in the active project, once there is some", async () => {
     const { api, user, screen } = renderApp("/playbooks/new", { routes: { "POST /playbooks/lint": lintJob() } });
-    await screen.findByRole("heading", { name: "New Playbook" });
+    await screen.findByRole("heading", { name: "New playbook" });
     expect(screen.getByRole("button", { name: "Check" })).toBeDisabled();
     setEditorText(screen.getByRole("textbox", { name: "Content" }), CONTENT);
     await user.click(screen.getByRole("button", { name: "Check" }));
@@ -177,7 +177,7 @@ describe("checking a playbook", () => {
 describe("file picker", () => {
   it("is a button-styled, labelled file input that names the chosen file", async () => {
     const { user, screen } = renderApp("/playbooks/new");
-    await screen.findByRole("heading", { name: "New Playbook" });
+    await screen.findByRole("heading", { name: "New playbook" });
     expect(screen.getByText("No file chosen")).toBeInTheDocument();
     const input = screen.getByLabelText("Upload YAML file");
     expect(input).toHaveAttribute("type", "file");

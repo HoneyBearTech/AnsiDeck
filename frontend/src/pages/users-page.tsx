@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Link } from "react-router-dom";
 
+import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -69,11 +70,11 @@ function CreateUserDialog({ onCreated }: { onCreated: () => void }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button>New User</Button>
+        <Button>New user</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New User</DialogTitle>
+          <DialogTitle>New user</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
@@ -295,10 +296,11 @@ export function UsersPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Users</h1>
-        <CreateUserDialog onCreated={refresh} />
-      </div>
+      <PageHeader
+        title="Users"
+        description="Everyone who can sign in, with their global role. Project roles are set on the Projects page."
+        actions={<CreateUserDialog onCreated={refresh} />}
+      />
 
       {error && <p className="text-sm text-destructive">{error}</p>}
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -399,7 +401,7 @@ export function UsersPage() {
                   )}
                   {!isSelf && (
                     <Button
-                      variant="outline"
+                      variant="destructive-outline"
                       size="sm"
                       onClick={() => {
                         if (

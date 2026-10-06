@@ -45,20 +45,20 @@ const ROUTES = {
   "GET /galaxy/installs": [],
 };
 
-const PAGES: [string, string][] = [
+const PAGES: [string, string | RegExp][] = [
   ["/", "Dashboard"],
   ["/account", "Account"],
   ["/playbooks", "Playbooks"],
-  ["/playbooks/1", "Edit Playbook"],
+  ["/playbooks/1", "Edit playbook"],
   ["/inventories", "Inventories"],
   ["/inventories/1", "lab"],
   ["/credentials", "Credentials"],
   ["/vault", "Vault"],
   ["/galaxy", "Galaxy"],
   ["/runs", "Runs"],
-  ["/runs/new", "New Run"],
-  ["/runs/7", "site.yml → lab"],
-  ["/templates", "Run templates"],
+  ["/runs/new", "New run"],
+  ["/runs/7", /site\.yml → lab/],
+  ["/templates", "Templates"],
   ["/users", "Users"],
   ["/audit", "Audit log"],
   ["/workers", "Workers"],

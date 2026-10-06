@@ -967,7 +967,15 @@ export const api = {
       body: JSON.stringify({ upgrade }),
     }),
 
-  listRuns: () => request<Run[]>(scoped("/runs")),
+  /** Newest first; `status` keeps only runs in those states, `limit` the newest N. */
+  listRuns: (options: { status?: Run["status"][]; limit?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (activeProjectId !== null) params.set("project_id", String(activeProjectId));
+    for (const status of options.status ?? []) params.append("status", status);
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    const query = params.toString();
+    return request<Run[]>(`/runs${query ? `?${query}` : ""}`);
+  },
   getRun: (id: number) => request<Run>(`/runs/${id}`),
   createRun: (payload: {
     playbook_id: number;

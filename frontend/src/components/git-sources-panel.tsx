@@ -213,7 +213,7 @@ function SourceCard({
                   Edit
                 </Button>
                 <Button
-                  variant="outline"
+                  variant="destructive-outline"
                   size="sm"
                   disabled={busy}
                   onClick={() => {

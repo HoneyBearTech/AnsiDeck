@@ -43,7 +43,7 @@ describe("projects", () => {
       },
     });
     expect(await screen.findByText("Everything")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "New Project" }));
+    await user.click(screen.getByRole("button", { name: "New project" }));
     let dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Name"), "Ops");
     await user.type(dialog.getByLabelText("Description"), "Operations");
@@ -117,7 +117,7 @@ describe("projects", () => {
     await user.click(await screen.findByRole("button", { name: "Members" }));
     expect(await screen.findByLabelText("Role of admin")).toBeDisabled();
     expect(screen.getAllByRole("button", { name: "Remove" })).toHaveLength(1);
-    expect(screen.queryByRole("button", { name: "New Project" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New project" })).not.toBeInTheDocument();
   });
 
   it("creates an API key, shows it once, copies it and revokes keys", async () => {

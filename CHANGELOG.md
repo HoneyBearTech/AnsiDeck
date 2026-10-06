@@ -36,6 +36,20 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   (`gh attestation verify`) and attached as `ansideck-<version>.intoto.jsonl`
   ([docs/verifying-releases.md](docs/verifying-releases.md#build-provenance-from-v011)).
 
+### Changed
+
+- **A cleaner, phone-friendly UI**: a compact header with an Admin menu and a user menu (Account, Log out),
+  and a menu button on tablets and phones; every page has the same header, with back links on detail
+  pages; nothing scrolls sideways on a phone any more.
+- **The dashboard** shows what is running now, recent failures and the latest runs, with shortcuts to New
+  run and Templates (it showed placeholder cards before).
+- **Run output** is coloured like Ansible's command line, keeps the play recap's line breaks, and no longer
+  starts with ansible-runner's internal "Identity added" line; the runs list shows each run's number,
+  duration and host outcome. `GET /api/runs` takes `status` (repeatable) and `limit`.
+- Consistent sentence-case labels ("New run", "Start run"), Delete and Revoke buttons in red, real
+  checkboxes, disabled buttons that say what's missing, a single choice preselected, project names on
+  rows in "All projects", the audit log's details as readable fields, and a code editor for extra vars.
+
 ### Upgrading
 
 - Upgrade the workers together with the API (the compose files do): a worker from 0.1.x doesn't take

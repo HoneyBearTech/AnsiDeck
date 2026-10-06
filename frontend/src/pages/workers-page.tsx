@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { api, ApiError, type SecretStoreStatus, type WorkerInfo } from "@/lib/api";
@@ -79,13 +80,10 @@ export function WorkersPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-xl font-semibold">Workers</h1>
-        <p className="text-sm text-muted-foreground">
-          Worker processes that run playbooks. A worker counts as online while it keeps reporting in (every
-          few seconds); workers not seen for a day drop off this list.
-        </p>
-      </div>
+      <PageHeader
+        title="Workers"
+        description="Worker processes that run playbooks. A worker counts as online while it keeps reporting in (every few seconds); workers not seen for a day drop off this list."
+      />
 
       {error && <p className="text-sm text-destructive">{error}</p>}
       {workers === null && !error && <p className="text-sm text-muted-foreground">Loading…</p>}

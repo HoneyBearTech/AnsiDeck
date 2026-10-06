@@ -1,6 +1,9 @@
+import { ChevronRight } from "lucide-react";
 import * as React from "react";
 import { Link } from "react-router-dom";
 
+import { PageHeader } from "@/components/page-header";
+import { ProjectBadge } from "@/components/project-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -55,16 +58,17 @@ export function InventoriesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Inventories</h1>
-        {canWrite && (
+      <PageHeader
+        title="Inventories"
+        description="The hosts and groups runs are aimed at, typed in or fetched from a source."
+        actions={canWrite && (
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
-              <Button>New Inventory</Button>
+              <Button>New inventory</Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>New Inventory</DialogTitle>
+                <DialogTitle>New inventory</DialogTitle>
               </DialogHeader>
               <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-2">
@@ -89,7 +93,7 @@ export function InventoriesPage() {
             </DialogContent>
           </Dialog>
         )}
-      </div>
+      />
 
       {deletion.error && <p className="text-sm text-destructive">{deletion.error}</p>}
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -100,15 +104,21 @@ export function InventoriesPage() {
       <div className="flex flex-col gap-2">
         {inventories.map((inventory) => (
           <Card key={inventory.id}>
-            <CardContent className="flex items-center justify-between p-4">
-              <Link to={`/inventories/${inventory.id}`} className="flex flex-col gap-1">
-                <span className="font-medium">{inventory.name}</span>
+            <CardContent className="flex items-center justify-between gap-4 p-4">
+              <Link to={`/inventories/${inventory.id}`} className="group flex min-w-0 flex-col gap-1">
+                <span className="flex flex-wrap items-center gap-2 font-medium">
+                  <span className="flex items-center gap-1 break-all group-hover:text-primary">
+                    {inventory.name}
+                    <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground group-hover:text-primary" />
+                  </span>
+                  <ProjectBadge projectId={inventory.project_id} />
+                </span>
                 {inventory.description && (
                   <span className="text-xs text-muted-foreground">{inventory.description}</span>
                 )}
               </Link>
               {canWrite && (
-                <Button variant="outline" size="sm" onClick={() =>
+                <Button variant="destructive-outline" size="sm" onClick={() =>
                     deletion.run(
                       `Delete the inventory "${inventory.name}" with its hosts, groups and sources? This can't be undone; its run history stays.`,
                       () => api.deleteInventory(inventory.id),

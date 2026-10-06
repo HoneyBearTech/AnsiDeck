@@ -92,14 +92,22 @@ def _run_out(db: Session, run: Run, user: User) -> RunOut:
 def list_runs(
     request: Request,
     project_id: int | None = Query(None),
+    status_in: list[RunStatus] | None = Query(None, alias="status"),
+    limit: int | None = Query(None, ge=1, le=500),
     user: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> list[RunOut]:
+    """Newest first; `status` (repeatable) keeps only runs in those states, `limit` the newest N."""
     ids = readable_project_ids(db, user, request, Permission.CONTENT_READ, project_id)
     query = db.query(Run)
     if ids is not None:
         query = query.filter(Run.project_id.in_(ids))
-    return [_run_out(db, run, user) for run in query.order_by(Run.id.desc()).all()]
+    if status_in:
+        query = query.filter(Run.status.in_([s.value for s in status_in]))
+    query = query.order_by(Run.id.desc())
+    if limit is not None:
+        query = query.limit(limit)
+    return [_run_out(db, run, user) for run in query.all()]
 
 
 def pin_snapshot(db: Session, playbook: Playbook) -> dict:

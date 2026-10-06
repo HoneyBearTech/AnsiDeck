@@ -4,7 +4,7 @@
 
 **Playbooks** lists the project's playbooks. Operators and admins can:
 
-- **New Playbook**: give it a name and type or paste the YAML, or **Upload YAML file** (the name defaults
+- **New playbook**: give it a name and type or paste the YAML, or **Upload YAML file** (the name defaults
   to the file's). It must be valid YAML: a playbook is checked when you save it.
 - Open a playbook to edit and **Save** it, or **Delete** it from the list (after a confirmation). Run
   history stays.

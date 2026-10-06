@@ -1,9 +1,10 @@
 import { act } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { setEditorText } from "@/test/editor";
 import { reply } from "@/test/fake-api";
 import { FakeWebSocket } from "@/test/fake-websocket";
-import { credential, inventory, playbook, refresh, run, targets, vaultPassword, viewerUser } from "@/test/fixtures";
+import { adminUser, credential, inventory, playbook, project, refresh, run, targets, vaultPassword, viewerUser } from "@/test/fixtures";
 import { choose, renderApp } from "@/test/render";
 
 describe("runs list", () => {
@@ -11,22 +12,26 @@ describe("runs list", () => {
     const { screen } = renderApp("/runs", {
       routes: {
         "GET /runs": [
-          run({ group_name: "web", git_commit: "0123456789abcdef", become: true, check_mode: true, diff_mode: true }),
-          run({ id: 8, status: "timed_out" }),
+          run({ group_name: "web", git_commit: "0123456789abcdef", become: true, check_mode: true, diff_mode: true, limit: "web1" }),
+          run({ id: 8, status: "timed_out", hosts_total: 3, hosts_failed: 1, hosts_unreachable: 1 }),
         ],
       },
     });
-    expect(await screen.findByText("site.yml → lab / web")).toBeInTheDocument();
-    expect(screen.getByText("01234567")).toBeInTheDocument();
-    expect(screen.getByText(/· become · check · diff/)).toBeInTheDocument();
+    const title = await screen.findByText((_, el) => el?.textContent === "site.yml → lab / web" && el.tagName === "SPAN");
+    expect(title.closest("a")).toHaveAttribute("href", "/runs/7");
+    expect(screen.getByText("#7")).toBeInTheDocument();
+    expect(screen.getByText("· 01234567")).toBeInTheDocument();
+    for (const option of ["become", "check", "diff", "limit: web1"]) expect(screen.getByText(option)).toBeInTheDocument();
+    expect(screen.getByText("· 3 hosts, 2 failed")).toHaveClass("text-status-failed");
+    expect(screen.getAllByText("· took 0.0 s")).toHaveLength(2);
     expect(screen.getByText("timed out")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "New Run" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "New run" })).toBeInTheDocument();
   });
 
-  it("says when there are none, without a New Run button for viewers", async () => {
+  it("says when there are none, without a New run button for viewers", async () => {
     const { screen } = renderApp("/runs", { user: viewerUser(), routes: { "GET /runs": [] } });
     expect(await screen.findByText("No runs yet.")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "New Run" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "New run" })).not.toBeInTheDocument();
   });
 });
 
@@ -57,7 +62,7 @@ describe("new run", () => {
     const { api, user, screen } = renderApp("/runs/new", {
       routes: { ...TRIGGER, "POST /runs": run({ id: 42 }), "GET /runs/:id": run({ id: 42 }) },
     });
-    await screen.findByRole("heading", { name: "New Run" });
+    await screen.findByRole("heading", { name: "New run" });
     await user.click(screen.getByLabelText("Playbook"));
     expect(await screen.findByRole("option", { name: "deploy.yml (git: infra)" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "gone.yml" })).not.toBeInTheDocument();
@@ -75,15 +80,14 @@ describe("new run", () => {
     await user.type(screen.getByLabelText("Timeout (minutes)"), "30");
     await user.click(screen.getByRole("checkbox", { name: /Check mode/ }));
     await user.click(screen.getByRole("checkbox", { name: /Diff mode/ }));
-    await user.clear(screen.getByLabelText("Extra vars (JSON)"));
-    await user.type(screen.getByLabelText("Extra vars (JSON)"), '{{"release": "1.2"}');
+    setEditorText(screen.getByLabelText("Extra vars (JSON)"), '{"release": "1.2"}');
 
     await user.click(screen.getByRole("switch", { name: "Run as admin (become root)" }));
-    expect(screen.getByRole("button", { name: "Trigger Run" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start run" })).toBeDisabled();
     await user.click(screen.getByRole("checkbox", { name: /I understand this grants root/ }));
-    await user.click(screen.getByRole("button", { name: "Trigger Run" }));
+    await user.click(screen.getByRole("button", { name: "Start run" }));
 
-    await screen.findByText("Live output");
+    await screen.findByText(/^(Live )?[Oo]utput$/);
     expect(api.requests("POST /runs")[0]?.body).toEqual({
       playbook_id: 1,
       inventory_id: 1,
@@ -112,21 +116,19 @@ describe("new run", () => {
     expect(await screen.findByText(/haven't been refreshed yet/)).toBeInTheDocument();
     await choose(user, screen.getByLabelText("Credential"), "deploy-key");
 
-    await user.clear(screen.getByLabelText("Extra vars (JSON)"));
-    await user.type(screen.getByLabelText("Extra vars (JSON)"), "nope");
-    await user.click(screen.getByRole("button", { name: "Trigger Run" }));
+    setEditorText(screen.getByLabelText("Extra vars (JSON)"), "nope");
+    await user.click(screen.getByRole("button", { name: "Start run" }));
     expect(await screen.findByText("Extra vars must be valid JSON")).toBeInTheDocument();
 
-    await user.clear(screen.getByLabelText("Extra vars (JSON)"));
-    await user.type(screen.getByLabelText("Extra vars (JSON)"), "{{}");
+    setEditorText(screen.getByLabelText("Extra vars (JSON)"), "{}");
     await user.clear(screen.getByLabelText("Timeout (minutes)"));
     await user.type(screen.getByLabelText("Timeout (minutes)"), "5000");
-    await user.click(screen.getByRole("button", { name: "Trigger Run" }));
+    await user.click(screen.getByRole("button", { name: "Start run" }));
     expect(await screen.findByText(/Timeout must be a whole number of minutes from 1 to 1440/)).toBeInTheDocument();
 
     await user.clear(screen.getByLabelText("Timeout (minutes)"));
     await user.type(screen.getByLabelText("Timeout (minutes)"), "60");
-    await user.click(screen.getByRole("button", { name: "Trigger Run" }));
+    await user.click(screen.getByRole("button", { name: "Start run" }));
     expect(await screen.findByText("The inventory has no snapshot yet")).toBeInTheDocument();
   });
 
@@ -135,9 +137,29 @@ describe("new run", () => {
     await choose(user, await screen.findByLabelText("Playbook"), "site.yml");
     await choose(user, screen.getByLabelText("Credential"), "deploy-key");
     await choose(user, screen.getByLabelText("Playbook"), "other-project.yml");
-    expect(screen.getByLabelText("Credential")).toHaveTextContent("Select a credential");
+    // deploy-key (the other project's) is gone; that project's only credential is picked instead
+    expect(screen.getByLabelText("Credential")).toHaveTextContent("foreign-key");
     await user.click(screen.getByLabelText("Credential"));
-    expect(await screen.findByRole("option", { name: "foreign-key" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "deploy-key" })).not.toBeInTheDocument();
+  });
+
+  it("picks the only choice and says why Start run is disabled", async () => {
+    const { screen } = renderApp("/runs/new", {
+      routes: { ...TRIGGER, "GET /playbooks": [playbook()], "GET /credentials": [credential()] },
+    });
+    await vi.waitFor(() => expect(screen.getByLabelText("Playbook")).toHaveTextContent("site.yml"));
+    expect(screen.getByLabelText("Credential")).toHaveTextContent("deploy-key");
+    expect(screen.getByLabelText("Inventory")).toHaveTextContent("lab");
+    expect(await screen.findByRole("button", { name: "Start run" })).toBeEnabled();
+    expect(screen.queryByText(/to start a run/)).not.toBeInTheDocument();
+  });
+
+  it("keeps Start run disabled, with the reason, until everything is picked", async () => {
+    const { user, screen } = renderApp("/runs/new", { routes: { ...TRIGGER, "GET /credentials": [] } });
+    await choose(user, await screen.findByLabelText("Playbook"), "site.yml");
+    expect(screen.getByLabelText("Inventory")).toHaveTextContent("lab"); // the project's only one
+    expect(screen.getByRole("button", { name: "Start run" })).toBeDisabled();
+    expect(screen.getByText("Pick a playbook, an inventory and a credential to start a run.")).toBeInTheDocument();
   });
 });
 
@@ -247,7 +269,7 @@ describe("live output", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { screen } = renderApp("/runs/7", { routes: { "GET /runs/:id": run() } });
-      await screen.findByText("Live output");
+      await screen.findByText(/^(Live )?[Oo]utput$/);
       const first = await FakeWebSocket.opened();
       act(() => {
         first.open();
@@ -263,5 +285,22 @@ describe("live output", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("small polish", () => {
+  it("opens New run with the playbook picked from its Run button", async () => {
+    const { screen } = renderApp("/runs/new?playbook=4", { routes: TRIGGER });
+    await vi.waitFor(() => expect(screen.getByLabelText("Playbook")).toHaveTextContent("deploy.yml (git: infra)"));
+  });
+
+  it("shows each row's project when viewing all projects", async () => {
+    const { screen } = renderApp("/runs", {
+      activeProject: null,
+      user: adminUser({ projects: [project(), project({ id: 2, name: "Staging" })] }),
+      routes: { "GET /runs": [run(), run({ id: 8, project_id: 2 })] },
+    });
+    expect(await screen.findByText("Default")).toBeInTheDocument();
+    expect(screen.getByText("Staging")).toBeInTheDocument();
   });
 });

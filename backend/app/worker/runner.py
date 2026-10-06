@@ -88,6 +88,17 @@ def refresh_error(stderr: str, secrets: list[str], rc: int | None) -> str:
 
 
 _JOB_PATHS = {"run": "runs", "refresh": "refreshes", "lint": "lints"}
+
+
+def _ssh_agent_noise(event: dict) -> bool:
+    """ansible-runner's own "Identity added: <temp path> (<key comment>)" line from loading the
+    run's SSH key into its agent: not the playbook's output, and it names a temporary path and
+    the key's comment (often someone's user@host)."""
+    return event.get("event") == "verbose" and str(event.get("stdout", "")).startswith(
+        "Identity added: "
+    )
+
+
 _FINDING_TEXT_FIELDS = ("rule", "message", "details", "path")
 
 
@@ -459,6 +470,9 @@ class Worker:
                 return
 
         def on_event(event: dict) -> None:
+            if _ssh_agent_noise(event):
+                # Kept (every event reaches the log, in order) without its text.
+                event = {**event, "stdout": ""}
             if event.get("event") == "playbook_on_stats":
                 recap.update(host_counts(event.get("event_data")))  # before scrubbing
             sender.add(_bounded(scrub(event)))

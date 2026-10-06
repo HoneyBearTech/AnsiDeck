@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -53,7 +54,7 @@ function ChangePasswordCard({ username }: { username: string }) {
         <CardDescription>Your other sessions are signed out; this one stays signed in.</CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleSubmit} className="flex max-w-sm flex-col gap-4">
+        <form onSubmit={handleSubmit} className="flex max-w-md flex-col gap-4">
           {/* Lets password managers file the new password under the right account. */}
           <input type="text" autoComplete="username" value={username} readOnly hidden />
           <div className="flex flex-col gap-2">
@@ -215,7 +216,7 @@ function TwoFactorCard({ username, enabled }: { username: string; enabled: boole
     body = <RecoveryCodes codes={step.codes} onDone={() => goTo({ kind: "idle" })} />;
   } else if (step.kind === "scan") {
     body = (
-      <form onSubmit={handleEnable} className="flex max-w-sm flex-col gap-4">
+      <form onSubmit={handleEnable} className="flex max-w-md flex-col gap-4">
         <p className="text-sm">Scan this with your authenticator app, then enter the code it shows.</p>
         <img src={step.setup.qr} alt="QR code for your authenticator app" className="h-48 w-48 rounded-md" />
         <div className="flex flex-col gap-1">
@@ -249,7 +250,7 @@ function TwoFactorCard({ username, enabled }: { username: string; enabled: boole
   } else if (step.kind === "password") {
     const disabling = step.purpose === "disable";
     body = (
-      <form onSubmit={handlePassword} className="flex max-w-sm flex-col gap-4">
+      <form onSubmit={handlePassword} className="flex max-w-md flex-col gap-4">
         <input type="text" autoComplete="username" value={username} readOnly hidden />
         <div className="flex flex-col gap-2">
           <Label htmlFor="totp-password">Current password</Label>
@@ -349,7 +350,7 @@ export function AccountPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-semibold">Account</h1>
+      <PageHeader title="Account" description="Your password, two-factor login and project roles." />
       <Card>
         <CardContent className="flex flex-col gap-3 p-4">
           <div className="flex items-center gap-2">
@@ -358,11 +359,12 @@ export function AccountPage() {
             {user.totp_enabled && <Badge variant="ok">2FA</Badge>}
           </div>
           {user.projects.length > 0 && (
-            <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Project roles:</span>
               {user.projects.map((project) => (
-                <span key={project.id}>
-                  {project.name}: {project.role}
-                </span>
+                <Badge key={project.id} variant="outline">
+                  {project.name} · {project.role}
+                </Badge>
               ))}
             </div>
           )}

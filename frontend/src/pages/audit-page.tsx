@@ -1,5 +1,7 @@
 import * as React from "react";
 
+import { PageHeader } from "@/components/page-header";
+import { useAuth } from "@/context/auth-context";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,6 +27,8 @@ function describeTarget(event: AuditEvent): string | null {
 }
 
 export function AuditPage() {
+  const { user } = useAuth();
+  const projectName = (id: number) => user?.projects.find((p) => p.id === id)?.name ?? `#${id}`;
   const [items, setItems] = React.useState<AuditEvent[]>([]);
   const [total, setTotal] = React.useState(0);
   const [offset, setOffset] = React.useState(0);
@@ -70,7 +74,7 @@ export function AuditPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-semibold">Audit log</h1>
+      <PageHeader title="Audit log" description="Who did what and when: sign-ins, changes, runs and refusals." />
 
       <div className="flex flex-wrap items-end gap-4">
         <div className="flex flex-col gap-2">
@@ -133,10 +137,19 @@ export function AuditPage() {
                   {event.actor_username ?? "system"}
                   {target && ` → ${target}`}
                   {event.ip && ` · ${event.ip}`}
-                  {event.project_id !== null && ` · project #${event.project_id}`}
+                  {event.project_id !== null && ` · project ${projectName(event.project_id)}`}
                 </p>
                 {event.detail && Object.keys(event.detail).length > 0 && (
-                  <p className="font-mono text-xs text-muted-foreground">{JSON.stringify(event.detail)}</p>
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 font-mono text-xs text-muted-foreground">
+                    {Object.entries(event.detail).map(([key, value]) => (
+                      <React.Fragment key={key}>
+                        <dt>{key}</dt>
+                        <dd className="min-w-0 text-foreground/80 [overflow-wrap:anywhere]">
+                          {typeof value === "string" ? value : JSON.stringify(value)}
+                        </dd>
+                      </React.Fragment>
+                    ))}
+                  </dl>
                 )}
               </CardContent>
             </Card>

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { setEditorText } from "@/test/editor";
 import { reply } from "@/test/fake-api";
 import {
   ALL_PERMISSIONS,
@@ -89,7 +90,7 @@ describe("run again", () => {
     const { screen } = renderApp("/runs/7", {
       routes: { "GET /runs/:id": run({ status: "queued", started_at: null, finished_at: null }) },
     });
-    await screen.findByText("Live output");
+    await screen.findByText(/^(Live )?[Oo]utput$/);
     expect(screen.queryByRole("link", { name: "text" })).not.toBeInTheDocument();
   });
 });
@@ -121,8 +122,8 @@ describe("edit and run", () => {
 
     await user.clear(screen.getByLabelText("Limit (optional)"));
     await user.type(screen.getByLabelText("Limit (optional)"), "web2");
-    await user.click(screen.getByRole("button", { name: "Trigger Run" }));
-    await screen.findByText("Live output");
+    await user.click(screen.getByRole("button", { name: "Start run" }));
+    await screen.findByText(/^(Live )?[Oo]utput$/);
     expect(api.requests("POST /runs")[0]?.body).toEqual({
       playbook_id: 1,
       inventory_id: 1,
@@ -159,7 +160,7 @@ describe("edit and run", () => {
 
     await user.click(screen.getByLabelText("Credential"));
     await user.click(await screen.findByRole("option", { name: "deploy-key" }));
-    await user.click(screen.getByRole("button", { name: "Trigger Run" }));
+    await user.click(screen.getByRole("button", { name: "Start run" }));
     expect(await screen.findByText(/Extra vars still contain \[REDACTED\] or \[HIDDEN\]: enter the real values\./)).toBeInTheDocument();
     expect(api.requests("POST /runs")).toHaveLength(0);
   });
@@ -170,7 +171,7 @@ describe("edit and run", () => {
     });
     expect(await screen.findByRole("checkbox", { name: /I understand this grants root/ })).not.toBeChecked();
     expect(screen.getByRole("switch", { name: "Run as admin (become root)" })).toBeChecked();
-    expect(screen.getByRole("button", { name: "Trigger Run" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start run" })).toBeDisabled();
   });
 
   it("shows why the run couldn't be loaded", async () => {
@@ -197,7 +198,7 @@ describe("saving templates from the form", () => {
     await user.type(screen.getByLabelText("Name"), "Nightly patch");
     await user.type(screen.getByLabelText("Description (optional)"), "every night");
     await user.click(screen.getByRole("button", { name: "Save template" }));
-    expect(await screen.findByRole("heading", { level: 1, name: "Run templates" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Templates" })).toBeInTheDocument();
     expect(api.requests("POST /run-templates")[0]?.body).toMatchObject({
       name: "Nightly patch",
       description: "every night",
@@ -230,8 +231,7 @@ describe("saving templates from the form", () => {
       routes: { ...FORM, "GET /runs/:id": run() },
     });
     await screen.findByText("Filled in from run #7.");
-    await user.clear(screen.getByLabelText("Extra vars (JSON)"));
-    await user.type(screen.getByLabelText("Extra vars (JSON)"), "nope");
+    setEditorText(screen.getByLabelText("Extra vars (JSON)"), "nope");
     await user.click(await screen.findByRole("button", { name: "Save as template" }));
     await user.type(screen.getByLabelText("Name"), "x");
     await user.click(screen.getByRole("button", { name: "Save template" }));
@@ -246,7 +246,7 @@ describe("saving templates from the form", () => {
       routes: { ...FORM, "GET /runs/:id": run() },
     });
     await screen.findByText("Filled in from run #7.");
-    await screen.findByRole("button", { name: "Trigger Run" });
+    await screen.findByRole("button", { name: "Start run" });
     expect(screen.queryByRole("button", { name: "Save as template" })).not.toBeInTheDocument();
   });
 
@@ -265,13 +265,13 @@ describe("saving templates from the form", () => {
     expect(screen.getByRole("checkbox", { name: /Diff mode/ })).toBeChecked();
     expect(screen.getByLabelText("Timeout (minutes)")).toHaveValue(60);
 
-    await user.click(screen.getByRole("button", { name: "Trigger Run" }));
+    await user.click(screen.getByRole("button", { name: "Start run" }));
     expect(
       await screen.findByText(/or run the template from the Templates page, which keeps them\./),
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Update template" }));
-    expect(await screen.findByRole("heading", { level: 1, name: "Run templates" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Templates" })).toBeInTheDocument();
     expect(api.requests("PUT /run-templates/3")[0]?.body).toEqual({
       name: "Nightly patch",
       description: "Patches the lab every night",
@@ -326,9 +326,11 @@ describe("templates page", () => {
     expect(await screen.findByText("Nightly patch")).toBeInTheDocument();
     expect(screen.getByText("root")).toBeInTheDocument();
     expect(
-      screen.getByText("site.yml → lab / web · credential deploy-key · become · check · diff · limit: web1 · vault: prod-vault"),
+      screen.getByText("site.yml → lab / web · credential deploy-key"),
     ).toBeInTheDocument();
-    expect(screen.getByText("(deleted playbook) → lab · credential (deleted) · diff")).toBeInTheDocument();
+    for (const option of ["become", "check", "limit: web1", "vault: prod-vault"]) expect(screen.getByText(option)).toBeInTheDocument();
+    expect(screen.getAllByText("diff")).toHaveLength(2); // both templates use diff mode
+    expect(screen.getByText("(deleted playbook) → lab · credential (deleted)")).toBeInTheDocument();
     expect(
       screen.getByText("Can't run: its playbook, credential have been deleted. Edit it to pick another."),
     ).toBeInTheDocument();
@@ -353,7 +355,7 @@ describe("templates page", () => {
     await user.type(screen.getByLabelText("Limit (optional, this run only)"), "web1");
     await user.click(screen.getByRole("checkbox", { name: /Check mode/ }));
     await user.click(screen.getByRole("button", { name: "Run as root" }));
-    await screen.findByText("Live output");
+    await screen.findByText(/^(Live )?[Oo]utput$/);
     expect(api.requests("POST /run-templates/3/launch")[0]?.body).toEqual({ limit: "web1", check_mode: true });
   });
 
@@ -390,7 +392,7 @@ describe("templates page", () => {
       routes: { "GET /run-templates": [runTemplate()] },
     });
     expect(await screen.findByText("Nightly patch")).toBeInTheDocument();
-    for (const name of ["Run", "Delete Nightly patch", "New Run"]) {
+    for (const name of ["Run", "Delete Nightly patch", "New run"]) {
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     }
     expect(screen.queryByRole("link", { name: "Edit Nightly patch" })).not.toBeInTheDocument();

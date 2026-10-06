@@ -23,6 +23,7 @@ from app.worker.client import ApiClient, ApiUnavailable
 from app.worker.runner import MAX_EVENT_BYTES, _bounded
 from tests.conftest import start_worker
 from tests.test_runs import (
+    FAILURE_PLAYBOOK,
     PAUSE_PLAYBOOK,
     SUCCESS_PLAYBOOK,
     _create_credential,
@@ -341,3 +342,41 @@ def test_nothing_of_a_stopped_run_outlives_it(client, tmp_path) -> None:
     run_id = _trigger(client, tmp_path, timeout_seconds=1)
     assert _wait_for_completion(client, run_id)["status"] == "timed_out"
     assert _gone(f"ansideck-run-{run_id}-")
+
+
+def test_the_ssh_agent_line_is_not_recorded(client, tmp_path) -> None:
+    # ansible-runner prints "Identity added: <temp path> (<key comment>)" when it loads the
+    # run's key; that's not the playbook's output.
+    run_id = _trigger(
+        client, tmp_path, playbook=SUCCESS_PLAYBOOK, extra_vars={"marker_path": str(tmp_path / "m")}
+    )
+    assert _wait_for_completion(client, run_id)["status"] == "success"
+    events = _log(tmp_path, run_id)
+    assert events and not any(str(e.get("stdout", "")).startswith("Identity added") for e in events)
+    assert any("PLAY RECAP" in str(e.get("stdout", "")) for e in events)
+
+
+def test_run_lists_filter_by_status_and_limit(client, tmp_path) -> None:
+    first = _trigger(
+        client, tmp_path, playbook=SUCCESS_PLAYBOOK, extra_vars={"marker_path": str(tmp_path / "a")}
+    )
+    _wait_for_completion(client, first)
+    used = client.get(f"/api/runs/{first}").json()
+    failing = client.post("/api/playbooks", json={"name": "fail.yml", "content": FAILURE_PLAYBOOK})
+    second = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": failing.json()["id"],
+            "inventory_id": used["inventory_id"],
+            "credential_id": used["credential_id"],
+        },
+    ).json()["id"]
+    _wait_for_completion(client, second)
+    assert [r["id"] for r in client.get("/api/runs", params={"limit": 1}).json()] == [second]
+    assert [r["id"] for r in client.get("/api/runs", params={"status": "failed"}).json()] == [
+        second
+    ]
+    both = client.get("/api/runs", params=[("status", "failed"), ("status", "success")]).json()
+    assert {r["id"] for r in both} == {first, second}
+    assert client.get("/api/runs", params={"status": "nope"}).status_code == 422
+    assert client.get("/api/runs", params={"limit": 0}).status_code == 422

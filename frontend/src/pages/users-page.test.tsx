@@ -32,7 +32,7 @@ describe("users", () => {
       user: adminUser({ projects: [project(), project({ id: 2, name: "Ops" })] }),
       routes: { ...ROUTES, "POST /users": ALICE },
     });
-    await user.click(await screen.findByRole("button", { name: "New User" }));
+    await user.click(await screen.findByRole("button", { name: "New user" }));
     let dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Username"), "carol");
     await user.type(dialog.getByLabelText("Initial password"), "short");
@@ -53,7 +53,7 @@ describe("users", () => {
     });
 
     api.set({ "POST /users": reply(409, { detail: "Username taken" }) });
-    await user.click(screen.getByRole("button", { name: "New User" }));
+    await user.click(screen.getByRole("button", { name: "New user" }));
     dialog = within(await screen.findByRole("dialog"));
     await user.type(dialog.getByLabelText("Username"), "alice");
     await user.type(dialog.getByLabelText("Initial password"), "a-long-password");

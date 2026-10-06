@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useParams } from "react-router-dom";
 
+import { PageHeader } from "@/components/page-header";
 import { InventorySourcesPanel } from "@/components/inventory-sources-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,11 +42,11 @@ function GroupDialog({ inventoryId, onCreated }: { inventoryId: number; onCreate
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm">Add Group</Button>
+        <Button size="sm">Add group</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New Group</DialogTitle>
+          <DialogTitle>New group</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-2">
           <Label htmlFor="group-name">Name</Label>
@@ -119,12 +120,12 @@ function HostDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button size="sm" variant={host ? "outline" : "default"}>
-          {host ? "Edit" : "Add Host"}
+          {host ? "Edit" : "Add host"}
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{host ? "Edit Host" : "New Host"}</DialogTitle>
+          <DialogTitle>{host ? "Edit host" : "New host"}</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
@@ -195,12 +196,11 @@ export function InventoryDetailPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-xl font-semibold">{inventory.name}</h1>
-        {inventory.description && <p className="text-sm text-muted-foreground">{inventory.description}</p>}
-      </div>
-
-      <InventorySourcesPanel inventoryId={inventoryId} projectId={inventory.project_id} />
+      <PageHeader
+        title={inventory.name}
+        description={inventory.description}
+        back={{ to: "/inventories", label: "Inventories" }}
+      />
 
       {deletion.error && <p className="text-sm text-destructive">{deletion.error}</p>}
 
@@ -213,9 +213,14 @@ export function InventoryDetailPage() {
           {inventory.groups.length === 0 && <p className="text-sm text-muted-foreground">No groups yet.</p>}
           {inventory.groups.map((group) => (
             <div key={group.id} className="flex items-center justify-between">
-              <span className="text-sm">{group.name}</span>
+              <span className="text-sm">
+                {group.name}{" "}
+                <span className="text-muted-foreground">
+                  ({inventory.hosts.filter((h) => h.group_ids.includes(group.id)).length} hosts)
+                </span>
+              </span>
               {canWrite && (
-                <Button variant="outline" size="sm" onClick={() =>
+                <Button variant="destructive-outline" size="sm" onClick={() =>
                     deletion.run(`Delete the group "${group.name}"? Its hosts stay in the inventory.`, () =>
                       api.deleteGroup(inventoryId, group.id),
                     )
@@ -255,7 +260,7 @@ export function InventoryDetailPage() {
                     host={host}
                     onSaved={refresh}
                   />
-                  <Button variant="outline" size="sm" onClick={() =>
+                  <Button variant="destructive-outline" size="sm" onClick={() =>
                       deletion.run(`Delete the host "${host.hostname}" and its vars?`, () =>
                         api.deleteHost(inventoryId, host.id),
                       )
@@ -268,6 +273,8 @@ export function InventoryDetailPage() {
           ))}
         </CardContent>
       </Card>
+
+      <InventorySourcesPanel inventoryId={inventoryId} projectId={inventory.project_id} />
     </div>
   );
 }

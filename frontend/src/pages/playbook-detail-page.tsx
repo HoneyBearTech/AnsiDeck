@@ -2,6 +2,7 @@ import { CircleAlert, TriangleAlert } from "lucide-react";
 import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { PageHeader } from "@/components/page-header";
 import { CodeEditor, type CodeEditorHandle, type EditorDiagnostic } from "@/components/code-editor";
 import { Button } from "@/components/ui/button";
 import { FilePicker } from "@/components/ui/file-picker";
@@ -232,9 +233,10 @@ export function PlaybookDetailPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-semibold">
-        {isNew ? "New Playbook" : canWrite ? "Edit Playbook" : "Playbook"}
-      </h1>
+      <PageHeader
+        title={isNew ? "New playbook" : canWrite ? "Edit playbook" : "Playbook"}
+        back={{ to: "/playbooks", label: "Playbooks" }}
+      />
 
       {synced && (
         <p className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">

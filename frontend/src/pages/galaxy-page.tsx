@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { PageHeader } from "@/components/page-header";
 import { CodeEditor } from "@/components/code-editor";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,8 @@ const STATUS_VARIANT: Record<GalaxyInstall["status"], BadgeProps["variant"]> = {
   queued: "skipped",
 };
 
-const REQUIREMENTS_PLACEHOLDER = `collections:
+const REQUIREMENTS_PLACEHOLDER = `# For example:
+collections:
   - name: community.general
     version: ">=8.0.0"
 roles:
@@ -131,7 +133,7 @@ export function GalaxyPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-semibold">Galaxy</h1>
+      <PageHeader title="Galaxy" description="Roles and collections installed for every project's runs." />
 
       {canManage && (
         <div className="flex flex-col gap-1 rounded-md bg-destructive/10 p-4">
@@ -165,10 +167,13 @@ export function GalaxyPage() {
           </div>
           {saveError && <p className="text-sm text-destructive">{saveError}</p>}
           {canManage && (
-            <div>
+            <div className="flex items-center gap-3">
               <Button onClick={handleSave} disabled={saving || !dirty}>
-                {saving ? "Saving…" : dirty ? "Save" : "Saved"}
+                {saving ? "Saving…" : "Save"}
               </Button>
+              <span className="text-xs text-muted-foreground" aria-live="polite">
+                {dirty ? "Unsaved changes" : "All changes saved"}
+              </span>
             </div>
           )}
         </CardContent>

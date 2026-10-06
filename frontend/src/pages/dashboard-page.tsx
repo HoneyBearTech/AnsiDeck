@@ -1,100 +1,152 @@
+import { ChevronRight } from "lucide-react";
 import * as React from "react";
 import { Link } from "react-router-dom";
 
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageHeader } from "@/components/page-header";
+import { RunRow } from "@/components/run-row";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/context/auth-context";
-import { api, type HealthStatus } from "@/lib/api";
+import { api, type Run } from "@/lib/api";
+
+const ACTIVE: Run["status"][] = ["queued", "running"];
+const POLL_MS = 5000;
 
 function CountCard({ to, label, count }: { to: string; label: string; count: number | null }) {
   return (
-    <Link to={to}>
-      <Card className="transition-colors duration-150 hover:border-primary/50">
-        <CardHeader>
-          <CardTitle className="text-sm text-muted-foreground">{label}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <span className="text-3xl font-mono text-foreground">{count ?? "…"}</span>
+    <Link to={to} className="group block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <Card className="h-full transition-colors duration-150 group-hover:border-primary/50">
+        <CardContent className="flex items-center justify-between gap-2 p-4">
+          <div className="flex flex-col gap-1">
+            <span className="text-sm text-muted-foreground">{label}</span>
+            <span className="font-mono text-2xl text-foreground">{count ?? "…"}</span>
+          </div>
+          <ChevronRight aria-hidden="true" className="size-4 text-muted-foreground group-hover:text-foreground" />
         </CardContent>
       </Card>
     </Link>
   );
 }
 
+function RunSection({
+  title,
+  runs,
+  empty,
+  more,
+}: {
+  title: string;
+  runs: Run[] | null;
+  empty: string;
+  more?: { to: string; label: string };
+}) {
+  const id = `section-${title.toLowerCase().replace(/\s+/g, "-")}`;
+  return (
+    <section aria-labelledby={id} className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-4">
+        <h2 id={id} className="font-medium">
+          {title}
+        </h2>
+        {more && (
+          <Link to={more.to} className="text-sm text-primary hover:underline">
+            {more.label}
+          </Link>
+        )}
+      </div>
+      {runs === null ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : runs.length === 0 ? (
+        <p className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">{empty}</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {runs.map((run) => (
+            <RunRow key={run.id} run={run} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function DashboardPage() {
   const { can } = useAuth();
   const canListCredentials = can("secrets:list");
-  const [health, setHealth] = React.useState<HealthStatus | null>(null);
-  const [healthError, setHealthError] = React.useState<string | null>(null);
-  const [playbookCount, setPlaybookCount] = React.useState<number | null>(null);
-  const [inventoryCount, setInventoryCount] = React.useState<number | null>(null);
-  const [credentialCount, setCredentialCount] = React.useState<number | null>(null);
-  const [runCount, setRunCount] = React.useState<number | null>(null);
+  const [active, setActive] = React.useState<Run[] | null>(null);
+  const [failures, setFailures] = React.useState<Run[] | null>(null);
+  const [recent, setRecent] = React.useState<Run[] | null>(null);
+  const [counts, setCounts] = React.useState<Record<string, number | null>>({});
+  const [unreachable, setUnreachable] = React.useState(false);
 
   React.useEffect(() => {
-    api
-      .health()
-      .then(setHealth)
-      .catch(() => setHealthError("Backend unreachable"));
+    const failed = () => setUnreachable(true);
+    api.listRuns({ status: ["failed", "timed_out"], limit: 5 }).then(setFailures, failed);
+    api.listRuns({ limit: 8 }).then(setRecent, failed);
     // Counts are best-effort: a failed or forbidden call leaves its card on "…".
-    api
-      .listPlaybooks()
-      .then((p) => setPlaybookCount(p.length))
-      .catch(() => {});
-    api
-      .listInventories()
-      .then((i) => setInventoryCount(i.length))
-      .catch(() => {});
-    if (canListCredentials) {
-      api
-        .listCredentials()
-        .then((c) => setCredentialCount(c.length))
-        .catch(() => {});
-    }
-    api
-      .listRuns()
-      .then((r) => setRunCount(r.length))
-      .catch(() => {});
+    const count = (key: string) => (items: unknown[]) => setCounts((c) => ({ ...c, [key]: items.length }));
+    api.listPlaybooks().then(count("playbooks"), () => {});
+    api.listInventories().then(count("inventories"), () => {});
+    api.listRunTemplates().then(count("templates"), () => {});
+    if (canListCredentials) api.listCredentials().then(count("credentials"), () => {});
   }, [canListCredentials]);
 
-  return (
-    <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-semibold">Dashboard</h1>
-      <Card>
-        <CardHeader>
-          <CardTitle>Backend status</CardTitle>
-        </CardHeader>
-        <CardContent className="flex items-center gap-3">
-          {health && <Badge variant="ok">{health.status}</Badge>}
-          {healthError && <Badge variant="failed">{healthError}</Badge>}
-          {!health && !healthError && <Badge>checking…</Badge>}
-          <span className="text-sm text-muted-foreground">{health?.service}</span>
-        </CardContent>
-      </Card>
+  // What's running now, refreshed while the page is open.
+  React.useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    async function load() {
+      try {
+        const runs = await api.listRuns({ status: ACTIVE, limit: 20 });
+        if (alive) setActive(runs);
+      } catch {
+        if (alive) setUnreachable(true);
+      }
+      if (alive) timer = setTimeout(load, POLL_MS);
+    }
+    load();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, []);
 
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] gap-4">
-        <CountCard to="/playbooks" label="Playbooks" count={playbookCount} />
-        <CountCard to="/inventories" label="Inventories" count={inventoryCount} />
-        {canListCredentials && <CountCard to="/credentials" label="Credentials" count={credentialCount} />}
-        <CountCard to="/runs" label="Runs" count={runCount} />
+  return (
+    <div className="flex flex-col gap-8">
+      <PageHeader
+        title="Dashboard"
+        description="What's running, what failed lately, and the latest runs."
+        actions={
+          can("runs:trigger") && (
+            <>
+              <Button variant="outline" asChild>
+                <Link to="/templates">Templates</Link>
+              </Button>
+              <Button asChild>
+                <Link to="/runs/new">New run</Link>
+              </Button>
+            </>
+          )
+        }
+      />
+
+      {unreachable && (
+        <p role="alert" className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+          The AnsiDeck API couldn't be reached. Check that the backend is running, then reload the page.
+        </p>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <CountCard to="/playbooks" label="Playbooks" count={counts["playbooks"] ?? null} />
+        <CountCard to="/inventories" label="Inventories" count={counts["inventories"] ?? null} />
+        <CountCard to="/templates" label="Templates" count={counts["templates"] ?? null} />
+        {canListCredentials ? (
+          <CountCard to="/credentials" label="Credentials" count={counts["credentials"] ?? null} />
+        ) : (
+          <CountCard to="/runs" label="Recent runs" count={recent?.length ?? null} />
+        )}
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Run status palette</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <pre className="rounded-md bg-muted p-4 font-mono text-sm leading-relaxed">
-            <span className="text-status-ok">ok:</span> [target-01] =&gt; playbook applied cleanly
-            {"\n"}
-            <span className="text-status-changed">changed:</span> [target-02] =&gt; state was updated
-            {"\n"}
-            <span className="text-status-skipped">skipping:</span> [target-03] =&gt; condition not met
-            {"\n"}
-            <span className="text-status-failed">failed:</span> [target-04] =&gt; task returned non-zero
-          </pre>
-        </CardContent>
-      </Card>
+      <RunSection title="Running now" runs={active} empty="Nothing is running or waiting to run." />
+      <RunSection title="Recent failures" runs={failures} empty="No failed runs. 🎉" />
+      <RunSection title="Latest runs" runs={recent} empty="No runs yet." more={{ to: "/runs", label: "All runs" }} />
     </div>
   );
 }
