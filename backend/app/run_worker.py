@@ -148,6 +148,9 @@ def prepare(job: dict) -> str:
     ansible_home.mkdir(mode=0o700)
     os.environ["ANSIBLE_HOME"] = str(ansible_home)
     os.environ["ANSIBLE_SSH_CONTROL_PATH_DIR"] = str(ansible_home / "cp")
+    # JSON results, whatever a repository's ansible.cfg asks for (the environment outranks it):
+    # YAML folds long values across lines, which the exact-value scrubber can't match.
+    os.environ["ANSIBLE_CALLBACK_RESULT_FORMAT"] = "json"
     if own_home:
         os.environ["HOME"] = _own_home()
         (pdd / "tmp").mkdir(mode=0o700)

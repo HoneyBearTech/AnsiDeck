@@ -30,6 +30,14 @@ _SECRET_TOKENS = {
     "credential",
     "credentials",
     "private",
+    # Names written as one word, which the split above can't separate.
+    "pwd",
+    "apikey",
+    "authtoken",
+    "privatekey",
+    "secretkey",
+    "passcode",
+    "community",
 }
 # A key ending in one of these names a location/identifier, not the secret itself.
 _NON_SECRET_SUFFIXES = {"file", "path", "dir", "id", "name"}
@@ -181,7 +189,14 @@ def _load_yaml(text: str) -> Any:
 
 def _variants(secret: str) -> set[str]:
     secret = secret.strip("\r\n")
-    variants = {secret, json.dumps(secret)[1:-1]}
+    # As written, as JSON escapes it (ASCII-only and not, as Ansible prints non-ASCII text), and as
+    # YAML single-quotes it (a quote doubled).
+    variants = {
+        secret,
+        json.dumps(secret)[1:-1],
+        json.dumps(secret, ensure_ascii=False)[1:-1],
+        secret.replace("'", "''"),
+    }
     if "\n" in secret:
         for raw in secret.splitlines():
             line = raw.strip()
@@ -237,7 +252,9 @@ _PATTERNS: list[tuple[re.Pattern[str], Callable[[re.Match[str]], str] | str]] = 
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"), REDACTED),
     (
         re.compile(
-            r"""(?P<pre>(?i:\b(?:password|passwd|secret|token|api[_-]?key)\b)["']?\s*[=:]\s*)"""
+            # Also prefixed or suffixed names: DB_PASSWORD=, mysql_root_password:, client_secret:.
+            r"""(?P<pre>(?i:(?<![A-Za-z0-9_-])[A-Za-z0-9_-]*(?:password|passwd|secret|token|"""
+            r"""api[_-]?key)(?:[_-][A-Za-z0-9]+)*(?![A-Za-z0-9]))["']?\s*[=:]\s*)"""
             r"""(?P<val>"[^"\\]*"|'[^'\\]*'|[^\s"',}\\]+)"""
         ),
         _redact_assignment,
@@ -247,7 +264,11 @@ _PATTERNS: list[tuple[re.Pattern[str], Callable[[re.Match[str]], str] | str]] = 
 
 class Scrubber:
     def __init__(self, secrets: Iterable[str]) -> None:
+        secrets = list(secrets)
         self._exact = _exact_regex(secrets)
+        # Numbers stay numbers in structured results (event_data), where the text regex can't
+        # reach: a number whose whole value is a secret is replaced.
+        self._numbers = {s.strip() for s in secrets if len(s.strip()) >= _MIN_SECRET_LEN}
 
     def scrub_text(self, text: str) -> str:
         if self._exact is not None:
@@ -271,6 +292,8 @@ class Scrubber:
                 scrubbed = self.scrub_text(joined)
                 return value if scrubbed == joined else scrubbed.split("\n")
             return [self._scrub_value(v) for v in value]
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return REDACTED if str(value) in self._numbers else value
         return value
 
     def _scrub_dict(self, value: dict) -> dict:
