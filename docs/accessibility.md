@@ -12,17 +12,17 @@ bugs: please report them in [GitHub Issues](https://github.com/HoneyBearTech/Ans
   2.1 A and AA rules and axe's best practices. A violation fails CI. The tests also find controls the way
   assistive technology does, by their accessible names and roles, so an unlabelled control usually
   breaks a test too.
-- **Colour contrast** can't be measured without a real browser, so it is checked with axe in headless
-  Chrome against the built app (every page and the main dialogs), together with the rules above, when the
-  UI changes. The last run (October 2026, before v0.1.0) found no violations.
+- **Colour contrast** can't be measured without a real browser, so every pull request also checks it
+  with axe in Google Chrome against the built app, on every page (`frontend/e2e/layout.spec.ts`). The main
+  dialogs and the full rule set are checked in the same browser by hand when the UI changes.
 - **Keyboard use** was checked in the same browser: everything can be reached with Tab in a sensible order
   and shows a visible focus ring; dialogs take focus, keep it inside while open, close with Escape and
   return focus to the control that opened them; selects open and choose with the keyboard. The
   focus-return behaviour has a regression test.
-- **Small screens** were checked in headless Chrome at 375, 768, 1024 and 1280 px wide, with long names,
-  e-mail addresses and URLs: no page scrolls sideways, every dialog fits a 375 × 667 phone screen and
-  scrolls inside itself when it is taller, and its buttons stay reachable. Below 1280 px the navigation
-  moves into a menu button. The last run was in October 2026.
+- **Small screens** are checked on every pull request in the same browser run, at 375, 768, 1024 and
+  1280 px wide with long names, e-mail addresses and URLs: no page may scroll sideways, and every "New"
+  or "Add" dialog must fit a 375 × 667 phone screen (scrolling inside itself when it is taller) with its
+  buttons in reach. Below 1280 px the navigation moves into a menu button.
 - **Touch targets** are at least 24 × 24 px (WCAG 2.2, 2.5.8). On touch screens, small buttons, selects
   and menu links grow to about 40 px. Links inside a sentence are the usual exception.
 - **The code editor** (playbooks, inventory source configs, Galaxy requirements) is a labelled multi-line

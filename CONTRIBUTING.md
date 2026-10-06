@@ -71,6 +71,7 @@ Releases are built by `.github/workflows/docker-publish.yml`, see [docs/verifyin
 | --- | --- | --- | --- |
 | Backend (pytest, `backend/tests/`) | API, permissions, queue and workers, real `ansible-playbook` / `ansible-inventory` runs, migrations, security properties | `uv run pytest` (needs the compose Postgres) | every pull request and push to `main` (required) |
 | Frontend (Vitest, `frontend/src/**/*.test.tsx`) | every page through the real routing and permission checks, against a fake API; accessibility (axe) | `npm test`, `npm run coverage` | every pull request and push to `main` (required) |
+| Layout (Playwright, `frontend/e2e/`) | every page at 375, 768, 1024 and 1280 px in Google Chrome with long names, against a fake API: no sideways scrolling, colour contrast (axe), "New/Add" dialogs fit a phone | `npm run test:layout` (needs Google Chrome) | every pull request and push to `main` (not required yet) |
 | Coverage floors | backend ≥ 80% branches, frontend ≥ 80% statements | as above | with the suites (required) |
 | Fuzzing (Atheris, `backend/fuzz/`) | secret scrubbing, vault, inventory rendering | `uv run python fuzz/fuzz_properties.py <target>` | pull requests that touch `backend/` (1 min per target), weekly (10 min) |
 | Static analysis | CodeQL security queries; ruff (incl. bandit) and oxlint | `uv run ruff check .`, `npm run lint` | every pull request, `main` and weekly (required) |
@@ -105,6 +106,7 @@ npm run lint
 npm run typecheck
 npm test                         # `npm run coverage` adds coverage; CI requires 80% of statements
 npm run build
+npm run test:layout              # builds, serves and checks every page in Google Chrome
 ```
 
 Frontend tests live next to the code they test (`src/**/*.test.tsx`). Most render the whole app at a route

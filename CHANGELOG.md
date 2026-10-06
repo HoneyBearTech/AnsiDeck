@@ -7,6 +7,12 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+### Added
+
+- A browser layout check on every pull request (`npm run test:layout`, Playwright in Google Chrome):
+  every page at 375, 768, 1024 and 1280 px with long names must not scroll sideways, must pass axe's
+  colour-contrast rule, and its "New/Add" dialogs must fit a phone. Not a required check yet.
+
 ### Changed
 
 - The full navigation bar now shows from 1280 px wide (below that, the menu button), and pages use a
@@ -19,6 +25,8 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 - Long playbook, inventory, group, host and credential names no longer push run rows, the run page,
   the inventory page or the credentials list off a phone screen (the run page overflowed even at 1280 px).
+- A long webhook URL pushed the notifications page off a phone screen, and the code editor's placeholder
+  text was just under AA contrast (4.49:1); both found by the new layout check.
 - Dialogs fit small screens: they keep a margin, scroll inside when taller than the screen, and their
   buttons wrap.
 - [docs/verifying-releases.md](docs/verifying-releases.md) asked for cosign 2.0 or later, but the image

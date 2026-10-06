@@ -63,6 +63,8 @@ const theme = EditorView.theme(
     },
     ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--editor-caret)" },
     ".cm-content": { caretColor: "var(--editor-caret)" },
+    // CodeMirror's own #888 is 4.49:1 on the editor background, just under AA.
+    ".cm-placeholder": { color: "var(--editor-placeholder)" },
   },
   { dark: true },
 );

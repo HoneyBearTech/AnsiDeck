@@ -2,69 +2,9 @@ import { waitFor } from "@testing-library/react";
 import axe from "axe-core";
 import { describe, expect, it } from "vitest";
 
-import {
-  CATALOG,
-  credential,
-  FQCN_FINDING,
-  gitSource,
-  inventory,
-  lintJob,
-  playbook,
-  run,
-  runTemplate,
-  targets,
-  vaultPassword,
-} from "./fixtures";
+import { FQCN_FINDING, lintJob } from "./fixtures";
+import { PAGE_ROUTES as ROUTES, PAGES } from "./pages";
 import { renderApp } from "./render";
-
-// Enough data for every page to render its full content.
-const ROUTES = {
-  "GET /playbooks": [playbook()],
-  "GET /playbooks/:id": playbook(),
-  "GET /inventories": [inventory()],
-  "GET /inventories/:id": inventory(),
-  "GET /inventories/:id/sources": [],
-  "GET /inventories/:id/targets": targets(),
-  "GET /inventories/:id/snapshot": null,
-  "GET /credentials": [credential()],
-  "GET /vault-passwords": [vaultPassword()],
-  "GET /runs": [run()],
-  "GET /runs/:id": run(),
-  "GET /run-templates": [runTemplate(), runTemplate({ id: 4, name: "Broken", missing: ["credential"] })],
-  "GET /projects": [{ id: 1, name: "Default", description: null, created_at: "2026-10-05T12:00:00Z", my_role: "admin" }],
-  "GET /projects/:id/git-sources": [gitSource()],
-  "GET /users": [],
-  "GET /audit": { items: [], total: 0 },
-  "GET /workers": [],
-  "GET /secret-store/status": { enabled: false, label: "OpenBao", url: null, ok: null, reachable: null, sealed: null, version: null, token_ttl: null, error_kind: null, error: null, checked_at: null, last_ok_at: null },
-  "GET /notifications/catalog": CATALOG,
-  "GET /notifications/channels": [],
-  "GET /projects/:id/notifications/channels": [],
-  "GET /galaxy/requirements": { content: "" },
-  "GET /galaxy/installed": { collections: [], roles: [] },
-  "GET /galaxy/installs": [],
-};
-
-const PAGES: [string, string | RegExp][] = [
-  ["/", "Dashboard"],
-  ["/account", "Account"],
-  ["/playbooks", "Playbooks"],
-  ["/playbooks/1", "Edit playbook"],
-  ["/inventories", "Inventories"],
-  ["/inventories/1", "lab"],
-  ["/credentials", "Credentials"],
-  ["/vault", "Vault"],
-  ["/galaxy", "Galaxy"],
-  ["/runs", "Runs"],
-  ["/runs/new", "New run"],
-  ["/runs/7", /site\.yml →\s+lab/],
-  ["/templates", "Templates"],
-  ["/users", "Users"],
-  ["/audit", "Audit log"],
-  ["/workers", "Workers"],
-  ["/notifications", "Notifications"],
-  ["/projects", "Projects"],
-];
 
 async function violations(container: HTMLElement) {
   const result = await axe.run(container, {
