@@ -19,7 +19,9 @@ guides for every feature, upgrade and backup/restore guides, and a changelog, to
 behind a coverage floor, stricter compiler and lint settings, and an accessibility pass on every page.
 **v0.2.0** (October 2026) added saved run templates (also for CI keys), running a run again, downloading
 run output, a code editor with ansible-lint checks, a reworked dashboard and a phone-friendly layout, and
-SLSA build provenance on release files. The most recent release is the supported version.
+SLSA build provenance on release files. **v0.3.0** (October 2026) added a group graph for inventories, a
+phone-friendly layout checked in a real browser on every pull request, and security fixes. The most recent
+release is the supported version.
 
 ## Over the following year
 
@@ -31,8 +33,7 @@ SLSA build provenance on release files. The most recent release is the supported
 - More from the editor: completion of module names and options, and ansible-lint's fixes offered as edits.
 
 **Layout and visualisation**
-- Denser tables for large lists on wide screens. (The inventory group graph is done: see the
-  [changelog](../CHANGELOG.md), unreleased.)
+- Denser tables for large lists on wide screens (the inventory group graph shipped in v0.3.0).
 
 **Security and operations**
 - Limiting what runs can reach on the network (for example cloud metadata and the API's own ports).

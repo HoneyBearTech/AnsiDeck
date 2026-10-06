@@ -1,6 +1,6 @@
 [project]
 name = "ansideck-backend"
-version = "0.2.0"
+version = "0.3.0"
 description = "AnsiDeck API — FastAPI backend"
 # 3.12.11+: tarfile's "data" filter has the 2025 path-escape fixes (app.run_worker unpacks
 # git snapshots with it).
