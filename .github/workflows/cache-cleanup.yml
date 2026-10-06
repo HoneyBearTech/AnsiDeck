@@ -1,0 +1,56 @@
+name: Cache cleanup
+
+# Actions caches made for a pull request (Docker layers, uv, npm, CodeQL) are scoped to that
+# PR's ref, so nothing can use them once it is closed; they would only crowd main's caches out
+# of the repository's 10 GB. A closed PR's caches are deleted at once; a weekly sweep (also
+# runnable by hand) deletes any left by PRs that are no longer open, e.g. from forks, whose
+# token can't delete. main's and tags' caches are never touched.
+
+on:
+  pull_request:
+    types: [closed]
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Delete closed pull requests' caches
+    # A fork's pull_request token is read-only; the weekly sweep deletes its caches instead.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      pull-requests: read
+    steps:
+      - name: Delete the caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          open=" "
+          if [ -z "$PR" ]; then
+            open=" $(gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" --jq '.[].number' | tr '\n' ' ')"
+          fi
+          # Listed in full before deleting, so deletions don't shift the pages.
+          caches=$(gh api --paginate "repos/$REPO/actions/caches?per_page=100" \
+            --jq '.actions_caches[] | select(.ref | startswith("refs/pull/")) | "\(.id) \(.ref)"')
+          deleted=0
+          while read -r id ref; do
+            [ -n "$id" ] || continue
+            n=${ref#refs/pull/}
+            n=${n%%/*}
+            if [ -n "$PR" ]; then
+              [ "$n" = "$PR" ] || continue
+            else
+              case "$open" in *" $n "*) continue ;; esac
+            fi
+            gh api -X DELETE "repos/$REPO/actions/caches/$id" --silent
+            deleted=$((deleted + 1))
+          done <<< "$caches"
+          echo "Deleted $deleted caches of closed pull requests."
