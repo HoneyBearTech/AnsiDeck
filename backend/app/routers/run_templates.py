@@ -19,7 +19,7 @@ from app.models import (
     VaultPassword,
 )
 from app.permissions import Permission, Scope, guard, project_permissions
-from app.routers.runs import HIDDEN, _run_out, deleted_items_conflict, queue_run
+from app.routers.runs import HIDDEN, _run_out, become_vars, deleted_items_conflict, queue_run
 from app.schemas.run_templates import RunTemplateIn, RunTemplateLaunch, RunTemplateOut
 from app.schemas.runs import RunCreate, RunOut
 from app.scoping import deny, get_scoped, readable_project_ids
@@ -106,7 +106,9 @@ def _check_references(
             )
         if model is Credential and obj.kind != "ssh":
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "A run needs an SSH key credential")
-    if payload.become and Permission.RUNS_BECOME not in project_permissions(db, user, project_id):
+    if (payload.become or become_vars(payload.extra_vars)) and Permission.RUNS_BECOME not in (
+        project_permissions(db, user, project_id)
+    ):
         deny(db, user, request, Permission.RUNS_BECOME, project_id)  # audits the refusal
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "You may not save a template that runs as root (become)"
