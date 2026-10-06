@@ -13,6 +13,10 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   connect (`ansible_host`, `ansible_port`, `ansible_user`, `ansible_network_os`, and `ansible_connection`
   limited to remote connection types). Other `ansible_*` variables from a source are dropped with a
   refresh warning, also in snapshots stored before upgrading. See the security advisory for details.
+- Viewers (anyone who can see an inventory but not edit it) no longer receive the inventory's host vars in
+  full: secret-looking keys (passwords, tokens, keys) and vault-encrypted values are masked in
+  `GET /api/inventories/{id}`. Operators and admins still get the real values, which the Edit host
+  dialog needs.
 
 ### Added
 

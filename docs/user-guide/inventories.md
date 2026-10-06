@@ -14,6 +14,10 @@ contents:
   `{"ansible_user": "deploy", "ansible_port": 2222}`. Tick the groups the host belongs to.
 - **Edit** a host to change any of this; **Delete** a group (its hosts stay) or a host, after a confirmation.
 
+Keep secrets out of host vars: use a credential or a vault password instead. Viewers see host vars with
+secret-looking values (passwords, tokens, keys, vault-encrypted text) masked; operators and admins see
+them as stored.
+
 A run sees the inventory's **whole group tree**, so a play with `hosts: web` runs on the `web` group, and
 picking a group as a run's target narrows the run to that group's hosts. A run uses the inventory as it was
 when the run was started: edits made while it waits in the queue don't change it.
