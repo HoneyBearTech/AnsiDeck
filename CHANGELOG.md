@@ -7,6 +7,13 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+### Security
+
+- Viewers (anyone who can see an inventory but not edit it) no longer receive the inventory's host vars in
+  full: secret-looking keys (passwords, tokens, keys) and vault-encrypted values are masked in
+  `GET /api/inventories/{id}`. Operators and admins still get the real values, which the Edit host
+  dialog needs.
+
 ### Added
 
 - **Group graph** for inventories (`/inventories/{id}/graph`, linked from the inventory page): an

@@ -44,7 +44,7 @@ from app.schemas.inventory_sources import (
     Targets,
 )
 from app.scoping import get_scoped
-from app.scrub import mask_secret_keys
+from app.scrub import mask_for_display
 
 router = APIRouter()
 
@@ -315,13 +315,13 @@ def get_snapshot(
         group_count=snapshot.group_count,
         warnings=snapshot.warnings or [],
         sources=snapshot.sources or [],
-        vars=mask_secret_keys(data.get("vars") or {}),
+        vars=mask_for_display(data.get("vars") or {}),
         groups=[
             SnapshotGroup(
                 name=name,
                 hosts=len(group["hosts"]),
                 children=group["children"],
-                vars=mask_secret_keys(group["vars"]),
+                vars=mask_for_display(group["vars"]),
             )
             for name, group in sorted(data["groups"].items())
         ],
@@ -379,7 +379,7 @@ def merged_hosts(
                 name=name,
                 origin=origin,
                 groups=sorted(groups_of.get(name, [])),
-                vars=mask_secret_keys({str(k): v for k, v in graph["hosts"][name].items()}),
+                vars=mask_for_display({str(k): v for k, v in graph["hosts"][name].items()}),
                 overridden=overridden,
             )
         )

@@ -61,6 +61,18 @@ def mask_secret_keys(obj: Any, under_secret: bool = False) -> Any:
     return obj
 
 
+def mask_for_display(obj: Any) -> Any:
+    """Vars as shown to someone who mustn't read secrets: secret-looking keys masked (as
+    mask_secret_keys) and any vault-encrypted string masked, whatever its key."""
+    if isinstance(obj, dict):
+        return {k: mask_for_display(v) for k, v in mask_secret_keys(obj).items()}
+    if isinstance(obj, list):
+        return [mask_for_display(v) for v in obj]
+    if isinstance(obj, str) and obj.lstrip().startswith(_VAULT_PREFIX):
+        return REDACTED
+    return obj
+
+
 def _collect_named_values(
     obj: Any, out: set[str], under_secret: bool = False, seen: set | None = None
 ) -> None:
