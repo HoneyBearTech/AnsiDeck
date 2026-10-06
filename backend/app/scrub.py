@@ -253,8 +253,11 @@ _PATTERNS: list[tuple[re.Pattern[str], Callable[[re.Match[str]], str] | str]] = 
     (
         re.compile(
             # Also prefixed or suffixed names: DB_PASSWORD=, mysql_root_password:, client_secret:.
+            # Not a name ending in a location/identifier part (vault_password_file=), as
+            # is_secret_key.
             r"""(?P<pre>(?i:(?<![A-Za-z0-9_-])[A-Za-z0-9_-]*(?:password|passwd|secret|token|"""
-            r"""api[_-]?key)(?:[_-][A-Za-z0-9]+)*(?![A-Za-z0-9]))["']?\s*[=:]\s*)"""
+            r"""api[_-]?key)(?:[_-](?!(?:file|path|dir|id|name)(?![A-Za-z0-9]))[A-Za-z0-9]+)*"""
+            r"""(?![A-Za-z0-9_-]))["']?\s*[=:]\s*)"""
             r"""(?P<val>"[^"\\]*"|'[^'\\]*'|[^\s"',}\\]+)"""
         ),
         _redact_assignment,

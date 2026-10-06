@@ -247,7 +247,8 @@ work; later pushes don't change a queued run. The run's page shows the commit (l
 source has a web URL). Roles and collections are looked up in the repository's `roles/` and `collections/`
 (and the paths its `ansible.cfg` names inside the repository) before the Galaxy ones. Vaulted values in the
 repository's `group_vars`, `host_vars`, `vars` and role vars/defaults are scrubbed from the output like
-vaulted playbook variables.
+vaulted playbook variables. Task results are always printed as JSON, whatever `callback_result_format` the
+repository's `ansible.cfg` sets: YAML output can fold a long secret across lines, past the scrubber.
 
 - **Remotes:** `https://` (public, or with a user name and token, stored encrypted and never shown again),
   or `ssh://` / `user@host:path` with an SSH key from the project's credentials as the deploy key. For an ssh

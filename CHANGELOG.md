@@ -7,6 +7,17 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+### Security
+
+- Run output scrubbing catches more forms of a known secret. Runs now always print task results as JSON,
+  even when a repository's `ansible.cfg` asks for YAML, which could fold a long secret across lines past
+  the scrubber. Secrets are also redacted as Ansible prints non-ASCII text in JSON and as YAML quotes
+  them, and a secret that is a number is replaced in structured task results.
+- Unknown secrets in `name=value` and `name: value` text are caught under prefixed and suffixed names too
+  (`DB_PASSWORD=`, `PGPASSWORD=`, `mysql_root_password:`, `client_secret:`), but not names of where a
+  secret lives (`vault_password_file=`). Variables named `pwd`, `apikey`, `authtoken`, `passcode`,
+  `community` and similar one-word names now count as secret.
+
 ## [0.3.0] - 2026-10-06
 
 A security fix for dynamic inventory sources, host vars masked for viewers, a group graph for inventories,
