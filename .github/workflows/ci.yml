@@ -112,3 +112,26 @@ jobs:
           mv dist "$RUNNER_TEMP/dist-first"
           npm run build
           diff -r "$RUNNER_TEMP/dist-first" dist
+
+  layout:
+    # Not a required check (yet): every page at 375/768/1024/1280 px in Chrome with a faked API.
+    name: Layout + contrast (browser)
+    runs-on: ubuntu-latest
+    # Normally ~2 min.
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      # Uses the runner's preinstalled Google Chrome (channel "chrome"), so no browser is downloaded.
+      - name: No sideways scrolling, colour contrast, dialogs fit a phone
+        run: npm run test:layout

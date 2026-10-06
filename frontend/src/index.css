@@ -68,6 +68,7 @@
     --editor-active-line: color-mix(in oklab, var(--color-secondary) 45%, transparent);
     --editor-active-gutter: var(--color-secondary);
     --editor-foreground: var(--color-foreground);
+    --editor-placeholder: var(--color-muted-foreground);
     --editor-selection: color-mix(in oklab, var(--color-primary) 25%, transparent);
     --editor-caret: var(--color-primary);
   }

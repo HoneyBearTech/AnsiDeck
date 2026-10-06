@@ -391,7 +391,7 @@ function ChannelCard({
             />
             <span className="font-medium">{channel.name}</span>
             <Badge variant="outline">{KIND_LABELS[channel.kind]}</Badge>
-            <span className="font-mono text-xs text-muted-foreground">{channel.target}</span>
+            <span className="min-w-0 font-mono text-xs text-muted-foreground wrap-anywhere">{channel.target}</span>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" disabled={busy} onClick={handleTest}>

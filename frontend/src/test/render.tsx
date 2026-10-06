@@ -5,8 +5,9 @@ import { MemoryRouter } from "react-router-dom";
 import App from "@/App";
 import type { User } from "@/lib/api";
 
-import { fakeApi, reply, type Routes } from "./fake-api";
+import { fakeApi, type Routes } from "./fake-api";
 import { adminUser } from "./fixtures";
+import { baseRoutes } from "./pages";
 
 interface Options {
   /** The signed-in user; null renders signed out. */
@@ -19,13 +20,7 @@ interface Options {
 /** Renders the whole app at `path` against a fake API, as `user`. */
 export function renderApp(path: string, { user = adminUser(), routes = {}, activeProject = 1 }: Options = {}) {
   localStorage.setItem("ansideck.activeProject", activeProject === null ? "all" : String(activeProject));
-  const api = fakeApi({
-    "GET /auth/me": user ? user : reply(401, { detail: "Not authenticated" }),
-    "GET /auth/providers": { oidc: { enabled: false, label: "SSO" }, github: { enabled: false, label: "GitHub" } },
-    "GET /health": { status: "ok", service: "ansideck-backend" },
-    "GET /secret-store/info": { enabled: false, label: "OpenBao", base_path: null, path_rules: "" },
-    ...routes,
-  });
+  const api = fakeApi({ ...baseRoutes(user), ...routes });
   const view = render(
     <MemoryRouter initialEntries={[path]}>
       <App />
