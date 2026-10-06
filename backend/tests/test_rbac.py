@@ -34,6 +34,7 @@ MATRIX = [
     ("GET", "/api/inventories/999/snapshot", ALL),
     ("GET", "/api/inventories/999/hosts", ALL),
     ("GET", "/api/inventories/999/targets", ALL),
+    ("GET", "/api/inventories/999/graph", ALL),
     ("GET", "/api/credentials", OPERATOR_UP),
     ("POST", "/api/credentials", ADMIN),
     ("DELETE", "/api/credentials/999", ADMIN),

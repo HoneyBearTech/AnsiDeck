@@ -15,6 +15,7 @@ const CredentialsPage = React.lazy(() => import("@/pages/credentials-page").then
 const GalaxyPage = React.lazy(() => import("@/pages/galaxy-page").then((m) => ({ default: m.GalaxyPage })));
 const InventoriesPage = React.lazy(() => import("@/pages/inventories-page").then((m) => ({ default: m.InventoriesPage })));
 const InventoryDetailPage = React.lazy(() => import("@/pages/inventory-detail-page").then((m) => ({ default: m.InventoryDetailPage })));
+const InventoryGraphPage = React.lazy(() => import("@/pages/inventory-graph-page").then((m) => ({ default: m.InventoryGraphPage })));
 const NotificationsPage = React.lazy(() => import("@/pages/notifications-page").then((m) => ({ default: m.NotificationsPage })));
 const PlaybookDetailPage = React.lazy(() => import("@/pages/playbook-detail-page").then((m) => ({ default: m.PlaybookDetailPage })));
 const PlaybooksPage = React.lazy(() => import("@/pages/playbooks-page").then((m) => ({ default: m.PlaybooksPage })));
@@ -53,6 +54,7 @@ function App() {
           <Route path="/playbooks/:id" element={<PlaybookDetailPage />} />
           <Route path="/inventories" element={<InventoriesPage />} />
           <Route path="/inventories/:id" element={<InventoryDetailPage />} />
+          <Route path="/inventories/:id/graph" element={<InventoryGraphPage />} />
           <Route
             path="/credentials"
             element={

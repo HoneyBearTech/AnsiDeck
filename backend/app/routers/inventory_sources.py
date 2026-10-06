@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.db import get_db
 from app.hardening import client_ip
-from app.inventory_render import merge, static_data
+from app.inventory_render import merge, static_data, target_hosts
 from app.inventory_sources import SourceError, check_config, enqueue_refresh, has_sources
 from app.models import (
     Credential,
@@ -29,6 +29,8 @@ from app.notify import notifier
 from app.permissions import Permission, Scope, guard
 from app.queue import QUEUE_TOPIC
 from app.schemas.inventory_sources import (
+    GraphGroup,
+    InventoryGraph,
     MergedHost,
     MergedHosts,
     RefreshOut,
@@ -338,15 +340,23 @@ def merged_hosts(
     inventory_id: int,
     request: Request,
     q: str | None = Query(None, max_length=255),
+    group: str | None = Query(None, max_length=255),
     page: int = Query(1, ge=1),
     user: User = Depends(_manage),
     db: Session = Depends(get_db),
 ) -> MergedHosts:
     """Every host a run would see (static and from sources), with where it came from and
-    which source vars the inventory's own vars replace. Secret-looking vars are masked."""
+    which source vars the inventory's own vars replace. Secret-looking vars are masked.
+    `group` keeps the hosts in that group or any group below it (what `--limit` selects)."""
     inventory = _inventory(db, user, request, inventory_id, Permission.CONTENT_READ)
     graph, static, snapshot = _graph(db, inventory)
-    names = sorted(h for h in graph["hosts"] if not q or q.lower() in h.lower())
+    pool = graph["hosts"]
+    if group is not None:
+        try:
+            pool = target_hosts(graph, group)
+        except KeyError:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Group not found") from None
+    names = sorted(h for h in pool if not q or q.lower() in h.lower())
     groups_of: dict[str, list[str]] = {}
     for group_name, group in graph["groups"].items():
         for host in group["hosts"]:
@@ -376,6 +386,13 @@ def merged_hosts(
     return MergedHosts(total=len(names), hosts=hosts)
 
 
+def _origin(name: str, static: dict, source_groups: set[str]) -> str:
+    """Where a group comes from: the inventory's own groups, its sources', or both."""
+    if name in static["groups"]:
+        return "both" if name in source_groups else "static"
+    return "source"
+
+
 def _targets(db: Session, inventory: Inventory) -> Targets:
     graph, static, snapshot = _graph(db, inventory)
     source_groups = set((snapshot or {}).get("groups", {}))
@@ -393,11 +410,7 @@ def _targets(db: Session, inventory: Inventory) -> Targets:
             TargetGroup(
                 name=name,
                 hosts=len(group["hosts"]),
-                origin=(
-                    "both"
-                    if name in static["groups"] and name in source_groups
-                    else ("static" if name in static["groups"] else "source")
-                ),
+                origin=_origin(name, static, source_groups),
             )
             for name, group in sorted(graph["groups"].items())
         ],
@@ -418,3 +431,36 @@ def targets(
     """The groups a run can target (the inventory's own and its sources'), for the run page."""
     inventory = _inventory(db, user, request, inventory_id, Permission.CONTENT_READ)
     return _targets(db, inventory)
+
+
+@router.get("/graph", response_model=InventoryGraph)
+def graph(
+    inventory_id: int,
+    request: Request,
+    user: User = Depends(_manage),
+    db: Session = Depends(get_db),
+) -> InventoryGraph:
+    """How the groups nest (the inventory's own and its sources'), with each group's direct
+    host count, for the group graph. Names and counts only: no vars."""
+    inventory = _inventory(db, user, request, inventory_id, Permission.CONTENT_READ)
+    merged, static, snapshot = _graph(db, inventory)
+    groups = merged["groups"]
+    source_groups = set((snapshot or {}).get("groups", {}))
+    grouped = {host for group in groups.values() for host in group["hosts"]}
+    current = _current(db, inventory)
+    return InventoryGraph(
+        name=inventory.name,
+        hosts=len(merged["hosts"]),
+        ungrouped=len(merged["hosts"].keys() - grouped),
+        groups=[
+            GraphGroup(
+                name=name,
+                hosts=len(group["hosts"]),
+                children=[child for child in group["children"] if child in groups],
+                origin=_origin(name, static, source_groups),
+            )
+            for name, group in sorted(groups.items())
+        ],
+        snapshot_id=current.id if current else None,
+        snapshot_at=current.created_at if current else None,
+    )

@@ -3,10 +3,12 @@ import type {
   Credential,
   GitSource,
   InventoryDetail,
+  InventoryGraph,
   InventoryRefresh,
   InventorySource,
   InventoryTargets,
   LintJob,
+  MergedHost,
   NotificationCatalog,
   NotificationChannel,
   PlaybookDetail,
@@ -109,6 +111,29 @@ export function targets(overrides: Partial<InventoryTargets> = {}): InventoryTar
     refresh_interval_seconds: 0,
     ...overrides,
   };
+}
+
+/** prod > web > web_eu and prod > db; eu > web too, so web has two parents. */
+export function graph(overrides: Partial<InventoryGraph> = {}): InventoryGraph {
+  return {
+    name: "lab",
+    hosts: 6,
+    ungrouped: 1,
+    groups: [
+      { name: "db", hosts: 1, children: [], origin: "static" },
+      { name: "eu", hosts: 0, children: ["web"], origin: "source" },
+      { name: "prod", hosts: 0, children: ["web", "db"], origin: "source" },
+      { name: "web", hosts: 2, children: ["web_eu"], origin: "both" },
+      { name: "web_eu", hosts: 2, children: [], origin: "source" },
+    ],
+    snapshot_id: 3,
+    snapshot_at: NOW,
+    ...overrides,
+  };
+}
+
+export function mergedHost(overrides: Partial<MergedHost> = {}): MergedHost {
+  return { name: "web1.example", origin: "static", groups: ["web"], vars: { ansible_user: "deploy" }, overridden: [], ...overrides };
 }
 
 export function refresh(overrides: Partial<InventoryRefresh> = {}): InventoryRefresh {

@@ -1594,6 +1594,37 @@
         "title": "GitSourceUpdate",
         "type": "object"
       },
+      "GraphGroup": {
+        "properties": {
+          "children": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "hosts": {
+            "title": "Hosts",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "hosts",
+          "children",
+          "origin"
+        ],
+        "title": "GraphGroup",
+        "type": "object"
+      },
       "GroupCreate": {
         "properties": {
           "name": {
@@ -2115,6 +2146,63 @@
           "hosts"
         ],
         "title": "InventoryDetail",
+        "type": "object"
+      },
+      "InventoryGraph": {
+        "description": "How the inventory's groups nest: names, edges and counts only, never vars.",
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/GraphGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "hosts": {
+            "title": "Hosts",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "snapshot_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot At"
+          },
+          "snapshot_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Id"
+          },
+          "ungrouped": {
+            "title": "Ungrouped",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "hosts",
+          "ungrouped",
+          "groups",
+          "snapshot_id",
+          "snapshot_at"
+        ],
+        "title": "InventoryGraph",
         "type": "object"
       },
       "InventorySummary": {
@@ -7714,6 +7802,81 @@
         ]
       }
     },
+    "/api/inventories/{inventory_id}/graph": {
+      "get": {
+        "description": "How the groups nest (the inventory's own and its sources'), with each group's direct\nhost count, for the group graph. Names and counts only: no vars.",
+        "operationId": "graph_api_inventories__inventory_id__graph_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inventory_id",
+            "required": true,
+            "schema": {
+              "title": "Inventory Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryGraph"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Graph",
+        "tags": [
+          "inventories"
+        ]
+      }
+    },
     "/api/inventories/{inventory_id}/groups": {
       "post": {
         "operationId": "create_group_api_inventories__inventory_id__groups_post",
@@ -7967,7 +8130,7 @@
     },
     "/api/inventories/{inventory_id}/hosts": {
       "get": {
-        "description": "Every host a run would see (static and from sources), with where it came from and\nwhich source vars the inventory's own vars replace. Secret-looking vars are masked.",
+        "description": "Every host a run would see (static and from sources), with where it came from and\nwhich source vars the inventory's own vars replace. Secret-looking vars are masked.\n`group` keeps the hosts in that group or any group below it (what `--limit` selects).",
         "operationId": "merged_hosts_api_inventories__inventory_id__hosts_get",
         "parameters": [
           {
@@ -7994,6 +8157,23 @@
                 }
               ],
               "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group"
             }
           },
           {

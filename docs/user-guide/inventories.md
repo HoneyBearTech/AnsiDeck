@@ -18,7 +18,22 @@ A run sees the inventory's **whole group tree**, so a play with `hosts: web` run
 picking a group as a run's target narrows the run to that group's hosts. A run uses the inventory as it was
 when the run was started: edits made while it waits in the queue don't change it.
 
-## Dynamic sources
+## Group graph
+
+**Group graph** on an inventory's page shows how its groups nest, including the groups its dynamic sources
+add (see below), and which hosts each one holds. It shows names and counts only, never vars.
+
+- **Groups** is a tree that starts with the groups that have no parent. Open a group to see the groups
+  under it. A group under several parents appears under each of them, with "also under …" next to it. The
+  count beside a group is its own hosts, not those of the groups below it. **Search groups** lists every
+  group whose name matches, with its parents.
+- **Pick a group** to see where it sits: its parent groups, the group, and its child groups (click one to
+  move there). Below that are the hosts a run would reach by targeting this group: its own hosts and those
+  of every group below it.
+- The tree works with the keyboard: Tab into it, then use the arrow keys to move, open (→) and close (←),
+  Home and End to jump, and Enter to pick a group. The page's address includes the picked group, so you
+  can link to it.
+
 
 Project admins can add **dynamic sources** to an inventory: the config of an Ansible inventory plugin,
 which runs in a worker to fetch hosts and groups from NetBox, a cloud, or a generator, or to group the
@@ -31,8 +46,9 @@ inventory's own hosts by their vars (`constructed`).
 2. **Refresh now** runs every enabled source in a worker. The result is kept as a **snapshot**: the badge
    shows whether the last refresh worked, when, and how many hosts and groups it found, with any warnings
    (for example host names Ansible would misread, which are skipped).
-3. **Hosts a run sees** lists the merged result (searchable): which hosts came from a source, which from
-   the inventory itself, their groups and vars. The inventory's own host vars win over a source's.
+3. **Hosts a run sees** lists the merged result (searchable, 100 hosts per page): which hosts came from a
+   source, which from the inventory itself, their groups and vars. The inventory's own host vars win over
+   a source's.
 
 More about sources:
 
