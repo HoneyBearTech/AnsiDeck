@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -7,7 +9,7 @@ from app.inventory_render import group_problem, hostname_problem
 from app.inventory_sources import enqueue_refresh
 from app.models import Inventory, InventoryGroup, InventoryHost, User
 from app.notify import notifier
-from app.permissions import SAFE_METHODS, Permission, Scope, guard
+from app.permissions import SAFE_METHODS, Permission, Scope, guard, project_permissions
 from app.queue import QUEUE_TOPIC
 from app.schemas.inventories import (
     GroupCreate,
@@ -22,6 +24,7 @@ from app.schemas.inventories import (
     InventoryUpdate,
 )
 from app.scoping import get_scoped, readable_project_ids, resolve_write_project
+from app.scrub import REDACTED, mask_secret_keys
 
 _guard = guard(Permission.CONTENT_READ, Permission.CONTENT_WRITE, scope=Scope.PROJECT)
 router = APIRouter(dependencies=[Depends(_guard)])
@@ -63,23 +66,35 @@ def _resolve_groups(db: Session, inventory_id: int, group_ids: list[int]) -> lis
     return groups
 
 
-def _to_host_out(host: InventoryHost) -> HostOut:
+def _masked(value: Any) -> Any:
+    """Host vars as a reader who can't edit them sees them: secret-looking keys and any
+    vault-encrypted string (whatever its key) replaced."""
+    if isinstance(value, dict):
+        return {k: _masked(v) for k, v in mask_secret_keys(value).items()}
+    if isinstance(value, list):
+        return [_masked(v) for v in value]
+    if isinstance(value, str) and value.lstrip().startswith("$ANSIBLE_VAULT"):
+        return REDACTED
+    return value
+
+
+def _to_host_out(host: InventoryHost, masked: bool = False) -> HostOut:
     return HostOut(
         id=host.id,
         hostname=host.hostname,
-        vars=host.vars,
+        vars=_masked(host.vars or {}) if masked else host.vars,
         group_ids=[g.id for g in host.groups],
     )
 
 
-def _to_inventory_detail(inventory: Inventory) -> InventoryDetail:
+def _to_inventory_detail(inventory: Inventory, masked: bool = False) -> InventoryDetail:
     return InventoryDetail(
         id=inventory.id,
         name=inventory.name,
         description=inventory.description,
         project_id=inventory.project_id,
         groups=list(inventory.groups),
-        hosts=[_to_host_out(h) for h in inventory.hosts],
+        hosts=[_to_host_out(h, masked) for h in inventory.hosts],
     )
 
 
@@ -125,7 +140,11 @@ def get_inventory(
     user: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> InventoryDetail:
-    return _to_inventory_detail(_get_inventory_or_404(db, user, request, inventory_id))
+    inventory = _get_inventory_or_404(db, user, request, inventory_id)
+    # Editors need the real values (the Edit host dialog saves what it shows); readers who
+    # can't edit (viewers, read-only API keys) get secret-looking values masked.
+    can_edit = Permission.CONTENT_WRITE in project_permissions(db, user, inventory.project_id)
+    return _to_inventory_detail(inventory, masked=not can_edit)
 
 
 @router.put("/{inventory_id}", response_model=InventoryDetail)

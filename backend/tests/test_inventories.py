@@ -1,5 +1,8 @@
 from fastapi.testclient import TestClient
 
+from app.main import app
+from tests.conftest import make_user_client
+
 
 def _login(client: TestClient) -> None:
     response = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
@@ -127,3 +130,43 @@ def test_host_group_id_must_belong_to_same_inventory(client: TestClient) -> None
         json={"hostname": "host1.local", "group_ids": [group_in_b]},
     )
     assert response.status_code == 400
+
+
+def test_readers_who_cant_edit_get_secret_host_vars_masked(client: TestClient) -> None:
+    client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+    vault = "$ANSIBLE_VAULT;1.1;AES256\n6161616161"
+    raw = {
+        "ansible_user": "deploy",
+        "ansible_password": "hunter2-hunter2",
+        "note": vault,
+        "nested": {"api_token": "tok-123456789", "port": 22},
+    }
+    inventory_id = client.post("/api/inventories", json={"name": "masked"}).json()["id"]
+    assert (
+        client.post(
+            f"/api/inventories/{inventory_id}/hosts", json={"hostname": "web1", "vars": raw}
+        ).status_code
+        == 201
+    )
+    path = f"/api/inventories/{inventory_id}"
+
+    # Editors see (and can save back) the real values.
+    assert client.get(path).json()["hosts"][0]["vars"] == raw
+    operator = make_user_client("operator1", "operator")
+    assert operator.get(path).json()["hosts"][0]["vars"] == raw
+
+    masked = {
+        "ansible_user": "deploy",
+        "ansible_password": "[REDACTED]",
+        "note": "[REDACTED]",
+        "nested": {"api_token": "[REDACTED]", "port": 22},
+    }
+    viewer = make_user_client("viewer1", "viewer")
+    response = viewer.get(path)
+    assert response.json()["hosts"][0]["vars"] == masked
+    for secret in ("hunter2-hunter2", "6161616161", "tok-123456789"):
+        assert secret not in response.text
+    # API keys can't read inventories at all (the router's guard doesn't allow keys).
+    key = client.post("/api/projects/1/api-keys", json={"name": "ro", "preset": "read-only"})
+    reader = TestClient(app, headers={"Authorization": f"Bearer {key.json()['token']}"})
+    assert reader.get(path).status_code == 403
