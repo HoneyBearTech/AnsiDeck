@@ -70,6 +70,15 @@ def assert_same_project(run: Run, obj, label: str) -> None:
         raise RuntimeError(f"run {run.id}: {label} is not in the run's project")
 
 
+def extravars(run: Run) -> dict:
+    """The run's extra vars as Ansible gets them. A run by someone without runs:become also gets
+    ansible_become: false: extra vars outrank every play, task and inventory `become`, so nothing
+    in the playbook, the inventory or a source can turn become on either."""
+    if run.become_blocked:
+        return {**(run.extra_vars or {}), "ansible_become": False}
+    return run.extra_vars or {}
+
+
 def build_job(db: Session, run: Run) -> dict:
     """SecretStoreError (with `.subject` naming the secret) when a credential or vault password
     in the secret store can't be read; one deadline covers all of the job's reads."""
@@ -151,7 +160,7 @@ def build_job(db: Session, run: Run) -> dict:
         "vault_password": vault_password_plain,
         "cmdline": " ".join(flags) or None,
         "limit": run.limit,
-        "extravars": run.extra_vars or {},
+        "extravars": extravars(run),
         "timeout_seconds": run.timeout_seconds,
         "secrets": sorted(secrets),
         "project": project,

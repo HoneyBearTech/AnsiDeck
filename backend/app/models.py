@@ -500,6 +500,10 @@ class Run(Base):
     vault_password_name: Mapped[str | None] = mapped_column(String(150), default=None)
 
     become: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Triggered by someone without runs:become: the job gets ansible_become: false, which outranks
+    # the playbook's and the inventory's own become. Kept out of extra_vars, so the run's vars stay
+    # as typed and "Run again" by someone who may become isn't held back.
+    become_blocked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     check_mode: Mapped[bool] = mapped_column(Boolean, default=False)
     diff_mode: Mapped[bool] = mapped_column(Boolean, default=False)
     limit: Mapped[str | None] = mapped_column(String(500), default=None)

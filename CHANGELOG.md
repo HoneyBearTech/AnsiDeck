@@ -17,6 +17,13 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   (`DB_PASSWORD=`, `PGPASSWORD=`, `mysql_root_password:`, `client_secret:`), but not names of where a
   secret lives (`vault_password_file=`). Variables named `pwd`, `apikey`, `authtoken`, `passcode`,
   `community` and similar one-word names now count as secret.
+- `runs:become` now holds beyond the run's checkbox. Runs started by someone without it (operators,
+  trigger API keys) get `ansible_become: false` when they execute, so `become: true` in a playbook, an
+  inventory or a source no longer escalates them, and `ansible_become*` extra vars are refused, in runs
+  and in saved templates. The run's extra vars stay as typed, and **Run again** follows the permissions
+  of whoever runs it again. Upgrading: an operator's run of a playbook that relies on its own
+  `become: true` now runs without become; have an admin run it, or give the operator `runs:become`
+  (admin role). The API applies database migration 0015 (runs remember this) when it starts.
 
 ## [0.3.0] - 2026-10-06
 

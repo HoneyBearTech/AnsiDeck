@@ -195,6 +195,18 @@ def _require_same_project(obj, project_id: int, label: str) -> None:
         )
 
 
+def become_vars(extra_vars: dict | None) -> list[str]:
+    """The extra vars that would let a run become root (or another user) despite the run's own
+    `become` flag. `ansible_become: false` is the one harmless form (it's what a run of someone
+    without runs:become carries)."""
+    return sorted(
+        key
+        for key, value in (extra_vars or {}).items()
+        if key.lower().startswith("ansible_become")
+        and not (key == "ansible_become" and value is False)
+    )
+
+
 def queue_run(
     db: Session,
     current_user: User,
@@ -238,9 +250,8 @@ def queue_run(
     )
     project_id = playbook.project_id
     git = pin_snapshot(db, playbook) if playbook.source_id is not None else None
-    if payload.become and Permission.RUNS_BECOME not in project_permissions(
-        db, current_user, project_id
-    ):
+    can_become = Permission.RUNS_BECOME in project_permissions(db, current_user, project_id)
+    if not can_become and (payload.become or become_vars(payload.extra_vars)):
         raise denied_become(project_id)
 
     inventory = get_scoped(
@@ -326,6 +337,7 @@ def queue_run(
         diff_mode=payload.diff_mode,
         limit=payload.limit,
         extra_vars=payload.extra_vars,
+        become_blocked=not can_become,
         triggered_by=current_user.username,
         triggered_by_api_key_id=getattr(current_user, "_api_key_id", None),
         timeout_seconds=payload.timeout_seconds,
