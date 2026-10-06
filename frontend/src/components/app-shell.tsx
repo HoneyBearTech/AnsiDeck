@@ -25,6 +25,8 @@ const linkClass = ({ isActive }: { isActive: boolean }) =>
     "text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground",
     isActive && "text-primary",
   );
+// In the phone/tablet menu every link gets a finger-sized hit area.
+const menuLinkClass = (state: { isActive: boolean }) => cn(linkClass(state), "block py-2 pointer-coarse:py-3");
 
 /** The links this person may use, split into everyday pages and administration. */
 function useNavEntries(): { main: NavEntry[]; admin: NavEntry[] } {
@@ -72,8 +74,10 @@ function ProjectSwitcher({ className }: { className?: string }) {
       value={activeProjectId === null ? ALL_PROJECTS : String(activeProjectId)}
       onValueChange={(value) => setActiveProject(value === ALL_PROJECTS ? null : Number(value))}
     >
-      <SelectTrigger className={cn("h-8 w-44 text-sm", className)} aria-label="Active project">
-        <SelectValue />
+      <SelectTrigger className={cn("h-8 w-40 text-sm", className)} aria-label="Active project">
+        <span className="min-w-0 truncate">
+          <SelectValue />
+        </span>
       </SelectTrigger>
       <SelectContent>
         {isAdmin && <SelectItem value={ALL_PROJECTS}>All projects</SelectItem>}
@@ -141,16 +145,16 @@ function UserMenu() {
   );
 }
 
-/** The menu below desktop width: every link, the project, the account and logging out. */
+/** The menu below wide-desktop width (1280 px): every link, the project, the account and logging out. */
 function MobileMenu({ main, admin, onClose }: { main: NavEntry[]; admin: NavEntry[]; onClose: () => void }) {
   const { user, logout, activeProject } = useAuth();
   return (
-    <nav id="mobile-menu" aria-label="Main" className="flex flex-col gap-4 border-t border-border py-4 lg:hidden">
+    <nav id="mobile-menu" aria-label="Main" className="flex flex-col gap-4 border-t border-border py-4 xl:hidden">
       <ProjectSwitcher className="w-full sm:hidden" />
-      <ul className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+      <ul className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3">
         {main.map((entry) => (
           <li key={entry.to}>
-            <NavLink to={entry.to} end={entry.to === "/"} className={linkClass} onClick={onClose}>
+            <NavLink to={entry.to} end={entry.to === "/"} className={menuLinkClass} onClick={onClose}>
               {entry.label}
             </NavLink>
           </li>
@@ -159,10 +163,10 @@ function MobileMenu({ main, admin, onClose }: { main: NavEntry[]; admin: NavEntr
       {admin.length > 0 && (
         <div className="flex flex-col gap-2">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Admin</p>
-          <ul className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+          <ul className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3">
             {admin.map((entry) => (
               <li key={entry.to}>
-                <NavLink to={entry.to} className={linkClass} onClick={onClose}>
+                <NavLink to={entry.to} className={menuLinkClass} onClick={onClose}>
                   {entry.label}
                 </NavLink>
               </li>
@@ -174,7 +178,7 @@ function MobileMenu({ main, admin, onClose }: { main: NavEntry[]; admin: NavEntr
         <span className="text-sm text-muted-foreground">
           {user?.username} ({roleLabel(user, activeProject?.role)})
         </span>
-        <NavLink to="/account" className={linkClass} onClick={onClose}>
+        <NavLink to="/account" className={menuLinkClass} onClick={onClose}>
           Account
         </NavLink>
         <Button variant="outline" size="sm" onClick={() => logout()}>
@@ -195,12 +199,12 @@ export function AppShell() {
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border">
-        <div className="mx-auto max-w-5xl px-4 sm:px-8">
+        <div className="mx-auto max-w-6xl px-4 sm:px-8">
           <div className="flex h-14 items-center gap-6">
             <Link to="/" className="font-mono text-lg text-primary">
               AnsiDeck
             </Link>
-            <nav aria-label="Main" className="hidden items-center gap-x-4 lg:flex">
+            <nav aria-label="Main" className="hidden items-center gap-x-4 xl:flex">
               {main.map((entry) => (
                 <NavLink key={entry.to} to={entry.to} end={entry.to === "/"} className={linkClass}>
                   {entry.label}
@@ -210,13 +214,13 @@ export function AppShell() {
             </nav>
             <div className="ml-auto flex items-center gap-2">
               <ProjectSwitcher className="hidden sm:flex" />
-              <div className="hidden lg:block">
+              <div className="hidden xl:block">
                 <UserMenu />
               </div>
               <Button
                 variant="ghost"
                 size="sm"
-                className="lg:hidden"
+                className="xl:hidden"
                 aria-expanded={menuOpen}
                 aria-controls="mobile-menu"
                 aria-label={menuOpen ? "Close menu" : "Open menu"}
@@ -229,7 +233,7 @@ export function AppShell() {
           {menuOpen && <MobileMenu main={main} admin={admin} onClose={() => setMenuOpen(false)} />}
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-4 py-6 sm:p-8">
+      <main className="mx-auto max-w-6xl px-4 py-6 sm:p-8">
         {hasNoProject ? (
           <div className="flex flex-col gap-2">
             <h1 className="text-xl font-semibold">No project yet</h1>

@@ -294,10 +294,10 @@ export function CredentialsPage() {
       <div className="flex flex-col gap-2">
         {credentials.map((credential) => (
           <Card key={credential.id}>
-            <CardContent className="flex items-center justify-between p-4">
-              <div className="flex flex-col gap-1">
+            <CardContent className="flex flex-wrap items-center justify-between gap-2 p-4">
+              <div className="flex min-w-0 flex-col gap-1">
                 <span className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">{credential.name}</span>
+                  <span className="min-w-0 font-medium wrap-anywhere">{credential.name}</span>
                   <Badge variant="outline">{KIND_LABELS[credential.kind]}</Badge>
                 </span>
                 {credential.description && (
@@ -305,7 +305,7 @@ export function CredentialsPage() {
                 )}
                 <SecretLocation row={credential} label={store?.label} />
                 {credential.env_names && (
-                  <span className="font-mono text-xs text-muted-foreground">
+                  <span className="font-mono text-xs text-muted-foreground wrap-anywhere">
                     {credential.env_names.join(" · ")}
                   </span>
                 )}

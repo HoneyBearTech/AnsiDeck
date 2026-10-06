@@ -19,6 +19,12 @@ bugs: please report them in [GitHub Issues](https://github.com/HoneyBearTech/Ans
   and shows a visible focus ring; dialogs take focus, keep it inside while open, close with Escape and
   return focus to the control that opened them; selects open and choose with the keyboard. The
   focus-return behaviour has a regression test.
+- **Small screens** were checked in headless Chrome at 375, 768, 1024 and 1280 px wide, with long names,
+  e-mail addresses and URLs: no page scrolls sideways, every dialog fits a 375 × 667 phone screen and
+  scrolls inside itself when it is taller, and its buttons stay reachable. Below 1280 px the navigation
+  moves into a menu button. The last run was in October 2026.
+- **Touch targets** are at least 24 × 24 px (WCAG 2.2, 2.5.8). On touch screens, small buttons, selects
+  and menu links grow to about 40 px. Links inside a sentence are the usual exception.
 - **The code editor** (playbooks, inventory source configs, Galaxy requirements) is a labelled multi-line
   text box that doesn't capture Tab, so keyboard users can always move on; read-only text is announced as
   read-only and can still be selected. Check results are a list with headings and a live summary, and
@@ -44,4 +50,3 @@ bugs: please report them in [GitHub Issues](https://github.com/HoneyBearTech/Ans
 - **No screen-reader walk-through yet.** The checks above are automated plus a keyboard pass; nobody has
   yet tested complete tasks with a screen reader such as NVDA, JAWS or VoiceOver. Reports from people who
   do are very welcome.
-- **Small screens.** The layout isn't designed for phones yet (planned, see the [roadmap](roadmap.md)).

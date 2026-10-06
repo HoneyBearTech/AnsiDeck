@@ -22,7 +22,7 @@ export function PageHeader({
       {back && (
         <Link
           to={back.to}
-          className="flex w-fit items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+          className="flex min-h-6 w-fit items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           <ChevronLeft aria-hidden="true" className="size-4" />
           {back.label}
@@ -30,7 +30,7 @@ export function PageHeader({
       )}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
         <div className="flex min-w-0 flex-col gap-1">
-          <h1 className="text-xl font-semibold break-words">{title}</h1>
+          <h1 className="text-xl font-semibold wrap-anywhere">{title}</h1>
           {description && <div className="text-sm text-muted-foreground">{description}</div>}
         </div>
         {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}

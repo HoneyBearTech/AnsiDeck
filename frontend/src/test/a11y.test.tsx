@@ -57,7 +57,7 @@ const PAGES: [string, string | RegExp][] = [
   ["/galaxy", "Galaxy"],
   ["/runs", "Runs"],
   ["/runs/new", "New run"],
-  ["/runs/7", /site\.yml → lab/],
+  ["/runs/7", /site\.yml →\s+lab/],
   ["/templates", "Templates"],
   ["/users", "Users"],
   ["/audit", "Audit log"],

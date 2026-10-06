@@ -431,7 +431,7 @@ function ChannelCard({
           )}
           <button
             type="button"
-            className="text-primary hover:underline"
+            className="inline-flex min-h-6 items-center text-primary hover:underline"
             onClick={() => setShowLog((v) => !v)}
           >
             {showLog ? "Hide history" : "History"}

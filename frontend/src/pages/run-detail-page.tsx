@@ -195,10 +195,10 @@ export function RunDetailPage() {
         back={{ to: "/runs", label: "Runs" }}
         title={
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span>
+            <span className="min-w-0 wrap-anywhere">
               <span className="mr-2 font-mono text-base text-muted-foreground">#{run.id}</span>
-              {run.playbook_name} <span className="whitespace-nowrap">→ {run.inventory_name}</span>
-              {run.group_name && <span className="whitespace-nowrap"> / {run.group_name}</span>}
+              {run.playbook_name} →&nbsp;{run.inventory_name}
+              {run.group_name && <> /&nbsp;{run.group_name}</>}
             </span>
             <Badge variant={STATUS_VARIANT[run.status]}>{run.status.replace("_", " ")}</Badge>
           </span>

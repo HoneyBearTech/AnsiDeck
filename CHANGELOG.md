@@ -7,8 +7,20 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+### Changed
+
+- The full navigation bar now shows from 1280 px wide (below that, the menu button), and pages use a
+  slightly wider column. At 1024 px the header no longer overflows.
+- On touch screens, small buttons, selects and the menu's links grow to about 40 px; checkboxes have a
+  26 px hit area everywhere.
+- The code editor wraps long lines instead of scrolling sideways.
+
 ### Fixed
 
+- Long playbook, inventory, group, host and credential names no longer push run rows, the run page,
+  the inventory page or the credentials list off a phone screen (the run page overflowed even at 1280 px).
+- Dialogs fit small screens: they keep a margin, scroll inside when taller than the screen, and their
+  buttons wrap.
 - [docs/verifying-releases.md](docs/verifying-releases.md) asked for cosign 2.0 or later, but the image
   signatures (since v0.1.0) are in Sigstore's bundle format, which needs cosign 3.0, or cosign 2.6 with
   `--new-bundle-format`.

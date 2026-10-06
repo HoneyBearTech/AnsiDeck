@@ -135,6 +135,8 @@ export function CodeEditor({
           theme,
           keymap.of([...defaultKeymap, ...historyKeymap, ...lintKeymap]),
           EditorState.tabSize.of(2),
+          // Long YAML lines wrap instead of scrolling sideways (narrow screens, long Jinja expressions).
+          EditorView.lineWrapping,
           readOnlyCompartment.current.of(EditorState.readOnly.of(readOnly)),
           EditorView.contentAttributes.of({
             "aria-labelledby": labelledBy,
