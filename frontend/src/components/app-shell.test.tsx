@@ -51,6 +51,14 @@ describe("header", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Playbooks" })).toBeInTheDocument();
     expect(document.getElementById("mobile-menu")).toBeNull();
   });
+
+  it("switches between the menu button and the full nav at 1280 px", async () => {
+    // jsdom has no layout, so this pins the breakpoint classes: below xl the full nav no longer fits.
+    const { screen } = renderApp("/runs", { routes: ROUTES });
+    expect(await screen.findByRole("button", { name: "Open menu" })).toHaveClass("xl:hidden");
+    const [desktopNav] = screen.getAllByRole("navigation", { name: "Main" });
+    expect(desktopNav).toHaveClass("hidden", "xl:flex");
+  });
 });
 
 describe("run output", () => {

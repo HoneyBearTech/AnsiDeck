@@ -17,7 +17,7 @@ describe("runs list", () => {
         ],
       },
     });
-    const title = await screen.findByText((_, el) => el?.textContent === "site.yml → lab / web" && el.tagName === "SPAN");
+    const title = await screen.findByText((_, el) => el?.textContent === "site.yml →\u00a0lab /\u00a0web" && el.tagName === "SPAN");
     expect(title.closest("a")).toHaveAttribute("href", "/runs/7");
     expect(screen.getByText("#7")).toBeInTheDocument();
     expect(screen.getByText("· 01234567")).toBeInTheDocument();

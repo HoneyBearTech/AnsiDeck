@@ -205,15 +205,15 @@ export function InventoryDetailPage() {
       {deletion.error && <p className="text-sm text-destructive">{deletion.error}</p>}
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
           <CardTitle>Groups</CardTitle>
           {canWrite && <GroupDialog inventoryId={inventoryId} onCreated={refresh} />}
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
           {inventory.groups.length === 0 && <p className="text-sm text-muted-foreground">No groups yet.</p>}
           {inventory.groups.map((group) => (
-            <div key={group.id} className="flex items-center justify-between">
-              <span className="text-sm">
+            <div key={group.id} className="flex flex-wrap items-center justify-between gap-2">
+              <span className="min-w-0 text-sm wrap-anywhere">
                 {group.name}{" "}
                 <span className="text-muted-foreground">
                   ({inventory.hosts.filter((h) => h.group_ids.includes(group.id)).length} hosts)
@@ -234,17 +234,17 @@ export function InventoryDetailPage() {
       </Card>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
           <CardTitle>Hosts</CardTitle>
           {canWrite && <HostDialog inventoryId={inventoryId} groups={inventory.groups} onSaved={refresh} />}
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {inventory.hosts.length === 0 && <p className="text-sm text-muted-foreground">No hosts yet.</p>}
           {inventory.hosts.map((host) => (
-            <div key={host.id} className="flex items-center justify-between">
-              <div className="flex flex-col gap-1">
-                <span className="text-sm font-medium">{host.hostname}</span>
-                <div className="flex gap-1">
+            <div key={host.id} className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="text-sm font-medium wrap-anywhere">{host.hostname}</span>
+                <div className="flex flex-wrap gap-1">
                   {host.group_ids.map((groupId) => (
                     <Badge key={groupId} variant="outline">
                       {groupName(groupId)}

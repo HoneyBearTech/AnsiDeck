@@ -21,7 +21,8 @@ const buttonVariants = cva(
       },
       size: {
         default: "h-10 px-4 py-2",
-        sm: "h-9 rounded-md px-3",
+        // On touch screens small buttons grow to 40 px; desktop density stays.
+        sm: "h-9 rounded-md px-3 pointer-coarse:h-10",
         lg: "h-11 rounded-md px-8",
       },
     },

@@ -26,9 +26,9 @@ export function RunRow({ run }: { run: Run }) {
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
             <div className="flex flex-wrap items-baseline gap-x-2">
               <span className="font-mono text-xs text-muted-foreground">#{run.id}</span>
-              <span className="font-medium break-words">
-                {run.playbook_name} <span className="whitespace-nowrap">→ {run.inventory_name}</span>
-                {run.group_name && <span className="whitespace-nowrap"> / {run.group_name}</span>}
+              <span className="font-medium wrap-anywhere">
+                {run.playbook_name} →&nbsp;{run.inventory_name}
+                {run.group_name && <> /&nbsp;{run.group_name}</>}
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
