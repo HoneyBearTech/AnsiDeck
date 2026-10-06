@@ -26,7 +26,10 @@ project. Optionally:
 - **Extra vars (JSON)**: variables for this run, such as `{"release": "1.2"}`. Values whose names look
   secret (`password`, `token`, `key`, …) are masked on the run page and in the output.
 - **Run as admin (become root)** (admins only): escalates privileges on the hosts, after you tick the
-  confirmation.
+  confirmation. Runs started by someone without this permission (operators, API keys) never become
+  another user: `become: true` in the playbook or the inventory has no effect, and `ansible_become` extra
+  vars are refused. A task that runs `sudo` itself is limited only by what the SSH user may do on the
+  host, so don't give the keys operators use more sudo rights than they need.
 
 **Start run** queues it and opens its page. **Save as template** (for people who may edit content)
 saves the form as a [run template](#run-templates) instead.

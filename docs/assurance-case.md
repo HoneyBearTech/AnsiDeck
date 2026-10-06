@@ -94,7 +94,9 @@ The principles below are Saltzer and Schroeder's, plus the additional ones the O
 - **Open design.** The code, this case and the threat model are public. Security relies on keys, not on
   the secrecy of the design.
 - **Separation of privilege.** Running a playbook needs the operator role in that project and a credential
-  from that project; running as root needs a separate `runs:become` permission; an SSH key that can run
+  from that project; running as root needs a separate `runs:become` permission (without it a run
+  carries `ansible_become: false`, which outranks the playbook's and the inventory's own `become`; a task
+  that calls `sudo` itself is bounded by the target's sudo rules); an SSH key that can run
   playbooks is a different credential kind from inventory-source variables.
 - **Least privilege.** Per-project roles; API keys with one project and a fixed preset; workers without
   database access or keys; one unprivileged user per slot; containers with dropped capabilities and

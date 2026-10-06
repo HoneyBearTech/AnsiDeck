@@ -7,6 +7,14 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+### Security
+
+- `runs:become` now holds beyond the run's checkbox. Runs started by someone without it (operators,
+  trigger API keys) carry `ansible_become: false`, so `become: true` in a playbook, an inventory or a
+  source no longer escalates them, and `ansible_become*` extra vars are refused, in runs and in saved
+  templates. Upgrading: an operator's run of a playbook that relies on its own `become: true` now runs
+  without become; have an admin run it, or give the operator `runs:become` (admin role).
+
 ## [0.3.0] - 2026-10-06
 
 A security fix for dynamic inventory sources, host vars masked for viewers, a group graph for inventories,
