@@ -198,6 +198,38 @@ def test_teams_gets_an_adaptive_card() -> None:
     assert card["actions"][0]["url"] == "https://a.example/runs/7"
 
 
+def test_teams_cards_show_link_markup_from_untrusted_text_as_text() -> None:
+    """Card text renders Markdown: a host's error message must not become a disguised link."""
+    hostile = "[Reset your password](https://evil.example/login)"
+    payload = {
+        **FAILED,
+        "playbook": f"site {hostile}",
+        "reason": hostile,
+        "failed_tasks": [{"host": "web1", "task": hostile}],
+    }
+    card = render.teams(render.build(RUN_FAILED, payload, "https://a.example"))
+    dumped = json.dumps(card["attachments"][0]["content"]["body"], ensure_ascii=False)
+    assert "](" not in dumped
+    assert "[Reset your password]\u200b(https://evil.example/login)" in dumped  # still readable
+
+
+@pytest.mark.parametrize("brk", ["\r", "\n", "\u2028", "\u2029", "\x85", "\x0b", "\x0c", "\x1c"])
+def test_email_subjects_never_hold_a_line_break(monkeypatch, settings_env, brk) -> None:
+    """The email library refuses every one of these in a header (a ValueError, not an SMTP
+    error), and inventory names can hold them."""
+    subject, _ = render.email(render.build(RUN_FAILED, {**FAILED, "inventory": f"prod{brk}x"}, ""))
+    assert subject.splitlines() == [subject]
+    settings_env(SMTP_HOST="mail.example", SMTP_FROM="ansideck@example.com")
+    FakeSMTP.sent, FakeSMTP.calls = [], []
+    monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
+    channel = NotificationChannel(
+        kind="email", config_encrypted=seal({"recipients": ["a@b.example"]})
+    )
+    payload = {**FAILED, "inventory": f"prod{brk}x"}
+    assert channel_mod.send(channel, RUN_FAILED, payload, get_settings()).ok
+    assert "prod x" in FakeSMTP.sent[0]["Subject"]
+
+
 def test_webhooks_are_signed_with_timestamp_and_body() -> None:
     body = b'{"event":"run.failed"}'
     headers = render.signature_headers(body, "s3cret", now=1700000000)
@@ -550,6 +582,44 @@ def test_permanent_errors_and_exhausted_retries_fail(client, sink: Sink) -> None
         dispatch.dispatch_once()
     [delivery] = _deliveries()
     assert (delivery.status, delivery.attempts) == ("failed", dispatch.MAX_ATTEMPTS)
+
+
+@pytest.mark.no_worker
+def test_an_unexpected_error_while_sending_fails_the_delivery_once(
+    client, sink: Sink, monkeypatch
+) -> None:
+    """Before, the exception left the delivery "sending": retried every lease, for ever."""
+    _queue_one()
+
+    def broken(*args, **kwargs):
+        raise ValueError("Header values may not contain linefeed or carriage return characters")
+
+    monkeypatch.setattr(dispatch, "send", broken)
+    assert dispatch.dispatch_once() == 1
+    [delivery] = _deliveries()
+    assert (delivery.status, delivery.attempts) == ("failed", 1)
+    assert delivery.last_error == "unexpected error: ValueError"
+    _due_now()
+    assert dispatch.dispatch_once() == 0
+
+
+@pytest.mark.no_worker
+def test_a_delivery_whose_last_attempt_never_finished_is_given_up(client, sink: Sink) -> None:
+    """The process died while sending the last allowed attempt: no endless re-claiming."""
+    delivery_id = _queue_one()
+    db = get_sessionmaker()()
+    db.execute(
+        update(NotificationDelivery)
+        .where(NotificationDelivery.id == delivery_id)
+        .values(status="sending", attempts=dispatch.MAX_ATTEMPTS)
+    )
+    db.commit()
+    db.close()
+    _due_now()  # its lease ran out
+    assert dispatch.dispatch_once() == 0
+    [delivery] = _deliveries()
+    assert delivery.status == "failed" and "never finished" in delivery.last_error
+    assert sink.requests == []
 
 
 @pytest.mark.no_worker

@@ -348,29 +348,37 @@ def slack(message: Message) -> dict:
 # ------------------------------------------------------------------ Microsoft Teams
 
 
+def _teams_text(text: str) -> str:
+    """Adaptive Card TextBlocks and FactSet values render a Markdown subset, so untrusted text
+    (a failed task's message from a host, a playbook name) could carry a disguised
+    `[text](url)` link. A zero-width space between `]` and `(` breaks the link syntax and
+    leaves the text as it reads."""
+    return text.replace("](", "]\u200b(")
+
+
 def teams(message: Message) -> dict:
     """An Adaptive Card for a Teams Workflows webhook ("When a Teams webhook request is
-    received"); the old Office 365 connectors are retired. TextBlocks get plain text only."""
+    received"); the old Office 365 connectors are retired. Text goes through _teams_text."""
     body: list[dict] = [
         {
             "type": "TextBlock",
-            "text": message.title,
+            "text": _teams_text(message.title),
             "weight": "Bolder",
             "size": "Medium",
             "wrap": True,
         },
     ]
     if message.summary:
-        body.append({"type": "TextBlock", "text": message.summary, "wrap": True})
+        body.append({"type": "TextBlock", "text": _teams_text(message.summary), "wrap": True})
     if message.facts:
-        body.append(
-            {"type": "FactSet", "facts": [{"title": n, "value": v} for n, v in message.facts]}
-        )
+        facts = [{"title": n, "value": _teams_text(v)} for n, v in message.facts]
+        body.append({"type": "FactSet", "facts": facts})
     if message.items:
         body.append(
             {"type": "TextBlock", "text": message.items_title, "weight": "Bolder", "wrap": True}
         )
-        body.append({"type": "TextBlock", "text": _limit(message.items, 3000), "wrap": True})
+        items = _teams_text(_limit(message.items, 3000))
+        body.append({"type": "TextBlock", "text": items, "wrap": True})
     card: dict = {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -464,7 +472,9 @@ def email(message: Message) -> tuple[str, str]:
     if message.url:
         lines += ["", message.url]
     lines += ["", "-- ", "Sent by AnsiDeck. Change notifications on its Notifications page."]
-    subject = message.title.replace("\r", " ").replace("\n", " ")
+    # Every line break Python knows (U+2028, \x85, \x0b, ...): the email library refuses them
+    # all in a header, not just \r and \n, and names come from users.
+    subject = " ".join(message.title.splitlines())
     return f"[AnsiDeck] {subject}", "\n".join(lines) + "\n"
 
 
