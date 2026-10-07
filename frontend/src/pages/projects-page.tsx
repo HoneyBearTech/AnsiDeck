@@ -244,7 +244,7 @@ const KEY_EXPIRY_OPTIONS = [
   { days: "365", label: "1 year" },
 ];
 
-const KEY_STATUS_VARIANT = { active: "ok", expired: "skipped", revoked: "failed" } as const;
+const KEY_STATUS_VARIANT = { active: "ok", suspended: "changed", expired: "skipped", revoked: "failed" } as const;
 
 // Mirrors the server's rule; it stays the real check.
 const KEY_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
@@ -254,12 +254,16 @@ function formatWhen(value: string | null): string {
 }
 
 function ApiKeysPanel({ project }: { project: ProjectSummary }) {
+  const { user } = useAuth();
+  // Right after an SSO sign-in the API accepts a new key without a password.
+  const ssoSession = user?.signed_in_with === "sso";
   const [keys, setKeys] = React.useState<ApiKey[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [name, setName] = React.useState("");
   const [preset, setPreset] = React.useState<ApiKeyPreset>("trigger");
   const [days, setDays] = React.useState("90");
+  const [password, setPassword] = React.useState("");
   const [creating, setCreating] = React.useState(false);
   // The plaintext token lives only here, only until the dialog is closed.
   const [created, setCreated] = React.useState<ApiKeyCreated | null>(null);
@@ -281,8 +285,15 @@ function ApiKeysPanel({ project }: { project: ProjectSummary }) {
     setError(null);
     setCreating(true);
     try {
-      const key = await api.createApiKey(project.id, name.trim(), preset, Number(days));
+      const key = await api.createApiKey(
+        project.id,
+        name.trim(),
+        preset,
+        Number(days),
+        password || undefined,
+      );
       setName("");
+      setPassword("");
       setCopied(false);
       setCreated(key);
       refresh();
@@ -318,7 +329,8 @@ function ApiKeysPanel({ project }: { project: ProjectSummary }) {
     <div className="flex flex-col gap-3 border-t border-border pt-4">
       <p className="text-xs text-muted-foreground">
         API keys let CI/CD start runs and read their status without a login. A key belongs to this project, is
-        shown once, and stops working when it expires or is revoked.
+        shown once, and stops working when it expires or is revoked, and while the person who created it is
+        deactivated or can no longer manage this project&apos;s keys.
       </p>
       {loading && <p className="text-sm text-muted-foreground">Loading API keys…</p>}
       {error && <p className="text-sm text-destructive">{error}</p>}
@@ -337,8 +349,11 @@ function ApiKeysPanel({ project }: { project: ProjectSummary }) {
               created by {key.created_by} · last used {formatWhen(key.last_used_at)} · expires{" "}
               {formatWhen(key.expires_at)}
             </span>
+            {key.status === "suspended" && key.suspended_because && (
+              <span className="text-xs text-status-changed">Not working: {key.suspended_because}.</span>
+            )}
           </div>
-          {key.status === "active" && (
+          {(key.status === "active" || key.status === "suspended") && (
             <Button variant="destructive-outline" size="sm" onClick={() => handleRevoke(key)}>
               Revoke
             </Button>
@@ -380,12 +395,29 @@ function ApiKeysPanel({ project }: { project: ProjectSummary }) {
             ))}
           </SelectContent>
         </Select>
-        <Button onClick={handleCreate} disabled={creating || !KEY_NAME_PATTERN.test(name.trim())}>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={`key-password-${project.id}`}>Current password</Label>
+          <Input
+            id={`key-password-${project.id}`}
+            type="password"
+            autoComplete="current-password"
+            placeholder={ssoSession ? "not needed after SSO" : undefined}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </div>
+        <Button
+          onClick={handleCreate}
+          disabled={creating || !KEY_NAME_PATTERN.test(name.trim()) || (!ssoSession && !password)}
+        >
           Create key
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        {KEY_PRESET_HELP[preset]} Names use letters, digits, dots, dashes and underscores.
+        {KEY_PRESET_HELP[preset]} Names use letters, digits, dots, dashes and underscores.{" "}
+        {ssoSession
+          ? "Signed in with single sign-on: within 15 minutes of signing in, no password is needed."
+          : "A key outlives your session, so creating one asks for your password."}
       </p>
 
       <Dialog open={created !== null} onOpenChange={(open) => !open && setCreated(null)}>

@@ -387,3 +387,54 @@ def test_0012_adds_inventory_sources_and_downgrades_cleanly() -> None:
         with admin.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
         admin.dispose()
+
+
+def test_0016_links_existing_keys_to_their_creator_by_username_and_downgrades() -> None:
+    url = make_url(TEST_DATABASE_URL)
+    scratch = url.database.removesuffix("_test") + "_migration_test"
+    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{scratch}"'))
+    engine = create_engine(url.set(database=scratch))
+    config = alembic_config()
+
+    def migrate(step, revision: str) -> None:
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            step(config, revision)
+
+    try:
+        migrate(command.upgrade, "0015")
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO projects (name, description) VALUES ('P', '')"))
+            conn.execute(
+                text(
+                    "INSERT INTO users (username, password_hash, role, is_active, session_version) "
+                    "VALUES ('bob', 'x', 'admin', true, 0)"
+                )
+            )
+            for name, creator in (("ci", "bob"), ("orphan", "gone")):
+                conn.execute(
+                    text(
+                        "INSERT INTO api_keys (project_id, name, preset, prefix, token_hash, "
+                        "created_by, expires_at) VALUES (1, :name, 'trigger', :name, 'h', "
+                        ":creator, now() + interval '1 day')"
+                    ),
+                    {"name": name, "creator": creator},
+                )
+        migrate(command.upgrade, "0016")
+        with engine.connect() as conn:
+            linked = dict(conn.execute(text("SELECT name, created_by_id FROM api_keys")).all())
+            bob = conn.execute(text("SELECT id FROM users WHERE username = 'bob'")).scalar()
+        assert linked == {"ci": bob, "orphan": None}  # a creator already gone stays unlinked
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM users WHERE username = 'bob'"))
+            assert conn.execute(text("SELECT count(*) FROM api_keys")).scalar() == 2  # kept
+        migrate(command.downgrade, "0015")
+        migrate(command.upgrade, "0016")
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        admin.dispose()

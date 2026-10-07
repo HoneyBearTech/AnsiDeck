@@ -78,13 +78,20 @@ A project admin creates API keys under **Projects → API keys**, so CI/CD can s
 without a user account.
 
 1. Enter a name (letters, digits, `.`, `_`, `-`), pick a preset and a lifetime (30 days, 90 days or a year),
-   and **Create key**.
+   enter your current password, and **Create key**. (If you signed in with single sign-on in the last 15
+   minutes, no password is needed; otherwise sign in again first.)
    - **trigger**: start runs and read their status and output, in this project only. It can never run as
      root or edit anything.
    - **read-only**: read run status and output.
 2. Copy the key from the dialog: it's shown **once**. Send it as `Authorization: Bearer <key>`, over HTTPS.
 3. The list shows each key's status, when it was last used, and when it expires. **Revoke** (after a
    confirmation) stops a key at once.
+
+A key works only while the person who created it could create it again: it is **suspended** while they are
+deactivated, no longer an admin of the project, or removed from it, and works again if that changes.
+Deleting them stops their keys for good. The list says why a key is suspended, and every refused request is
+in the audit log. When someone leaves, have a remaining admin create new keys for the pipelines that need
+them.
 
 The README's [Triggering runs from CI](../../README.md#triggering-runs-from-ci) has `curl` examples for
 starting runs (directly or from a [template](runs.md#run-templates)), polling, cancelling, and downloading

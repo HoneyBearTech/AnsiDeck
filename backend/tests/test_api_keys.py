@@ -10,7 +10,8 @@ from starlette.websockets import WebSocketDisconnect
 from app.api_keys import parse_prefix
 from app.db import get_sessionmaker
 from app.main import app
-from app.models import ApiKey
+from app.models import ApiKey, AuditEvent
+from tests.conftest import TEST_PASSWORD
 from tests.routes import iter_api_routes
 from tests.test_projects import _admin, _member, _populate, _project
 from tests.test_rbac import PUBLIC, _walk
@@ -24,9 +25,12 @@ def world(client: TestClient):
     return {"admin": admin, "a": _populate(admin, a, "a"), "b": _populate(admin, b, "b")}
 
 
-def _create_key(admin: TestClient, project_id: int, name="ci", preset="trigger", **extra) -> dict:
+def _create_key(
+    admin: TestClient, project_id: int, name="ci", preset="trigger", password="admin", **extra
+) -> dict:
     response = admin.post(
-        f"/api/projects/{project_id}/api-keys", json={"name": name, "preset": preset, **extra}
+        f"/api/projects/{project_id}/api-keys",
+        json={"name": name, "preset": preset, "current_password": password, **extra},
     )
     assert response.status_code == 201, response.text
     return response.json()
@@ -87,7 +91,10 @@ def test_key_management_is_for_project_admins_only(world) -> None:
     path = f"/api/projects/{a['project']}/api-keys"
 
     assert (
-        project_admin.post(path, json={"name": "from-admin", "preset": "trigger"}).status_code
+        project_admin.post(
+            path,
+            json={"name": "from-admin", "preset": "trigger", "current_password": TEST_PASSWORD},
+        ).status_code
         == 201
     )
     for denied in (operator, viewer):
@@ -124,7 +131,8 @@ def test_create_validates_and_rejects_duplicates(world) -> None:
     admin, a = world["admin"], world["a"]
     path = f"/api/projects/{a['project']}/api-keys"
     _create_key(admin, a["project"], name="dup")
-    assert admin.post(path, json={"name": "dup", "preset": "read-only"}).status_code == 409
+    dup = {"name": "dup", "preset": "read-only", "current_password": "admin"}
+    assert admin.post(path, json=dup).status_code == 409
     for bad in (
         {"name": "has space", "preset": "trigger"},
         {"name": "apikey:x", "preset": "trigger"},
@@ -140,7 +148,8 @@ def test_active_keys_per_project_are_capped(world) -> None:
     path = f"/api/projects/{a['project']}/api-keys"
     for i in range(50):
         _create_key(admin, a["project"], name=f"k{i}")
-    assert admin.post(path, json={"name": "one-too-many", "preset": "trigger"}).status_code == 409
+    extra = {"name": "one-too-many", "preset": "trigger", "current_password": "admin"}
+    assert admin.post(path, json=extra).status_code == 409
 
 
 def test_key_roles_cannot_be_assigned_to_members(world) -> None:
@@ -444,3 +453,123 @@ def test_websocket_log_stream_accepts_a_key_header(world) -> None:
             TestClient(app).websocket_connect(f"/api/runs/{a['run']}/ws", headers=headers) as ws,
         ):
             ws.receive_text()
+
+
+# ------------------------------------------------------------- the creator vouches
+
+
+def _uid(admin: TestClient, username: str) -> int:
+    return next(u["id"] for u in admin.get("/api/users").json() if u["username"] == username)
+
+
+def _refusals(prefix: str) -> list[str]:
+    db = get_sessionmaker()()
+    try:
+        rows = db.query(AuditEvent).filter(
+            AuditEvent.action == "apikey.auth", AuditEvent.actor_username == f"apikey:{prefix}"
+        )
+        return [r.detail["reason"] for r in rows]
+    finally:
+        db.close()
+
+
+SUSPENSIONS = {
+    # event: (take the right away, give it back or None when it can't come back)
+    "deactivated": (
+        lambda admin, p, uid: admin.patch(f"/api/users/{uid}", json={"is_active": False}),
+        lambda admin, p, uid: admin.patch(f"/api/users/{uid}", json={"is_active": True}),
+    ),
+    "demoted": (
+        lambda admin, p, uid: admin.put(
+            f"/api/projects/{p}/members/{uid}", json={"role": "operator"}
+        ),
+        lambda admin, p, uid: admin.put(f"/api/projects/{p}/members/{uid}", json={"role": "admin"}),
+    ),
+    "removed": (
+        lambda admin, p, uid: admin.delete(f"/api/projects/{p}/members/{uid}"),
+        lambda admin, p, uid: admin.post(
+            f"/api/projects/{p}/members", json={"username": "keymaker", "role": "admin"}
+        ),
+    ),
+    "deleted": (lambda admin, p, uid: admin.delete(f"/api/users/{uid}"), None),
+}
+
+
+@pytest.mark.parametrize("event", SUSPENSIONS)
+def test_a_key_works_only_while_its_creator_may_manage_keys(world, event) -> None:
+    """Offboarding someone stops the keys they made, without hunting for them."""
+    admin, a = world["admin"], world["a"]
+    creator = _member(admin, "keymaker", {a["project"]: "admin"})
+    created = _create_key(creator, a["project"], password=TEST_PASSWORD)
+    key = _key_client(created["token"])
+    assert key.get("/api/runs").status_code == 200
+    uid = _uid(admin, "keymaker")
+
+    take, give_back = SUSPENSIONS[event]
+    assert take(admin, a["project"], uid).status_code in (200, 204)
+    assert key.get("/api/runs").status_code == 401
+    assert key.post("/api/runs", json=_run_body(a)).status_code == 401
+    listed = admin.get(f"/api/projects/{a['project']}/api-keys").json()[0]
+    assert listed["status"] == "suspended" and listed["suspended_because"]
+    assert any(r.startswith("suspended: creator") for r in _refusals(created["prefix"]))
+
+    if give_back is None:
+        return  # a deleted creator can't come back: the key stays refused
+    assert give_back(admin, a["project"], uid).status_code in (200, 201)
+    assert key.get("/api/runs").status_code == 200
+    assert admin.get(f"/api/projects/{a['project']}/api-keys").json()[0]["status"] == "active"
+
+
+def test_a_global_admins_key_survives_project_changes(world) -> None:
+    admin, a = world["admin"], world["a"]
+    created = _create_key(admin, a["project"])
+    assert _key_client(created["token"]).get("/api/runs").status_code == 200
+
+
+# ------------------------------------------------------------------ re-authentication
+
+
+def test_creating_a_key_needs_the_current_password(world) -> None:
+    admin, a = world["admin"], world["a"]
+    path = f"/api/projects/{a['project']}/api-keys"
+    body = {"name": "ci", "preset": "trigger"}
+    assert admin.post(path, json=body).status_code == 401
+    assert admin.post(path, json={**body, "current_password": "wrong"}).status_code == 401
+    assert admin.get(path).json() == []  # nothing was created
+    db = get_sessionmaker()()
+    try:
+        reasons = [
+            r.detail["reason"]
+            for r in db.query(AuditEvent).filter(AuditEvent.action == "apikey.create")
+            if r.outcome == "failure"
+        ]
+    finally:
+        db.close()
+    assert reasons == ["no current password", "wrong current password"]
+    assert admin.post(path, json={**body, "current_password": "admin"}).status_code == 201
+
+
+def test_a_recent_sso_sign_in_counts_as_re_authentication(world, monkeypatch) -> None:
+    """SSO users may never have been told the password an admin set for them."""
+    from app.routers import auth
+    from app.security import create_session_token
+
+    admin, a = world["admin"], world["a"]
+    path = f"/api/projects/{a['project']}/api-keys"
+    sso = TestClient(app)
+    sso.cookies.set("ansideck_session", create_session_token(_uid(admin, "admin"), 0, "sso"))
+    assert sso.get("/api/auth/me").json()["signed_in_with"] == "sso"
+    assert admin.get("/api/auth/me").json()["signed_in_with"] == "password"
+    assert sso.post(path, json={"name": "fresh", "preset": "trigger"}).status_code == 201
+
+    monkeypatch.setattr(auth, "RECENT_SSO_SIGN_IN", timedelta(seconds=-1))  # signed in "long ago"
+    stale = sso.post(path, json={"name": "stale", "preset": "trigger"})
+    assert (
+        stale.status_code == 401 and "Sign in with single sign-on again" in stale.json()["detail"]
+    )
+    assert (
+        sso.post(
+            path, json={"name": "stale", "preset": "trigger", "current_password": "admin"}
+        ).status_code
+        == 201
+    )

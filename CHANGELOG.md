@@ -7,6 +7,16 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+### Security
+
+- An API key now stops working while the person who created it is deactivated, no longer an admin of the
+  key's project, or removed from it (it works again if that changes), and for good once they are deleted.
+  Before, keys kept starting runs after their creator was offboarded. The key list shows such keys as
+  suspended, with the reason, and refused requests are audited. Creating a key now needs your current
+  password, or a single sign-on sign-in within the last 15 minutes, so a stolen session alone can't mint
+  one. Upgrading: keys whose creator is already gone or deactivated stop working; create new ones. The API
+  applies database migration 0016 when it starts.
+
 ## [0.4.0] - 2026-10-07
 
 Security fixes from a full review: secrets in run output, become for operators, credentials in inventory

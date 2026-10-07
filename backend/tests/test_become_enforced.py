@@ -84,7 +84,8 @@ def test_an_operators_run_never_becomes(world) -> None:
 def test_a_trigger_key_never_becomes(world) -> None:
     admin, a = world["admin"], world["a"]
     token = admin.post(
-        f"/api/projects/{a['project']}/api-keys", json={"name": "ci", "preset": "trigger"}
+        f"/api/projects/{a['project']}/api-keys",
+        json={"name": "ci", "preset": "trigger", "current_password": "admin"},
     ).json()["token"]
     key = TestClient(app, headers={"Authorization": f"Bearer {token}"})
     refused = key.post("/api/runs", json=_body(a, extra_vars={"ansible_become": True}))

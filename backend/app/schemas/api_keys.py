@@ -11,6 +11,8 @@ class ApiKeyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64, pattern=_NAME_PATTERN)
     preset: Literal["trigger", "read-only"]
     expires_in_days: int = Field(default=90, ge=1, le=365)
+    # Re-authentication: required unless SSO started this session within the last 15 minutes.
+    current_password: str | None = Field(default=None, max_length=128)
 
 
 class ApiKeyOut(BaseModel):
@@ -24,7 +26,9 @@ class ApiKeyOut(BaseModel):
     last_used_at: datetime | None
     last_used_ip: str | None
     revoked_at: datetime | None
-    status: Literal["active", "expired", "revoked"]
+    # suspended: its creator is deactivated, deleted, or can no longer manage this project's keys.
+    status: Literal["active", "suspended", "expired", "revoked"]
+    suspended_because: str | None = None
 
 
 class ApiKeyCreated(ApiKeyOut):

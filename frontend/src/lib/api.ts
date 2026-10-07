@@ -63,6 +63,8 @@ export interface User {
   permissions: string[];
   projects: ProjectAccess[];
   totp_enabled: boolean;
+  // How this session started; an SSO session re-authenticates by signing in again.
+  signed_in_with?: "password" | "sso";
 }
 
 // The password was right; the login finishes with loginMfa().
@@ -104,7 +106,9 @@ export interface ApiKey {
   last_used_at: string | null;
   last_used_ip: string | null;
   revoked_at: string | null;
-  status: "active" | "expired" | "revoked";
+  // suspended: its creator is deactivated, deleted, or can no longer manage this project's keys.
+  status: "active" | "suspended" | "expired" | "revoked";
+  suspended_because?: string | null;
 }
 
 // The plaintext token only ever exists in this creation response.
@@ -724,10 +728,21 @@ export const api = {
     request<void>(`/projects/${id}/members/${userId}`, { method: "DELETE" }),
 
   listApiKeys: (projectId: number) => request<ApiKey[]>(`/projects/${projectId}/api-keys`),
-  createApiKey: (projectId: number, name: string, preset: ApiKeyPreset, expiresInDays: number) =>
+  createApiKey: (
+    projectId: number,
+    name: string,
+    preset: ApiKeyPreset,
+    expiresInDays: number,
+    currentPassword?: string,
+  ) =>
     request<ApiKeyCreated>(`/projects/${projectId}/api-keys`, {
       method: "POST",
-      body: JSON.stringify({ name, preset, expires_in_days: expiresInDays }),
+      body: JSON.stringify({
+        name,
+        preset,
+        expires_in_days: expiresInDays,
+        ...(currentPassword ? { current_password: currentPassword } : {}),
+      }),
     }),
   revokeApiKey: (projectId: number, keyId: number) =>
     request<void>(`/projects/${projectId}/api-keys/${keyId}`, { method: "DELETE" }),

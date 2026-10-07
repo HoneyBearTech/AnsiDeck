@@ -22,6 +22,8 @@ class UserOut(BaseModel):
     permissions: list[str]
     projects: list[ProjectAccess]
     totp_enabled: bool
+    # How this session started: SSO sessions re-authenticate by signing in again, not a password.
+    signed_in_with: Literal["password", "sso"] = "password"
 
 
 class MfaChallenge(BaseModel):
