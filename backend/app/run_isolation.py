@@ -22,12 +22,14 @@ import shutil
 import stat
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 RUN_UID_BASE = 20000
 MAX_SLOTS = 64  # the image has this many run users; WorkerSettings caps WORKER_SLOTS to it
 # Where a run can leave files behind: the shared writable temp dirs (the worker's root
 # filesystem is read-only). Its private data dir lives under /tmp, so it is swept too.
-SWEEP_DIRS = ("/tmp", "/var/tmp", "/dev/shm")  # noqa: S108 - fixed paths in the container
+# /dev/mqueue holds POSIX message queues (System V IPC objects: ipc_objects()).
+SWEEP_DIRS = ("/tmp", "/var/tmp", "/dev/shm", "/dev/mqueue")  # noqa: S108 - fixed container paths
 # Root-owned, so no run user can create (squat) another slot's home. The image's passwd
 # entries point here (backend/Dockerfile).
 HOME_ROOT = "/tmp/ansideck-home"  # noqa: S108 - fixed paths in the container
@@ -49,6 +51,27 @@ def identity_for_slot(slot: int, home_root: str = HOME_ROOT) -> RunIdentity:
         raise ValueError(f"slot {slot} is out of range (0-{MAX_SLOTS - 1})")
     uid = RUN_UID_BASE + slot
     return RunIdentity(uid=uid, gid=uid, name=f"ansideck-run{slot}", home=f"{home_root}/run{slot}")
+
+
+_SYSV_IPC = {"shm": "shmid", "msg": "msqid", "sem": "semid"}
+
+
+def ipc_objects(uid: int, root: str = "/proc/sysvipc") -> list[tuple[str, int]]:
+    """System V IPC objects (shared memory, message queues, semaphore sets) that `uid` owns
+    or created, as (kind, id): all slots share the container's IPC namespace, so one a run
+    leaves behind (readable by anyone, if it says so) would outlive it. Empty off Linux."""
+    found = []
+    for kind, id_column in _SYSV_IPC.items():
+        try:
+            header, *rows = Path(root, kind).read_text().splitlines()
+        except (OSError, ValueError):
+            continue
+        columns = header.split()
+        for row in rows:
+            fields = dict(zip(columns, row.split(), strict=False))
+            if str(uid) in (fields.get("uid"), fields.get("cuid")):
+                found.append((kind, int(fields[id_column])))
+    return found
 
 
 def effective_caps(status_text: str) -> int:
