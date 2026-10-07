@@ -19,6 +19,7 @@ if not (make_url(TEST_DATABASE_URL).database or "").endswith("_test"):
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL  # wins over any .env
 # Tests drive the internal worker API in-process (internal_client()), not on a port.
 os.environ["INTERNAL_API_ENABLED"] = "false"
+os.environ["ALLOWED_HOSTS"] = '["testserver"]'  # TestClient's host
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

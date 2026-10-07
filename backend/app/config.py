@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     admin_password: str = _DEFAULT_ADMIN_PASSWORD
 
     cors_origins: list[str] = ["http://localhost:5173"]
+    # Host names the API answers to (a request for any other gets 400), so a DNS-rebinding
+    # page can't reach a backend on localhost. Empty: localhost, 127.0.0.1 and the compose
+    # service name in development, any host in production (where the reverse proxy decides).
+    allowed_hosts: list[str] = []
     cookie_secure: bool = False
 
     data_dir: str = "/data"

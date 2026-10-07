@@ -7,17 +7,20 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from psycopg.errors import NumericValueOutOfRange
 from sqlalchemy.exc import DataError
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app import audit, metrics, secret_store
 from app.bootstrap import refuse_to_start_over_legacy_data, seed_fresh_install
 from app.config import get_settings
 from app.db import get_sessionmaker, init_db
 from app.git_sync import LOOP_SECONDS, SYNC_TOPIC, due_sources, sync_source
-from app.hardening import OriginCheckMiddleware
+from app.hardening import OriginCheckMiddleware, allowed_hosts
 from app.internal_api import internal_app
 from app.metrics_api import metrics_app
 from app.notifications.dispatch import dispatch_forever
@@ -193,6 +196,15 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(title="AnsiDeck API", version=metrics.VERSION, lifespan=lifespan)
 
 
+@app.exception_handler(RequestValidationError)
+async def _invalid_request(_request: Request, exc: RequestValidationError) -> JSONResponse:
+    """FastAPI's own 422 echoes what was sent ("input", sometimes "ctx"): a private key or
+    vault password in a refused request would come back, into proxy and client logs. Where and
+    why only."""
+    errors = [{k: v for k, v in e.items() if k not in ("input", "ctx")} for e in exc.errors()]
+    return JSONResponse({"detail": jsonable_encoder(errors)}, status_code=422)
+
+
 @app.exception_handler(DataError)
 async def _integer_out_of_range(_request: Request, exc: DataError) -> JSONResponse:
     """An id beyond Postgres' INTEGER range cannot match any row, so answer it like any other
@@ -211,6 +223,7 @@ app.add_middleware(
 )
 
 app.add_middleware(OriginCheckMiddleware, allowed_origins=settings.cors_origins)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts(settings))
 # Outermost, so requests the Origin check refuses are counted too.
 app.add_middleware(metrics.HTTPMetricsMiddleware, server="public")
 

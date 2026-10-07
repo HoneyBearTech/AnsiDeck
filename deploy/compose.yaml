@@ -30,6 +30,7 @@ services:
       ENVIRONMENT: production
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-[]}
       INTERNAL_API_HOST: 0.0.0.0
       # Also needed by the workers, which can't read secret files safely (see docs/installing.md).
       WORKER_TOKEN: ${WORKER_TOKEN:?set WORKER_TOKEN in .env}
