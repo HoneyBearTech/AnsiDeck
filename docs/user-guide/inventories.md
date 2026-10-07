@@ -41,7 +41,8 @@ add (see below), and which hosts each one holds. It shows names and counts only,
 
 Project admins can add **dynamic sources** to an inventory: the config of an Ansible inventory plugin,
 which runs in a worker to fetch hosts and groups from NetBox, a cloud, or a generator, or to group the
-inventory's own hosts by their vars (`constructed`).
+inventory's own hosts by their vars (`constructed`). A source reads the inventory's own host vars as
+plain text: a `{{ ... }}` in one is not evaluated during a refresh (it still is in a run).
 
 1. **Add source** in the inventory's **Dynamic sources** card. Give it a name and the plugin's YAML config;
    the **Examples** buttons fill in a starting point. Don't put tokens in the config (everyone who can see
