@@ -11,7 +11,7 @@ from sqlalchemy import select, text, update
 
 from app.db import get_engine, get_sessionmaker
 from app.galaxy import try_start_install
-from app.inventory_sources import SourceError, normalise, prune_snapshots
+from app.inventory_sources import SourceError, check_config, normalise, prune_snapshots
 from app.models import (
     GalaxyInstall,
     Inventory,
@@ -212,6 +212,24 @@ def test_hostile_output_is_normalised_or_refused(client: TestClient) -> None:
             "unexpected",
             id="brackets-in-a-string",
         ),
+        # names that aren't strings: refused, not a TypeError (a 500, and a refresh left to
+        # run until its lease expired)
+        *(
+            pytest.param(
+                json.dumps({"_meta": {"profile": "inventory_legacy"}, **groups}).encode(),
+                "unexpected",
+                id=case,
+            )
+            for case, groups in (
+                ("list-host", {"g": {"hosts": [["a"]]}}),
+                ("dict-host", {"g": {"hosts": [{"a": 1}]}}),
+                ("int-host", {"g": {"hosts": [7]}}),
+                ("dict-child", {"g": {"children": [{"a": 1}]}}),
+                ("ungrouped-list-host", {"ungrouped": {"hosts": [["a"]]}}),
+                ("ungrouped-int", {"ungrouped": {"hosts": 7}}),
+                ("ungrouped-string", {"ungrouped": {"hosts": "abc"}}),
+            )
+        ),
     ],
 )
 def test_the_normaliser_refuses_what_it_cannot_trust(raw: bytes, message: str) -> None:
@@ -396,3 +414,13 @@ def test_source_configs_and_credentials_are_checked(client: TestClient) -> None:
     assert source.status_code == 201
     deleted = client.delete(f"/api/credentials/{env}")
     assert deleted.status_code == 409 and "uses this credential" in deleted.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "plugin",
+    ["script", "ansible.builtin.script", "ansible.legacy.script", "ansible.legacy.ini",
+     "ansible.legacy.host_list", "ansible.legacy.auto"],
+)  # fmt: skip
+def test_denied_plugins_are_refused_under_every_name(plugin: str) -> None:
+    with pytest.raises(SourceError, match="can't be used as a source"):
+        check_config(f"plugin: {plugin}\n")

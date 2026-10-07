@@ -13,6 +13,7 @@ import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import select, text, update
 
+from app import netguard
 from app.config import Settings, get_settings
 from app.db import get_sessionmaker
 from app.models import AuditEvent, NotificationChannel, NotificationDelivery, Run
@@ -110,6 +111,27 @@ def settings_env(monkeypatch):
 def test_non_public_destinations_are_refused(url: str) -> None:
     with pytest.raises(DestinationError, match="non-public address"):
         safe_http.check(url, [])
+
+
+@pytest.mark.parametrize(
+    ("address", "is_public"),
+    [
+        ("::ffff:127.0.0.1", False),
+        ("::127.0.0.1", False),  # IPv4-compatible
+        ("::169.254.169.254", False),
+        ("64:ff9b::127.0.0.1", False),  # NAT64: reaches the IPv4 address where NAT64 exists
+        ("64:ff9b::10.0.0.5", False),
+        ("64:ff9b::169.254.169.254", False),
+        ("64:ff9b::192.168.1.1", False),
+        ("64:ff9b::8.8.8.8", True),
+        ("::ffff:8.8.8.8", True),
+        ("2606:4700:4700::1111", True),
+    ],
+)
+def test_ipv6_addresses_are_judged_by_the_ipv4_address_they_carry(
+    address: str, is_public: bool
+) -> None:
+    assert netguard.public(ipaddress.ip_address(address)) is is_public
 
 
 def test_destination_rules() -> None:
