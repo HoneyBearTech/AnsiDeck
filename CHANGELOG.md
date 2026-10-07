@@ -9,6 +9,12 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Security
 
+- System V shared memory, message queues and semaphores, and POSIX message queues, that a run created
+  outlived it: the cleanup after each run only ended processes and deleted files. A run could leave data
+  (readable by anyone, if it chose so) for the slot's later runs, including other projects'. The cleanup
+  now removes them, and a slot is not used again while any are left. The worker also no longer collects
+  the exit status of its own cleanup process by mistake (it collects orphaned processes as PID 1), which
+  could make it miss that another slot had planted files in a run user's home.
 - A playbook could reach the process that runs it, which runs as the same user: reopen its message pipe
   through `/proc` to add forged output to the run's log or report a result of its choosing, and read the
   run's job (its SSH key and vault password) from that process's memory. The run process is now

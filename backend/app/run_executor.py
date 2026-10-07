@@ -19,7 +19,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
 
-from app.run_isolation import SWEEP_DIRS, RunIdentity, replace_home, wrap
+from app.run_isolation import SWEEP_DIRS, RunIdentity, ipc_objects, replace_home, wrap
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,31 @@ _HOME_NOT_CLEAN = 3  # app.run_worker.HOME_NOT_CLEAN (not imported: that loads a
 # app.run_worker.MAX_MESSAGE_BYTES: the run process never sends a longer line, so one is a
 # misbehaving process, and reading it whole could exhaust the worker's memory (every slot).
 _MAX_MESSAGE_BYTES = 32 * 1024 * 1024
+
+# The worker is PID 1 and collects processes orphaned to it (app.worker.__main__.reap_orphans).
+# It must leave the ones started here to subprocess: a status collected from under it reads as
+# 0, and a sweep's HOME_NOT_CLEAN would pass for a clean home. They are started and registered
+# under CHILDREN_LOCK, which the reaper holds while it decides.
+CHILDREN_LOCK = threading.Lock()
+_children: set[int] = set()
+
+
+def _start(command: list[str], **kwargs) -> subprocess.Popen:
+    with CHILDREN_LOCK:
+        proc = subprocess.Popen(command, **kwargs)  # noqa: S603 - argument list, no shell
+        _children.add(proc.pid)
+    return proc
+
+
+def _forget(proc: subprocess.Popen) -> None:
+    """Once its status is collected; one that isn't is left to the reaper."""
+    with CHILDREN_LOCK:
+        _children.discard(proc.pid)
+
+
+def is_own_child(pid: int) -> bool:
+    """Whether `pid` was started here and not yet collected. The caller holds CHILDREN_LOCK."""
+    return pid in _children
 
 
 def format_duration(seconds: int) -> str:
@@ -94,10 +119,6 @@ class ExecutionHandle:
         self._proc: subprocess.Popen | None = None
         self.stop_reason: str | None = None
 
-    @property
-    def pid(self) -> int | None:
-        return self._proc.pid if self._proc else None
-
     def attach(self, proc: subprocess.Popen) -> None:
         with self._lock:
             self._proc = proc
@@ -140,30 +161,40 @@ def processes_of(uid: int) -> list[int]:
     return found
 
 
+def _sweep_once(command: list[str]) -> int | None:
+    """The sweep's exit code; None if it timed out (it is killed then)."""
+    proc = _start(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+        cwd=_BACKEND_ROOT,
+    )
+    try:
+        return proc.wait(timeout=_SWEEP_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        return None
+    finally:
+        _forget(proc)
+
+
 def sweep(identity: RunIdentity) -> bool:
-    """Kills every process of the slot's user and deletes its files in the shared temp dirs
-    and its home (as that user: the worker never touches a run's files). True once no process
-    of it is left and its home is empty and private; False if that failed every attempt, and
-    then the slot must not run anything."""
+    """Kills every process of the slot's user and deletes its files in the shared temp dirs,
+    its home and its System V IPC objects (as that user: the worker never touches a run's
+    files). True once no process or IPC object of it is left and its home is empty and
+    private; False if that failed every attempt, and then the slot must not run anything."""
     command = wrap([sys.executable, "-m", "app.run_worker", "--sweep", *SWEEP_DIRS], identity)
     for attempt in range(_SWEEP_ATTEMPTS):
         home_clean = False
-        try:
-            done = subprocess.run(  # noqa: S603 - argument list, no shell
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
-                cwd=_BACKEND_ROOT,
-                timeout=_SWEEP_TIMEOUT_SECONDS,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
+        returncode = _sweep_once(command)
+        if returncode is None:
             logger.warning("sweeping %s timed out", identity.name)
         else:
-            home_clean = done.returncode == 0
-            if done.returncode == _HOME_NOT_CLEAN:
+            home_clean = returncode == 0
+            if returncode == _HOME_NOT_CLEAN:
                 logger.warning("%s's home held another user's files; replacing it", identity.name)
                 try:
                     replace_home(identity)
@@ -171,13 +202,15 @@ def sweep(identity: RunIdentity) -> bool:
                 except OSError:
                     logger.exception("could not replace the home of %s", identity.name)
         left = processes_of(identity.uid)
-        if not left and home_clean:
+        ipc_left = ipc_objects(identity.uid)
+        if not left and not ipc_left and home_clean:
             return True
         logger.warning(
-            "%s is not clean after sweep %s (%s process(es) left)",
+            "%s is not clean after sweep %s (%s process(es), %s IPC object(s) left)",
             identity.name,
             attempt + 1,
             len(left),
+            len(ipc_left),
         )
         time.sleep(0.5)
     return False
@@ -335,7 +368,7 @@ def run_in_worker(
     command = _WORKER_COMMAND if identity is None else wrap(_WORKER_COMMAND, identity)
     read_fd, write_fd = os.pipe()
     try:
-        proc = subprocess.Popen(  # noqa: S603 - argument list, no shell
+        proc = _start(
             command,
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
@@ -350,53 +383,56 @@ def run_in_worker(
         raise
     finally:
         os.close(write_fd)
-    if handle is not None:
-        handle.attach(proc)
+    try:
+        if handle is not None:
+            handle.attach(proc)
 
-    result: tuple[str | None, int | None] = (None, None)
-    private_data_dir: str | None = None
-    refused: str | None = None
-    try:
-        with os.fdopen(read_fd, "rb") as events:
-            if proc.stdin is None:
-                raise RuntimeError("the run worker was started without an input pipe")
-            # The job (SSH key, vault password) travels over stdin — never argv or env.
-            settings = {"pexpect_timeout": _CANCEL_POLL_SECONDS}
-            proc.stdin.write(
-                json.dumps({"settings": settings, **job, "event_fd": write_fd}).encode() + b"\n"
-            )
-            if stdin_tail is not None:
-                proc.stdin.write(stdin_tail)  # a git run's repository (a tar), after the job
-            proc.stdin.close()
-            while line := events.readline(_MAX_MESSAGE_BYTES + 1):
-                if len(line) > _MAX_MESSAGE_BYTES:
-                    raise RuntimeError(
-                        f"the run process sent over {_MAX_MESSAGE_BYTES} bytes in one line"
-                    )
-                message = json.loads(line)
-                if message["type"] == "event":
-                    on_event(message["event"])
-                elif message["type"] == "started":
-                    private_data_dir = _checked_dir(message["private_data_dir"], job)
-                elif message["type"] == "result":
-                    result = (message["status"], message["rc"])
-                elif message["type"] == "refused":
-                    refused = str(message.get("reason") or "refused")
-                elif on_message is not None:  # an inventory refresh's output and result
-                    on_message(message)
-    except BaseException:
-        stop_worker(proc)
+        result: tuple[str | None, int | None] = (None, None)
+        private_data_dir: str | None = None
+        refused: str | None = None
+        try:
+            with os.fdopen(read_fd, "rb") as events:
+                if proc.stdin is None:
+                    raise RuntimeError("the run worker was started without an input pipe")
+                # The job (SSH key, vault password) travels over stdin — never argv or env.
+                settings = {"pexpect_timeout": _CANCEL_POLL_SECONDS}
+                proc.stdin.write(
+                    json.dumps({"settings": settings, **job, "event_fd": write_fd}).encode() + b"\n"
+                )
+                if stdin_tail is not None:
+                    proc.stdin.write(stdin_tail)  # a git run's repository (a tar), after the job
+                proc.stdin.close()
+                while line := events.readline(_MAX_MESSAGE_BYTES + 1):
+                    if len(line) > _MAX_MESSAGE_BYTES:
+                        raise RuntimeError(
+                            f"the run process sent over {_MAX_MESSAGE_BYTES} bytes in one line"
+                        )
+                    message = json.loads(line)
+                    if message["type"] == "event":
+                        on_event(message["event"])
+                    elif message["type"] == "started":
+                        private_data_dir = _checked_dir(message["private_data_dir"], job)
+                    elif message["type"] == "result":
+                        result = (message["status"], message["rc"])
+                    elif message["type"] == "refused":
+                        refused = str(message.get("reason") or "refused")
+                    elif on_message is not None:  # an inventory refresh's output and result
+                        on_message(message)
+        except BaseException:
+            stop_worker(proc)
+            _clean_up(identity, private_data_dir)
+            raise
+        try:
+            returncode = proc.wait(timeout=_WORKER_STOP_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            stop_worker(proc)
+            returncode = proc.returncode
         _clean_up(identity, private_data_dir)
-        raise
-    try:
-        returncode = proc.wait(timeout=_WORKER_STOP_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:
-        stop_worker(proc)
-        returncode = proc.returncode
-    _clean_up(identity, private_data_dir)
-    if refused is not None:
-        raise RunRefused(refused)
-    if result[0] is None:
-        logger.error("run worker exited (code %s) without reporting a result", returncode)
-        return None, returncode or None
-    return result
+        if refused is not None:
+            raise RunRefused(refused)
+        if result[0] is None:
+            logger.error("run worker exited (code %s) without reporting a result", returncode)
+            return None, returncode or None
+        return result
+    finally:
+        _forget(proc)
