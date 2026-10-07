@@ -288,6 +288,29 @@ describe("live output", () => {
   });
 });
 
+describe("hostile output", () => {
+  it("shows terminal links as text and keeps colours from leaking into later lines", async () => {
+    const { screen } = renderApp("/runs/7", { routes: { "GET /runs/:id": run() } });
+    await screen.findByText(/^(Live )?[Oo]utput$/);
+    const socket = await FakeWebSocket.opened();
+    act(() => {
+      socket.open();
+      // From a managed host's output: a disguised link, then black on black left switched on.
+      const link = "\u001b]8;;https://example.invalid/login\u001b\\Click to continue\u001b]8;;\u001b\\";
+      socket.emit({ stdout: `see ${link} now`, counter: 1 });
+      socket.emit({ stdout: "ok: [web1] \u001b[30;40mdark\nstill hidden?", counter: 2 });
+      socket.emit({ stdout: "fatal: [web2]: FAILED!", counter: 3 });
+    });
+    const linked = await screen.findByText("see Click to continue now");
+    expect(linked.querySelector("a") ?? linked.closest("a")).toBeNull(); // text only, no link
+    const failed = await screen.findByText("fatal: [web2]: FAILED!");
+    expect(failed.closest("span[style]")).toBeNull(); // the next task's line keeps its own colours
+    const chunk = screen.getByText(/still hidden\?/);
+    expect(chunk.innerHTML).toMatch(/<\/span>\nstill hidden\?$/); // dark ends with its line
+    act(() => socket.close(1000));
+  });
+});
+
 describe("small polish", () => {
   it("opens New run with the playbook picked from its Run button", async () => {
     const { screen } = renderApp("/runs/new?playbook=4", { routes: TRIGGER });

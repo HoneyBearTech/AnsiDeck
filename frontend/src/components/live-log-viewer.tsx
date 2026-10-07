@@ -39,13 +39,27 @@ function lineClass(line: string): string | null {
   return LINE_CLASSES.find(([pattern]) => pattern.test(line))?.[1] ?? null;
 }
 
-function toHtml(ansiUp: AnsiUp, stdout: string): string {
-  if (stdout.includes("\u001b[")) return ansiUp.ansi_to_html(stdout); // already coloured
+// Terminal hyperlinks (OSC 8, `ESC ] 8 ; params ; url ST`, and the empty one that ends them):
+// output comes from playbooks, repositories and managed hosts, so a link's text could say
+// anything. The text stays; the link goes.
+// oxlint-disable-next-line no-control-regex -- matching terminal escape sequences is the point
+const OSC8 = /\u001b\]8;[^;\u0007\u001b]*;[^\u0007\u001b]*(?:\u001b\\|\u0007)/g;
+
+// One converter per line: ansi_up keeps colour state between calls, so a colour left open
+// (black on black, say) would otherwise carry into later lines and hide them.
+function lineToHtml(line: string): string {
+  const ansiUp = new AnsiUp();
+  ansiUp.url_allowlist = {}; // and never a link, whatever slips past OSC8
+  return ansiUp.ansi_to_html(line.replace(OSC8, ""));
+}
+
+function toHtml(stdout: string): string {
+  const coloured = stdout.includes("\u001b["); // already coloured: keep its own colours
   return stdout
     .split(/\r?\n/)
     .map((line) => {
-      const html = ansiUp.ansi_to_html(line);
-      const cls = lineClass(line);
+      const html = lineToHtml(line);
+      const cls = coloured ? null : lineClass(line);
       return cls ? `<span class="${cls}">${html}</span>` : html;
     })
     .join("\n");
@@ -61,7 +75,6 @@ export function LiveLogViewer({ runId, follow = true }: { runId: number; follow?
     // oxlint-disable-next-line react/set-state-in-effect -- a new run id starts a new stream from empty
     setLines([]);
     setState("streaming");
-    const ansiUp = new AnsiUp();
     let received = 0; // every log line, shown or not: the resume point for ?from=
     let attempt = 0;
     let failedConnects = 0;
@@ -89,7 +102,7 @@ export function LiveLogViewer({ runId, follow = true }: { runId: number; follow?
           return;
         }
         if (typeof data.stdout !== "string" || data.stdout.length === 0) return;
-        const html = toHtml(ansiUp, data.stdout);
+        const html = toHtml(data.stdout);
         setLines((prev) => [...prev, { key: `${data.counter ?? "e"}-${prev.length}`, html }]);
       });
 
