@@ -1,3 +1,4 @@
+import hashlib
 import logging
 
 import yaml
@@ -6,7 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import audit
 from app.db import get_db
+from app.hardening import client_ip
 from app.lint import CONTENT_TARGET, MAX_LINT_CONTENT_BYTES, enqueue_lint
 from app.models import GitSnapshot, GitSource, LintJob, Playbook, User
 from app.notify import notifier
@@ -96,6 +99,33 @@ def list_playbooks(
     return [_summary(playbook, git) for playbook in playbooks]
 
 
+def _content_detail(content: str) -> dict:
+    """What the audit log keeps of a playbook's content: enough to tell versions apart."""
+    data = content.encode()
+    return {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+
+
+def _ref(playbook: Playbook) -> dict:
+    """Taken before a delete: the row's attributes are gone after its commit."""
+    return {
+        "target_id": playbook.id,
+        "target_name": playbook.name,
+        "project_id": playbook.project_id,
+    }
+
+
+def _audit(db: Session, action: str, user: User, request: Request, ref: dict, **detail) -> None:
+    audit.record(
+        db,
+        action,
+        actor=user,
+        target_type="playbook",
+        ip=client_ip(request),
+        detail=detail or None,
+        **ref,
+    )
+
+
 @router.post("", response_model=PlaybookDetail, status_code=status.HTTP_201_CREATED)
 def create_playbook(
     payload: PlaybookCreate,
@@ -112,6 +142,7 @@ def create_playbook(
     db.commit()
     db.refresh(playbook)
     playbook_path(playbook.id).write_text(payload.content)
+    _audit(db, "playbook.create", user, request, _ref(playbook), **_content_detail(payload.content))
     return _to_detail(db, playbook, payload.content)
 
 
@@ -141,13 +172,21 @@ def update_playbook(
     )
     if playbook.source_id is not None:
         raise _read_only(db, playbook)
+    detail: dict = {}
     if payload.content is not None:
         _validate_yaml(payload.content)
+        before = _content_detail(playbook_path(playbook.id).read_text())
         playbook_path(playbook.id).write_text(payload.content)
-    if payload.name is not None:
+        after = _content_detail(payload.content)
+        if after != before:
+            detail |= {"sha256_before": before["sha256"], **after}
+    if payload.name is not None and payload.name != playbook.name:
+        detail["renamed_from"] = playbook.name
         playbook.name = payload.name
     db.commit()
     db.refresh(playbook)
+    if detail:
+        _audit(db, "playbook.update", user, request, _ref(playbook), **detail)
     return _to_detail(db, playbook, playbook_path(playbook.id).read_text())
 
 
@@ -163,9 +202,12 @@ def delete_playbook(
     )
     if playbook.source_id is not None and playbook.missing_at is None:
         raise _read_only(db, playbook)  # only once it is gone upstream
+    path, ref = playbook_path(playbook.id), _ref(playbook)
+    detail = _content_detail(path.read_text()) if path.exists() else {}
     db.delete(playbook)
     db.commit()
-    playbook_path(playbook.id).unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+    _audit(db, "playbook.delete", user, request, ref, **detail)
 
 
 # --- playbook checks (Phase 5B) -------------------------------------------------------------

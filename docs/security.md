@@ -73,8 +73,9 @@ exposed directly to the public internet. The rest of this page assumes that depl
 
 **Accountability**
 
-- Sign-ins, permission denials, run activity, configuration and secret changes are recorded in the audit
-  log (kept for `AUDIT_RETENTION_DAYS`, 365 by default). Metrics and analytics views expose counts and
+- Sign-ins, permission denials, run activity, configuration and secret changes, and edits to playbooks and
+  inventories are recorded in the audit log (kept for `AUDIT_RETENTION_DAYS`, 365 by default): playbook
+  content only as a SHA-256, host variables only by name. Metrics and analytics views expose counts and
   curated fields, never secrets or run output.
 
 ## What AnsiDeck does not protect against

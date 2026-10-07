@@ -9,6 +9,12 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Security
 
+- Edits to playbooks, inventories, groups and hosts, and requests to sync a git source, are now in the
+  audit log (`playbook.*`, `inventory.*`, `git_source.sync_requested`), as the security documentation
+  already said. Before, someone who can edit content could change a playbook or point a host somewhere
+  else and change it back without a trace. Entries record a playbook's size and SHA-256 before and after,
+  and the names, never the values, of host variables that changed.
+
 - An API key now stops working while the person who created it is deactivated, no longer an admin of the
   key's project, or removed from it (it works again if that changes), and for good once they are deleted.
   Before, keys kept starting runs after their creator was offboarded. The key list shows such keys as

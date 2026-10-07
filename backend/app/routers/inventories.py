@@ -2,7 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import audit
 from app.db import get_db
+from app.hardening import client_ip
 from app.inventory_render import group_problem, hostname_problem
 from app.inventory_sources import enqueue_refresh
 from app.models import Inventory, InventoryGroup, InventoryHost, User
@@ -98,6 +100,54 @@ def list_inventories(
     return query.order_by(Inventory.name).all()
 
 
+# Variable *names* only, never values: host vars often hold secrets.
+_MAX_AUDITED_NAMES = 50
+
+
+def _names(keys) -> list[str]:
+    return sorted(str(k) for k in keys)[:_MAX_AUDITED_NAMES]
+
+
+def _changed_vars(before: dict | None, after: dict | None) -> list[str]:
+    before, after = before or {}, after or {}
+    return _names(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
+
+
+def _audit(
+    db: Session,
+    action: str,
+    user: User,
+    request: Request,
+    inventory: dict,
+    target: tuple[str, int, str] | None = None,
+    **detail,
+) -> None:
+    """`inventory` and `target` (type, id, name) are taken before a delete: the rows'
+    attributes are gone after its commit."""
+    target_type, target_id, target_name = target or (
+        "inventory",
+        inventory["id"],
+        inventory["name"],
+    )
+    if target is not None:
+        detail = {"inventory": inventory["name"], **detail}
+    audit.record(
+        db,
+        action,
+        actor=user,
+        target_type=target_type,
+        target_id=target_id,
+        target_name=target_name,
+        ip=client_ip(request),
+        project_id=inventory["project_id"],
+        detail=detail or None,
+    )
+
+
+def _inv(inventory: Inventory) -> dict:
+    return {"id": inventory.id, "name": inventory.name, "project_id": inventory.project_id}
+
+
 @router.post("", response_model=InventoryDetail, status_code=status.HTTP_201_CREATED)
 def create_inventory(
     payload: InventoryCreate,
@@ -116,6 +166,7 @@ def create_inventory(
         db.rollback()
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Inventory name already exists") from exc
     db.refresh(inventory)
+    _audit(db, "inventory.create", user, request, _inv(inventory))
     return _to_inventory_detail(inventory)
 
 
@@ -142,9 +193,12 @@ def update_inventory(
     db: Session = Depends(get_db),
 ) -> InventoryDetail:
     inventory = _get_inventory_or_404(db, user, request, inventory_id)
-    if payload.name is not None:
+    detail: dict = {}
+    if payload.name is not None and payload.name != inventory.name:
+        detail["renamed_from"] = inventory.name
         inventory.name = payload.name
-    if payload.description is not None:
+    if payload.description is not None and payload.description != inventory.description:
+        detail["description_changed"] = True
         inventory.description = payload.description
     try:
         db.commit()
@@ -152,6 +206,8 @@ def update_inventory(
         db.rollback()
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Inventory name already exists") from exc
     db.refresh(inventory)
+    if detail:
+        _audit(db, "inventory.update", user, request, _inv(inventory), **detail)
     return _to_inventory_detail(inventory)
 
 
@@ -163,8 +219,11 @@ def delete_inventory(
     db: Session = Depends(get_db),
 ) -> None:
     inventory = _get_inventory_or_404(db, user, request, inventory_id)
+    ref = _inv(inventory)
+    hosts, groups = len(inventory.hosts), len(inventory.groups)
     db.delete(inventory)
     db.commit()
+    _audit(db, "inventory.delete", user, request, ref, hosts=hosts, groups=groups)
 
 
 def _static_changed(db: Session, inventory_id: int, user: User) -> None:
@@ -198,7 +257,7 @@ def create_group(
     user: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> InventoryGroup:
-    _get_inventory_or_404(db, user, request, inventory_id)
+    inventory = _get_inventory_or_404(db, user, request, inventory_id)
     _check_group_name(payload.name)
     group = InventoryGroup(inventory_id=inventory_id, name=payload.name)
     db.add(group)
@@ -210,6 +269,14 @@ def create_group(
             status.HTTP_400_BAD_REQUEST, "Group name already exists in this inventory"
         ) from exc
     db.refresh(group)
+    _audit(
+        db,
+        "inventory.group_create",
+        user,
+        request,
+        _inv(inventory),
+        ("inventory_group", group.id, group.name),
+    )
     _static_changed(db, inventory_id, user)
     return group
 
@@ -223,9 +290,10 @@ def update_group(
     user: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> InventoryGroup:
-    _get_inventory_or_404(db, user, request, inventory_id)
+    inventory = _get_inventory_or_404(db, user, request, inventory_id)
     group = _get_group_or_404(db, inventory_id, group_id)
     _check_group_name(payload.name)
+    old_name = group.name
     group.name = payload.name
     try:
         db.commit()
@@ -235,6 +303,17 @@ def update_group(
             status.HTTP_400_BAD_REQUEST, "Group name already exists in this inventory"
         ) from exc
     db.refresh(group)
+    if group.name != old_name:
+        target = ("inventory_group", group.id, group.name)
+        _audit(
+            db,
+            "inventory.group_update",
+            user,
+            request,
+            _inv(inventory),
+            target,
+            renamed_from=old_name,
+        )
     _static_changed(db, inventory_id, user)
     return group
 
@@ -247,10 +326,12 @@ def delete_group(
     user: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> None:
-    _get_inventory_or_404(db, user, request, inventory_id)
+    inventory = _get_inventory_or_404(db, user, request, inventory_id)
     group = _get_group_or_404(db, inventory_id, group_id)
+    ref, target = _inv(inventory), ("inventory_group", group.id, group.name)
     db.delete(group)
     db.commit()
+    _audit(db, "inventory.group_delete", user, request, ref, target)
     _static_changed(db, inventory_id, user)
 
 
@@ -262,7 +343,7 @@ def create_host(
     user: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> HostOut:
-    _get_inventory_or_404(db, user, request, inventory_id)
+    inventory = _get_inventory_or_404(db, user, request, inventory_id)
     _check_hostname(payload.hostname)
     groups = _resolve_groups(db, inventory_id, payload.group_ids)
     host = InventoryHost(
@@ -277,6 +358,16 @@ def create_host(
             status.HTTP_400_BAD_REQUEST, "Host already exists in this inventory"
         ) from exc
     db.refresh(host)
+    _audit(
+        db,
+        "inventory.host_create",
+        user,
+        request,
+        _inv(inventory),
+        ("inventory_host", host.id, host.hostname),
+        vars=_names(host.vars or {}),
+        groups=_names(g.name for g in host.groups),
+    )
     _static_changed(db, inventory_id, user)
     return _to_host_out(host)
 
@@ -290,15 +381,23 @@ def update_host(
     user: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> HostOut:
-    _get_inventory_or_404(db, user, request, inventory_id)
+    inventory = _get_inventory_or_404(db, user, request, inventory_id)
     host = _get_host_or_404(db, inventory_id, host_id)
+    detail: dict = {}
     if payload.hostname is not None:
         _check_hostname(payload.hostname)
+        if payload.hostname != host.hostname:
+            detail["renamed_from"] = host.hostname
         host.hostname = payload.hostname
     if payload.vars is not None:
+        if changed := _changed_vars(host.vars, payload.vars):
+            detail["vars_changed"] = changed
         host.vars = payload.vars
     if payload.group_ids is not None:
+        before = _names(g.name for g in host.groups)
         host.groups = _resolve_groups(db, inventory_id, payload.group_ids)
+        if (after := _names(g.name for g in host.groups)) != before:
+            detail["groups"] = after
     try:
         db.commit()
     except IntegrityError as exc:
@@ -307,6 +406,9 @@ def update_host(
             status.HTTP_400_BAD_REQUEST, "Host already exists in this inventory"
         ) from exc
     db.refresh(host)
+    if detail:
+        target = ("inventory_host", host.id, host.hostname)
+        _audit(db, "inventory.host_update", user, request, _inv(inventory), target, **detail)
     _static_changed(db, inventory_id, user)
     return _to_host_out(host)
 
@@ -319,8 +421,10 @@ def delete_host(
     user: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> None:
-    _get_inventory_or_404(db, user, request, inventory_id)
+    inventory = _get_inventory_or_404(db, user, request, inventory_id)
     host = _get_host_or_404(db, inventory_id, host_id)
+    ref, target = _inv(inventory), ("inventory_host", host.id, host.hostname)
     db.delete(host)
     db.commit()
+    _audit(db, "inventory.host_delete", user, request, ref, target)
     _static_changed(db, inventory_id, user)
