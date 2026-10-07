@@ -9,6 +9,11 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Security
 
+- Galaxy installs no longer install dependencies: ansible-galaxy fetched a collection's or role's
+  dependencies from wherever their metadata pointed (plain `http://`, local paths), past the rules for
+  `requirements.yml`, into the content every run loads. List every collection and role you need in
+  `requirements.yml`; an install's output now ends with any dependency that installed content declares but
+  that isn't installed. Upgrading: content that relied on automatic dependencies needs them listed.
 - System V shared memory, message queues and semaphores, and POSIX message queues, that a run created
   outlived it: the cleanup after each run only ended processes and deleted files. A run could leave data
   (readable by anyone, if it chose so) for the slot's later runs, including other projects'. The cleanup
