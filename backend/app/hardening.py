@@ -3,7 +3,6 @@ lives in app.process_hardening (the worker uses it too)."""
 
 import ipaddress
 import json
-import logging
 import socket
 import threading
 import time
@@ -12,8 +11,6 @@ from urllib.parse import urlsplit
 from fastapi import Request
 
 from app.config import get_settings
-
-logger = logging.getLogger(__name__)
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
@@ -62,8 +59,7 @@ def _networks(setting: str) -> list[Network]:
         try:
             infos = socket.getaddrinfo(entry, None, type=socket.SOCK_STREAM)
         except (OSError, UnicodeError):
-            logger.debug("trusted proxy %s does not resolve", entry)
-            continue
+            continue  # not resolvable (yet): nothing to trust under that name
         found += [ipaddress.ip_network(info[4][0]) for info in infos]
     return found
 
