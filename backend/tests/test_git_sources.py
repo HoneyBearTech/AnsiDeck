@@ -6,6 +6,7 @@ import os
 import stat
 import subprocess
 import tarfile
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -444,6 +445,61 @@ def test_size_and_file_limits(admin, tmp_path, monkeypatch) -> None:
     assert git_sync.sync_source(source["id"]) == "failed"
     assert "larger than 1 MB" in _source(source["id"]).last_sync_error
     assert not git_mirror_path(source["id"]).exists()  # an oversized mirror is removed
+
+
+def _bare_commit(path: Path, top_tree) -> tuple[Path, str]:
+    """A bare repository whose one commit has the tree top_tree(mktree) builds."""
+    subprocess.run(["git", "init", "-q", "--bare", str(path)], check=True)
+
+    def run(*args: str, input: bytes | None = None) -> str:
+        names = ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL")
+        env = {**os.environ, "GIT_DIR": str(path), **dict.fromkeys(names, "t")}
+        return (
+            subprocess.run(["git", *args], input=input, env=env, capture_output=True, check=True)
+            .stdout.decode()
+            .strip()
+        )
+
+    def mktree(entries: list[tuple[str, str, str]]) -> str:
+        lines = "".join(f"{mode} {kind} {oid}\t{name}\n" for mode, kind, oid, name in entries)
+        return run("mktree", input=lines.encode())
+
+    blob = run("hash-object", "-w", "--stdin", input=b"x")
+    return path, run("commit-tree", top_tree(mktree, blob), "-m", "bomb")
+
+
+def test_a_tree_that_lists_millions_of_files_is_refused_without_reading_them(tmp_path) -> None:
+    """A few tree objects, each naming the one below ten times: 10^6 files from 7 objects.
+    The listing is cut off at GIT_MAX_FILES instead of read whole into the API's memory."""
+
+    def bomb(mktree, blob):
+        tree = mktree([("100644", "blob", blob, f"f{i}") for i in range(10)])
+        for _ in range(5):
+            tree = mktree([("040000", "tree", tree, f"d{i}") for i in range(10)])
+        return tree
+
+    mirror, commit_id = _bare_commit(tmp_path / "bomb.git", bomb)
+    started = time.monotonic()
+    with pytest.raises(git_sync.SyncError, match="more than 20000 files"):
+        git_sync.inspect_tree(mirror, commit_id, None)
+    assert time.monotonic() - started < 3  # reading it all took ~15 s and 650 MB
+
+
+def test_a_listing_of_very_long_paths_is_cut_off_too(tmp_path, monkeypatch) -> None:
+    """One file 200 directories deep, each named with 250 characters: a 50 KB path."""
+    monkeypatch.setenv("GIT_MAX_FILES", "10")  # so at most 40 KB of listing
+    get_settings.cache_clear()
+
+    def deep(mktree, blob):
+        tree = mktree([("100644", "blob", blob, "f")])
+        for _ in range(200):
+            tree = mktree([("040000", "tree", tree, "d" * 250)])
+        return tree
+
+    mirror, commit_id = _bare_commit(tmp_path / "deep.git", deep)
+    with pytest.raises(git_sync.SyncError, match="more data than expected"):
+        git_sync.inspect_tree(mirror, commit_id, None)
+    get_settings.cache_clear()
 
 
 def test_hooks_never_run(admin, tmp_path) -> None:
