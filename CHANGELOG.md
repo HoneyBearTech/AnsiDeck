@@ -22,6 +22,11 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   rejected value. The installation guide's generated secrets are not affected.
 - The development `docker-compose.yml` publishes the backend and frontend on 127.0.0.1 only (it has a
   well-known admin password); set `DEV_BIND_ADDRESS=0.0.0.0` in `.env` to open them to your network.
+- An inventory refresh no longer evaluates templates in the inventory's own host vars. A `constructed`
+  source that read such a var (in `compose`, `keyed_groups` or `groups`) ran `{{ ... }}` in it, lookups
+  included, during the refresh, which holds the sources' environment-variable credentials: anyone who
+  can edit hosts (operators) could copy a source's token into a stored host var or group name, or run
+  commands there. Sources now see those vars as plain text. Runs still evaluate them as before.
 - Run output scrubbing catches more forms of a known secret. Runs now always print task results as JSON,
   even when a repository's `ansible.cfg` asks for YAML, which could fold a long secret across lines past
   the scrubber. Secrets are also redacted as Ansible prints non-ASCII text in JSON and as YAML quotes

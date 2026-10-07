@@ -193,6 +193,41 @@ def test_credential_values_are_scrubbed_from_the_snapshot(client: TestClient) ->
     db.close()
 
 
+def test_a_template_in_a_static_host_var_is_never_evaluated_in_a_refresh(
+    client: TestClient,
+) -> None:
+    """Whoever edits hosts (operators) must not reach the sources' credentials, which only the
+    refresh holds, through a constructed source that reads their vars."""
+    _login(client)
+    inventory_id = _inventory(client)
+    credential = _env_credential(client, {"PLANTED_TOKEN": "planted-sentinel-value-7"})
+    reads_vars = CONSTRUCTED + "  piped: owner\n  nested: deep.list[0]\n"
+    _add_source(client, inventory_id, "groups", reads_vars, credential_id=credential)
+    assert _wait_refresh(client, inventory_id)["status"] == "success"
+
+    host = client.get(f"/api/inventories/{inventory_id}").json()["hosts"][0]
+    planted = {
+        "role": "{{ lookup('env', 'PLANTED_TOKEN') | b64encode }}",
+        "owner": "{{ lookup('pipe', 'echo piped-$((6*7))') }}",
+        "deep": {"list": ["{{ lookup('env', 'PLANTED_TOKEN') | reverse }}"]},
+    }
+    response = client.put(
+        f"/api/inventories/{inventory_id}/hosts/{host['id']}",
+        json={"hostname": host["hostname"], "vars": planted},
+    )
+    assert response.status_code == 200, response.text
+    refresh = _wait_refresh(client, inventory_id)
+    assert refresh["status"] == "success" and refresh["trigger"] == "static_changed", refresh
+
+    db = get_sessionmaker()()
+    data = json.dumps(db.scalars(select(InventorySnapshot.data)).all())
+    db.close()
+    for evaluated in ("cGxhbnRlZC1zZW50aW5lbC12YWx1ZS03", "7-eulav", "piped-42"):
+        assert evaluated not in data
+    hosts = client.get(f"/api/inventories/{inventory_id}/hosts?q={host['hostname']}").json()
+    assert hosts["hosts"][0]["vars"]["composed"] == "from-" + planted["role"]  # just text
+
+
 def test_a_template_from_a_source_is_never_evaluated_in_a_run(client: TestClient) -> None:
     _login(client)
     inventory_id = _inventory(client)

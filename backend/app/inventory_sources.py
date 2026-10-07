@@ -26,6 +26,7 @@ from app.env_credentials import resolve_env
 from app.inventory_render import (
     group_problem,
     hostname_problem,
+    mark_unsafe,
     merge,
     render,
     source_var_problem,
@@ -235,7 +236,11 @@ def build_refresh_job(db: Session, refresh: InventoryRefresh) -> dict:
     plain = [s for s in sources if not is_constructed(s)]
     for order, source in enumerate(plain, start=10):
         files.append({"name": config_file_name(source, order), "text": source.config})
-    files.append({"name": "50-static.yml", "text": render(merge(static))})
+    # Operators write these vars, but the refresh holds the sources' credentials: a constructed
+    # source must read them as text, or a `{{ lookup('env', ...) }}` in one would run there.
+    graph = merge(static)
+    graph["hosts"] = {name: mark_unsafe(host_vars) for name, host_vars in graph["hosts"].items()}
+    files.append({"name": "50-static.yml", "text": render(graph)})
     for order, source in enumerate((s for s in sources if is_constructed(s)), start=60):
         files.append({"name": config_file_name(source, order), "text": source.config})
     refresh.sources = {
