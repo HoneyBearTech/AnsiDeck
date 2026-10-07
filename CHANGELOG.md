@@ -9,6 +9,17 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Security
 
+- Sign-in throttling and the audit log see each client's own address. Behind the documented reverse
+  proxy, every client looked like the Docker gateway, so anyone could lock everybody (the break-glass
+  admin included) out of password sign-in for five minutes at a time. The frontend now takes the client
+  from `X-Forwarded-For` when the request comes from a trusted proxy (`TRUSTED_PROXIES`, default
+  `gateway`: a proxy on the same host). The API trusted `X-Real-IP` from any private address, so a
+  playbook in a worker could name a new address per request and guess passwords without being
+  throttled; it now trusts it only from the frontend container (`TRUSTED_PROXY_HOSTS`, default
+  `frontend`). Upgrading: a proxy in another container or on another machine needs its address or network
+  in `TRUSTED_PROXIES`; an API behind a proxy of your own (not the frontend container) needs
+  `TRUSTED_PROXY_HOSTS`.
+
 - An inventory refresh no longer evaluates templates in the inventory's own host vars. A `constructed`
   source that read such a var (in `compose`, `keyed_groups` or `groups`) ran `{{ ... }}` in it, lookups
   included, during the refresh, which holds the sources' environment-variable credentials: anyone who

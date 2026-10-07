@@ -81,7 +81,7 @@ Add workers or slots when runs queue up: `docker compose up -d --scale worker=3`
 ## 5. Put HTTPS in front
 
 Point your reverse proxy at `127.0.0.1:8080`. It must pass WebSocket upgrades (live run output uses
-them) and the original `Host` header, and should add HSTS. With [Caddy](https://caddyserver.com/), which
+them), the original `Host` header and the client's address in `X-Forwarded-For`, and should add HSTS. With [Caddy](https://caddyserver.com/), which
 gets a certificate by itself and handles WebSockets:
 
 ```caddyfile
@@ -103,6 +103,7 @@ server {
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -113,6 +114,13 @@ server {
 
 The frontend container already sends a Content-Security-Policy and other browser hardening headers; don't
 strip them. If the proxy changes the `Host` header, add the public origin to `CORS_ORIGINS` in `.env`.
+
+The frontend takes the client's address from `X-Forwarded-For` only when the request comes from a proxy it
+trusts: by default the Docker gateway, which is where a proxy on the same host reaches `127.0.0.1:8080`
+from. For a proxy in another container or on another machine, list its address or network in
+`TRUSTED_PROXIES` in `.env` (for example `TRUSTED_PROXIES=gateway,172.30.0.0/16`). Check the result under
+**Audit**: sign-ins should show your own address, not one shared address. The API, in turn, trusts the
+address only from the frontend container (`TRUSTED_PROXY_HOSTS`, default `frontend`).
 
 ## 6. Sign in
 

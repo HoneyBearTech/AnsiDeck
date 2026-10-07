@@ -495,10 +495,14 @@ def test_unknown_user_and_wrong_password_are_indistinguishable(
     assert len(calls) == 2  # an argon2 verify happened even for the unknown user
 
 
-def test_client_ip_only_trusts_x_real_ip_from_private_peers() -> None:
+def test_client_ip_only_trusts_x_real_ip_from_trusted_proxies(monkeypatch) -> None:
+    import socket
+
     from starlette.requests import Request
 
-    from app.hardening import client_ip
+    from app import hardening
+    from app.config import get_settings
+    from app.hardening import client_ip, trusted_proxies
 
     def request(peer: str, real_ip: str | None) -> Request:
         headers = [(b"x-real-ip", real_ip.encode())] if real_ip else []
@@ -512,8 +516,54 @@ def test_client_ip_only_trusts_x_real_ip_from_private_peers() -> None:
             }
         )
 
+    frontend = ["172.18.0.3"]
+    lookups = []
+
+    def getaddrinfo(host, *args, **kwargs):
+        lookups.append(host)
+        if host != "frontend":
+            raise socket.gaierror(socket.EAI_NONAME, "unknown")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 0)) for ip in frontend]
+
+    class Clock:
+        now = 1000.0
+
+        def monotonic(self) -> float:
+            return self.now
+
+    clock = Clock()
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    monkeypatch.setattr(hardening, "time", clock)
+    monkeypatch.delenv("TRUSTED_PROXY_HOSTS", raising=False)
+    get_settings.cache_clear()
+    trusted_proxies.clear()
+
+    # The default: the compose frontend service, looked up by name.
     assert client_ip(request("172.18.0.3", "203.0.113.9")) == "203.0.113.9"
     assert client_ip(request("127.0.0.1", "203.0.113.9")) == "203.0.113.9"
-    assert client_ip(request("8.8.8.8", "203.0.113.9")) == "8.8.8.8"  # spoof ignored
+    # Another container on a private network (a worker's playbook) can't pick its address.
+    assert client_ip(request("172.19.0.7", "203.0.113.9")) == "172.19.0.7"
+    assert client_ip(request("8.8.8.8", "203.0.113.9")) == "8.8.8.8"
     assert client_ip(request("172.18.0.3", "not-an-ip")) == "172.18.0.3"
     assert client_ip(request("172.18.0.3", None)) == "172.18.0.3"
+    assert lookups == ["frontend"]  # cached
+
+    # A recreated frontend gets a new address: the name is looked up again after the TTL.
+    frontend[:] = ["172.18.0.9"]
+    clock.now += trusted_proxies.TTL - 1
+    assert client_ip(request("172.18.0.9", "203.0.113.9")) == "172.18.0.9"  # still cached
+    clock.now += 2
+    assert client_ip(request("172.18.0.9", "203.0.113.9")) == "203.0.113.9"
+    assert client_ip(request("172.18.0.3", "203.0.113.9")) == "172.18.0.3"
+
+    monkeypatch.setenv("TRUSTED_PROXY_HOSTS", "10.1.0.0/16, proxy.lan, 2001:db8::1")
+    get_settings.cache_clear()
+    assert client_ip(request("10.1.2.3", "203.0.113.9")) == "203.0.113.9"
+    assert client_ip(request("2001:db8::1", "203.0.113.9")) == "203.0.113.9"
+    assert client_ip(request("172.18.0.9", "203.0.113.9")) == "172.18.0.9"  # not listed now
+    monkeypatch.setenv("TRUSTED_PROXY_HOSTS", "")
+    get_settings.cache_clear()
+    assert client_ip(request("10.1.2.3", "203.0.113.9")) == "10.1.2.3"
+    assert client_ip(request("::1", "203.0.113.9")) == "203.0.113.9"  # loopback always
+    get_settings.cache_clear()
+    trusted_proxies.clear()
