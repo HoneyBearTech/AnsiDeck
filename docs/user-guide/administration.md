@@ -16,10 +16,12 @@ Add capacity with more workers (`docker compose up -d --scale worker=3`) or more
 ## Audit log
 
 **Audit** (global admins) records who did what: sign-ins and sign-in failures, permission denials, runs
-started and cancelled, changes to users, projects, members, credentials, sources and settings. Filter by an
-action prefix (`auth.`, `credential.`), by actor, and by outcome (success, failure, denied), and page
-through the results. Entries are kept for `AUDIT_RETENTION_DAYS` (365 by default) and never contain
-secrets.
+started and cancelled, changes to users, projects, members, credentials, sources and settings, and edits to
+playbooks, inventories, groups and hosts. Filter by an action prefix (`auth.`, `credential.`,
+`playbook.`, `inventory.`), by actor, and by outcome (success, failure, denied), and page through the
+results. Entries are kept for `AUDIT_RETENTION_DAYS` (365 by default) and never contain secrets: a playbook
+edit records the content's size and SHA-256 (before and after), a host edit the *names* of the variables
+that changed, never their values.
 
 ## Metrics and Grafana
 

@@ -450,5 +450,6 @@ def request_sync(
         raise HTTPException(status.HTTP_409_CONFLICT, "This source is turned off")
     _request_sync(source)
     db.commit()
+    _audit(db, "git_source.sync_requested", user, request, source)
     notifier.notify(git_sync.SYNC_TOPIC)
     return {"queued": True}
