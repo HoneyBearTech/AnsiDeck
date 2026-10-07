@@ -469,3 +469,55 @@ def test_the_nesting_scan_agrees_with_the_parsed_depth(value) -> None:
 
     for indent in (None, 2):
         assert nesting_depth(json.dumps(value, indent=indent).encode()) == _depth(value)
+
+
+def _reference_depth(raw: bytes) -> int:
+    """JSON's own lexing, one byte at a time: a string opens at a quote, a backslash escapes
+    the next byte, and a string that never closes runs to the end."""
+    depth = deepest = 0
+    in_string = escaped = False
+    for byte in raw:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == ord("\\"):
+                escaped = True
+            elif byte == ord('"'):
+                in_string = False
+        elif byte == ord('"'):
+            in_string = True
+        elif byte in b"[{":
+            depth += 1
+            deepest = max(deepest, depth)
+        elif byte in b"]}":
+            depth -= 1
+    return deepest
+
+
+@given(st.binary().map(lambda b: bytes(b'[]{}"\\ a'[x % 8] for x in b)))
+@example(b'"' + b'\\"' * 10 + b"[[")
+@example(b'"[\\')
+@example(b'["\\"]"[[')
+def test_the_nesting_scan_lexes_any_input_like_json(raw: bytes) -> None:
+    """Also invalid input, which a worker (or a plugin in its slot) could send."""
+    from app.json_limits import nesting_depth
+
+    assert nesting_depth(raw) == _reference_depth(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'"' + b'\\"' * 1_000_000,  # a string that never closes, full of escaped quotes
+        b'"' + b'\\"' * 1_000_000 + b"\\",  # ... ending in a lone backslash
+        b'["' + b"a" * 2_000_000,
+    ],
+    ids=["escaped-quotes", "trailing-backslash", "unterminated"],
+)
+def test_the_nesting_scan_stays_linear_on_hostile_input(raw: bytes) -> None:
+    """2 MB of these took the old scan hours (quadratic, holding the GIL: the API froze)."""
+    from app.json_limits import nesting_depth
+
+    started = time.perf_counter()
+    nesting_depth(raw)
+    assert time.perf_counter() - started < 2

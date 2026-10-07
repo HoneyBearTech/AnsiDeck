@@ -63,6 +63,8 @@ PRUNE_AFTER_SECONDS = 600
 SYNC_TOPIC = "git-sync"  # app.notify topic: a sync was requested
 LOOP_SECONDS = 15
 TEST_TIMEOUT_SECONDS = 30  # connection tests run inside a request
+# ls-tree's output budget per allowed file: the entry's mode, type, id and size plus a path.
+LS_TREE_BYTES_PER_FILE = 4096
 # pg_try_advisory_lock(int, int): this class id + the source id.
 _LOCK_CLASS = 0x67697473  # "gits"
 _resolve = resolve  # module-level, so tests can stub DNS
@@ -380,11 +382,14 @@ def _run(
     stdin: bytes | None = None,
     stdout_path: Path | None = None,
     max_output: int | None = None,
+    max_records: int | None = None,
+    too_many: str = "",
     timeout: int | None = None,
 ) -> bytes:
     """Runs one command in its own process group, killed at the sync timeout, when the
-    watched directory grows past the mirror limit, or when its output passes max_output.
-    Returns stdout (unless written to stdout_path); SyncError on failure."""
+    watched directory grows past the mirror limit, or when its output passes max_output bytes
+    or max_records NUL-terminated records (SyncError `too_many`). Returns stdout (unless
+    written to stdout_path); SyncError on failure."""
     settings = get_settings()
     limit = settings.git_max_repo_mb * 1024 * 1024
     killed: list[str] = []
@@ -400,7 +405,8 @@ def _run(
 
     def kill(reason: str) -> None:
         killed.append(reason)
-        with contextlib.suppress(ProcessLookupError):
+        # Already gone (macOS says EPERM for a group left with only a zombie in it).
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(proc.pid, signal.SIGKILL)
 
     seconds = timeout or settings.git_sync_timeout_seconds
@@ -420,7 +426,10 @@ def _run(
     watcher = threading.Thread(target=watchdog, daemon=True)
     watcher.start()
     try:
-        stdout, stderr = proc.communicate(stdin)
+        if out_handle is None and (max_output is not None or max_records is not None):
+            stdout, stderr = _read_capped(proc, max_output, max_records, too_many, kill)
+        else:
+            stdout, stderr = proc.communicate(stdin)
     finally:
         timer.cancel()
         stop.set()
@@ -435,6 +444,34 @@ def _run(
     if max_output is not None and stdout is not None and len(stdout) > max_output:
         raise SyncError("git returned more data than expected")
     return stdout or b""
+
+
+def _read_capped(
+    proc: subprocess.Popen, max_output: int | None, max_records: int | None, too_many: str, kill
+) -> tuple[bytes, bytes]:
+    """communicate() for output that could be huge (a tree that lists the same subtree over and
+    over, a hostile server): reads it as it comes and kills the command at the first limit,
+    rather than holding all of it in memory first."""
+    errors: list[bytes] = []
+    drain = threading.Thread(target=lambda: errors.append(proc.stderr.read()), daemon=True)
+    drain.start()
+    chunks: list[bytes] = []
+    size = records = 0
+    while chunk := proc.stdout.read1(64 * 1024):
+        size += len(chunk)
+        records += chunk.count(b"\0")
+        if max_output is not None and size > max_output:
+            kill("git returned more data than expected")
+            break
+        if max_records is not None and records > max_records:
+            kill(too_many or f"git listed more than {max_records} entries")
+            break
+        chunks.append(chunk)
+    proc.stdout.close()
+    proc.wait()
+    drain.join()
+    proc.stderr.close()
+    return b"".join(chunks), b"".join(errors)
 
 
 def _git(mirror: Path, *args: str) -> list[str]:
@@ -625,7 +662,14 @@ def inspect_tree(mirror: Path, commit: str, subdir: str | None) -> Tree:
             raise SyncError(f"{subdir!r} does not exist in the repository") from exc
         if kind != "tree":
             raise SyncError(f"{subdir!r} is not a directory in the repository")
-        out = _run(_git(mirror, "ls-tree", "-r", "-z", "--long", treeish), session)
+        # Streamed and capped: a few tree objects can list millions of files.
+        out = _run(
+            _git(mirror, "ls-tree", "-r", "-z", "--long", treeish),
+            session,
+            max_records=settings.git_max_files,
+            max_output=settings.git_max_files * LS_TREE_BYTES_PER_FILE,
+            too_many=f"the repository has more than {settings.git_max_files} files",
+        )
         files: dict[str, tuple[str, int]] = {}
         links: dict[str, str] = {}
         warnings: list[str] = []

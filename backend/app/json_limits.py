@@ -7,7 +7,11 @@ import re
 from itertools import accumulate
 from typing import Any
 
-_STRINGS = re.compile(rb'"(?:[^"\\]|\\.)*"', re.DOTALL)
+# A string runs to its closing quote or, unterminated, to the end of the input (json.loads then
+# fails on it anyway). Without that, a match that never closes is retried from every quote inside
+# it: quadratic time with the GIL held, which froze the API on 80 KB of `\"`. Possessive, and a
+# lone backslash at the very end is part of the string too, so no attempt ever backtracks.
+_STRINGS = re.compile(rb'"(?:[^"\\]|\\.?)*+(?:"|\Z)', re.DOTALL)
 _NOT_BRACKETS = bytes(b for b in range(256) if b not in b"[]{}")
 _DELTA = {ord("["): 1, ord("{"): 1, ord("]"): -1, ord("}"): -1}
 
@@ -19,7 +23,7 @@ class TooDeep(ValueError):
 def nesting_depth(raw: bytes) -> int:
     """How deeply arrays and objects nest in `raw` (brackets inside strings don't count)."""
     brackets = _STRINGS.sub(b"", raw).translate(None, delete=_NOT_BRACKETS)
-    return max(accumulate(_DELTA[b] for b in brackets), default=0)
+    return max(accumulate((_DELTA[b] for b in brackets), initial=0))
 
 
 def loads_bounded(raw: bytes | str, max_depth: int) -> Any:

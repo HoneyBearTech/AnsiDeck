@@ -15,6 +15,15 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Security
 
+- A refresh's output can no longer freeze the API. The check that refuses deeply nested JSON before
+  parsing it took quadratic time on a string that never closes (80 KB of escaped quotes: 10 s, with the
+  whole API stalled), which a plugin in the refresh slot or a stolen worker token could send. It is
+  linear now.
+- A git source can no longer exhaust the API's memory with a "tree bomb": a few tree objects that each list
+  the one below many times describe millions of files in a repository of a few kilobytes, and their file
+  list was read whole before `GIT_MAX_FILES` was checked (a million files: 15 s and 650 MB). The listing
+  is now read as it comes and git is stopped at the file limit, or once the list passes 4 KiB per allowed
+  file. A connection test also stops reading a server's answer at its limit instead of after it.
 - With `ENVIRONMENT=production`, the API refuses to start on the placeholders from `.env.example`
   (`change-me...` values for `AUTH_SECRET_KEY`, `ADMIN_PASSWORD`, the database password, `WORKER_TOKEN`,
   `METRICS_TOKEN`), on an `AUTH_SECRET_KEY` shorter than 32 characters or equal to `WORKER_TOKEN`, and
