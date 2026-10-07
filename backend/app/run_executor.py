@@ -31,6 +31,9 @@ _CANCEL_POLL_SECONDS = 1
 _SWEEP_TIMEOUT_SECONDS = 60
 _SWEEP_ATTEMPTS = 3
 _HOME_NOT_CLEAN = 3  # app.run_worker.HOME_NOT_CLEAN (not imported: that loads ansible)
+# app.run_worker.MAX_MESSAGE_BYTES: the run process never sends a longer line, so one is a
+# misbehaving process, and reading it whole could exhaust the worker's memory (every slot).
+_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 
 
 def format_duration(seconds: int) -> str:
@@ -354,7 +357,7 @@ def run_in_worker(
     private_data_dir: str | None = None
     refused: str | None = None
     try:
-        with os.fdopen(read_fd, encoding="utf-8") as events:
+        with os.fdopen(read_fd, "rb") as events:
             if proc.stdin is None:
                 raise RuntimeError("the run worker was started without an input pipe")
             # The job (SSH key, vault password) travels over stdin — never argv or env.
@@ -365,7 +368,11 @@ def run_in_worker(
             if stdin_tail is not None:
                 proc.stdin.write(stdin_tail)  # a git run's repository (a tar), after the job
             proc.stdin.close()
-            for line in events:
+            while line := events.readline(_MAX_MESSAGE_BYTES + 1):
+                if len(line) > _MAX_MESSAGE_BYTES:
+                    raise RuntimeError(
+                        f"the run process sent over {_MAX_MESSAGE_BYTES} bytes in one line"
+                    )
                 message = json.loads(line)
                 if message["type"] == "event":
                     on_event(message["event"])

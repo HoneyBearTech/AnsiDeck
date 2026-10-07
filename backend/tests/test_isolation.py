@@ -416,6 +416,40 @@ def test_an_isolated_run_executes_as_the_slot_user(monkeypatch) -> None:
     assert swept == [identity]
 
 
+def test_a_run_process_sending_an_overlong_line_is_stopped(monkeypatch) -> None:
+    """One message line past the limit and the run process is stopped and the run fails,
+    rather than the worker reading it all (a line with no end would take every slot)."""
+    monkeypatch.setattr(run_executor, "_MAX_MESSAGE_BYTES", 1000)
+    script = (
+        "import json, os, sys, time; job = json.loads(sys.stdin.readline());"
+        "out = os.fdopen(job['event_fd'], 'w');"
+        "out.write(json.dumps({'type': 'event', 'event': {'stdout': 'fine'}}) + '\\n');"
+        "out.write('x' * 5000); out.flush(); time.sleep(60)"
+    )
+    monkeypatch.setattr(run_executor, "_WORKER_COMMAND", [sys.executable, "-c", script])
+    events: list[dict] = []
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="over 1000 bytes in one line"):
+        run_executor.run_in_worker({"prefix": "ansideck-run-1-"}, {}, events.append)
+    assert events == [{"stdout": "fine"}]
+    assert time.monotonic() - started < 30  # stopped, not waited for
+
+
+def test_the_worker_reads_lines_as_long_as_the_run_process_may_send() -> None:
+    assert run_executor._MAX_MESSAGE_BYTES == run_worker.MAX_MESSAGE_BYTES
+
+
+def test_an_event_too_large_to_send_is_left_out_not_cut(monkeypatch) -> None:
+    """The run process never cuts text: the worker scrubs secrets afterwards, and half a
+    secret would get past it. A huge event goes without its content."""
+    monkeypatch.setattr(run_worker, "_MAX_EVENT_BYTES", 1000)
+    event = {"event": "runner_on_ok", "uuid": "u", "counter": 7, "stdout": "secret" * 200}
+    small = run_worker.bounded_event(event)
+    assert (small["event"], small["uuid"], small["counter"]) == ("runner_on_ok", "u", 7)
+    assert small["stdout"] == "[AnsiDeck: event left out, it exceeded 1000 bytes]"
+    assert run_worker.bounded_event({"stdout": "fine"}) == {"stdout": "fine"}
+
+
 # ------------------------------------------------------------------ worker
 
 

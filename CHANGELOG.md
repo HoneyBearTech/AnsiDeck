@@ -9,6 +9,12 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Security
 
+- A playbook could reach the process that runs it, which runs as the same user: reopen its message pipe
+  through `/proc` to add forged output to the run's log or report a result of its choosing, and read the
+  run's job (its SSH key and vault password) from that process's memory. The run process is now
+  non-dumpable, like the API and the worker. The worker also stops a run process that sends a message
+  line over 32 MiB instead of reading it whole: a task printing tens of megabytes at once could exhaust
+  the worker's memory and end every run on it. Such an event is now kept without its output.
 - A notification whose subject held a Unicode line break (one in an inventory name, say) was retried every
   minute for ever and never sent: email refuses such subjects, and the error left the delivery stuck. All
   line breaks are now turned into spaces in subjects, an unexpected error while sending fails the delivery
