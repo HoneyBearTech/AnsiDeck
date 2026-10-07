@@ -9,6 +9,13 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Security
 
+- A notification whose subject held a Unicode line break (one in an inventory name, say) was retried every
+  minute for ever and never sent: email refuses such subjects, and the error left the delivery stuck. All
+  line breaks are now turned into spaces in subjects, an unexpected error while sending fails the delivery
+  instead of retrying it, and a delivery whose last attempt never finished is given up.
+- Microsoft Teams cards no longer turn `[text](url)` in untrusted text (a host's error message, a playbook
+  name) into a link: Teams renders Markdown in card text, unlike the other channels, which already escaped
+  it.
 - The run output viewer shows terminal hyperlinks (OSC 8) as plain text: output from a playbook, a
   repository or a managed host could make any text a clickable link to anywhere. Colours no longer carry
   from one line into the next, so a colour left switched on (black on black, say) can't hide later
