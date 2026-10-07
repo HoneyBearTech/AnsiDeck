@@ -8,6 +8,7 @@ provider identity onto a pre-provisioned user. Nothing is ever created.
 import base64
 import hashlib
 import hmac
+import unicodedata
 
 import httpx
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -75,6 +76,10 @@ def resolve_user(
     Pre-provisioned only: match the bound (issuer, subject), else the one not-yet-linked
     user whose email is among `emails`. Never creates or re-links anyone, and a sign-in
     that could be either of two users is refused rather than guessed at."""
+    # An address Unicode compatibility normalisation changes (a KELVIN SIGN for "K", say) is
+    # never compared: str.lower() folds some of those into ASCII, so it would match another
+    # person's address.
+    emails = [e for e in emails if unicodedata.normalize("NFKC", e) == e]
     domains = {d.lower().lstrip("@") for d in settings.sso_allowed_email_domains}
     if domains:
         emails = [e for e in emails if e.rpartition("@")[2].lower() in domains]

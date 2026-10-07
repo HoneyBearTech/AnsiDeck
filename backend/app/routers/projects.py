@@ -267,6 +267,11 @@ def set_member(
     db: Session = Depends(get_db),
 ) -> MemberOut:
     require_project_permission(db, actor, request, project_id, Permission.MEMBERS_MANAGE)
+    # A project admin changes an existing member's role here, and adds people by username
+    # (POST): adding by id would let them probe ids for who exists and their usernames.
+    # Global admins, who can list users anyway, may add by id.
+    if not is_global_admin(actor) and db.get(ProjectMember, (project_id, user_id)) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Membership not found")
     target = db.get(User, user_id)
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
