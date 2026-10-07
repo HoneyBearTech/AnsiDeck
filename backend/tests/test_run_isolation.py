@@ -1,5 +1,8 @@
+import json
+import os
 import sys
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app import process_hardening, run_executor
@@ -148,3 +151,51 @@ def test_run_fails_when_the_worker_dies_without_a_result(
     run = _wait_for_completion(client, created.json()["id"])
     assert run["status"] == "failed"
     assert run["return_code"] == 3
+
+
+FORGED = {"type": "event", "event": {"event": "verbose", "stdout": "forged by the playbook"}}
+# Looks for the run process (python -m app.run_worker) and tries to reopen its pipes through
+# /proc, the way a playbook running as the same user could.
+REACH_THE_RUN_PROCESS = """\
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - ansible.builtin.shell: |
+        for p in /proc/[0-9]*; do
+          [ "$p" = "/proc/$$" ] && continue
+          tr '\\0' ' ' < $p/cmdline 2>/dev/null | grep -q -- '-m app.run_worker' || continue
+          echo "found $p"
+          cat $p/environ >/dev/null 2>&1 && echo "environ readable"
+          for fd in $p/fd/*; do
+            (printf '%s\\n' '{forged}' > $fd) 2>/dev/null && echo "wrote $fd"
+          done
+        done
+        true
+"""
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="/proc is Linux's")
+def test_a_playbook_cannot_reach_its_run_process() -> None:
+    """The run process is non-dumpable: a playbook (same user) can't reopen its message pipe
+    to forge events or a result, nor read its environment or memory (the job's secrets)."""
+    events: list[dict] = []
+    status = run_executor.run_in_worker(
+        {
+            "files": {
+                "playbook": REACH_THE_RUN_PROCESS.format(forged=json.dumps(FORGED)),
+                "inventory": f"all:\n  hosts:\n    localhost:\n"
+                f"      ansible_python_interpreter: {sys.executable}\n",
+            },
+            "prefix": "ansideck-run-reach-",
+        },
+        clean_env({"PATH": os.environ["PATH"]}),
+        events.append,
+    )
+    assert status == ("successful", 0)
+    [ok] = [e for e in events if e.get("event") == "runner_on_ok"]
+    seen = ok["event_data"]["res"]["stdout"]
+    assert "found /proc/" in seen  # it did find the run process
+    assert "environ readable" not in seen
+    assert "wrote" not in seen
+    assert FORGED["event"] not in events

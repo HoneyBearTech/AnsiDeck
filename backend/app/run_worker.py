@@ -2,8 +2,9 @@
 
 ansible-runner seeds the playbook's environment from os.environ with no way to opt out,
 so run_executor spawns this module with an allowlisted environment instead of running
-ansible-runner in the app process. Deliberately imports nothing from app.* — in
-particular not app.config, which would load the app's secrets.
+ansible-runner in the app process. Deliberately imports nothing from app.* but
+app.process_hardening (standard library only) — in particular not app.config, which would
+load the app's secrets.
 
 Protocol: one JSON job line on stdin: ansible_runner.run kwargs plus "event_fd", "files"
 ({"playbook": text, "inventory": text}), "prefix" (of the private data dir's name),
@@ -13,7 +14,9 @@ repository itself, a tar, follows the job line on stdin and is unpacked as the p
 One JSON line per message on the inherited event_fd: {"type": "refused", "reason": ...} alone
 if the run can't be set up (e.g. its repository won't unpack), else {"type": "started",
 "private_data_dir": ...} first, then {"type": "event", "event": {...}} for each
-ansible-runner event, then a final {"type": "result", "status": ..., "rc": ...}.
+ansible-runner event (see bounded_event), then a final {"type": "result",
+"status": ..., "rc": ...}. No line is longer than MAX_MESSAGE_BYTES (app.run_executor stops
+a run process that sends one).
 SIGTERM is turned into a clean ansible-runner cancel by ansible-runner itself (it
 installs the handler when running in the main thread).
 
@@ -39,11 +42,32 @@ import tempfile
 import time
 from pathlib import Path
 
+from app.process_hardening import disable_process_inspection
+
 # Same value as app.run_isolation.RUN_UID_BASE: --sweep refuses to run as anyone else, since
 # kill(-1) as root (or as a developer) would kill far more than one run.
 _RUN_UID_BASE = 20000
 _SWEEP_KILL_ROUNDS = 100
 HOME_NOT_CLEAN = 3  # app.run_executor.sweep() acts on it
+
+# The longest message line app.run_executor reads: a lint result of 500 findings at their
+# longest fits (~24 MB), even with every character escaped as a surrogate pair.
+MAX_MESSAGE_BYTES = 32 * 1024 * 1024
+_MAX_EVENT_BYTES = MAX_MESSAGE_BYTES - 1024  # room for the {"type": "event", ...} around it
+
+
+def bounded_event(event: dict) -> dict:
+    """An event too large to send (a task that printed tens of megabytes) without its
+    content. Never a cut: the worker scrubs secrets from events (then cuts big ones itself),
+    and half a secret would slip past it."""
+    if len(json.dumps(event)) <= _MAX_EVENT_BYTES:
+        return event
+    return {
+        "event": event.get("event"),
+        "uuid": event.get("uuid"),
+        "counter": event.get("counter"),
+        "stdout": f"[AnsiDeck: event left out, it exceeded {_MAX_EVENT_BYTES} bytes]",
+    }
 
 
 MAX_PROJECT_ENTRIES = 50_000
@@ -491,7 +515,7 @@ def run(job: dict) -> None:
     # Must return None: ansible-runner writes its own unscrubbed job_events when the
     # handler returns truthy. Scrubbing happens in the parent, before anything is stored.
     def on_event(event: dict) -> None:
-        emit({"type": "event", "event": event})
+        emit({"type": "event", "event": bounded_event(event)})
 
     import ansible_runner  # here, not at the top: --sweep should start fast
 
@@ -593,6 +617,11 @@ def sweep(roots: list[str]) -> int:
 def main() -> int:
     if sys.argv[1:2] == ["--sweep"]:
         return sweep(sys.argv[2:])
+    # Before the job arrives. The playbook runs as this process's user: without this it could
+    # reopen the message pipe through /proc/<pid>/fd and forge events and the result, or read
+    # the job (SSH key, vault password) out of /proc/<pid>/mem. Forks keep the flag;
+    # ansible-playbook's exec resets it for itself.
+    disable_process_inspection()
     run(json.loads(sys.stdin.buffer.readline()))
     return 0
 
