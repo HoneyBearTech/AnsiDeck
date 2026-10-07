@@ -7,6 +7,35 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-07
+
+Security fixes from a full review: secrets in run output, become for operators, credentials in inventory
+refreshes, insecure production settings, client addresses behind a proxy, and two ways to stall the API.
+Also: changing the credential encryption key.
+
+### Upgrading
+
+- Follow [docs/upgrading.md](docs/upgrading.md) (back up, set `ANSIDECK_VERSION=0.4.0`, pull, restart).
+  The API applies database migration 0015 when it starts.
+- **Operators' runs no longer get become from the playbook or inventory.** Runs started by someone
+  without `runs:become` (operators, trigger API keys) execute with `ansible_become: false`, and their
+  `ansible_become*` extra vars are refused. If such a run relies on the playbook's own `become: true`,
+  have an admin run it or give the operator the admin role.
+- **Production refuses insecure settings.** With `ENVIRONMENT=production` the API no longer starts on the
+  `change-me...` placeholders from `.env.example`, an `AUTH_SECRET_KEY` under 32 characters or equal to
+  `WORKER_TOKEN`, or the example `CREDENTIAL_ENCRYPTION_KEY`. Installations that followed
+  [docs/installing.md](docs/installing.md) generated their own and are not affected. If yours uses the
+  example key, the error explains how to move to a new one
+  ([docs/upgrading.md](docs/upgrading.md#changing-the-encryption-key)).
+- **Reverse proxies:** a proxy on the same host as the documented `deploy/compose.yaml` needs nothing.
+  A proxy in another container or on another machine needs its address or network in `TRUSTED_PROXIES`
+  (`.env`), or sign-ins are throttled and audited under the proxy's address. Pass the client in
+  `X-Forwarded-For` (the nginx example in docs/installing.md now does).
+- **Development setup:** `docker-compose.yml` publishes ports on 127.0.0.1 only; set
+  `DEV_BIND_ADDRESS=0.0.0.0` to reach it from other machines.
+- Templates in the inventory's own host vars are no longer evaluated by `constructed` sources during a
+  refresh (runs still evaluate them).
+
 ### Added
 
 - Changing `CREDENTIAL_ENCRYPTION_KEY`: it can list several keys (the first encrypts, all decrypt), and
@@ -38,8 +67,7 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   `gateway`: a proxy on the same host). The API trusted `X-Real-IP` from any private address, so a
   playbook in a worker could name a new address per request and guess passwords without being
   throttled; it now trusts it only from the frontend container (`TRUSTED_PROXY_HOSTS`, default
-  `frontend`). Upgrading: a proxy in another container or on another machine needs its address or network
-  in `TRUSTED_PROXIES`; an API behind a proxy of your own (not the frontend container) needs
+  `frontend`). An API behind a proxy of your own (not the frontend container) needs
   `TRUSTED_PROXY_HOSTS`.
 - An inventory refresh no longer evaluates templates in the inventory's own host vars. A `constructed`
   source that read such a var (in `compose`, `keyed_groups` or `groups`) ran `{{ ... }}` in it, lookups
@@ -58,9 +86,7 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   trigger API keys) get `ansible_become: false` when they execute, so `become: true` in a playbook, an
   inventory or a source no longer escalates them, and `ansible_become*` extra vars are refused, in runs
   and in saved templates. The run's extra vars stay as typed, and **Run again** follows the permissions
-  of whoever runs it again. Upgrading: an operator's run of a playbook that relies on its own
-  `become: true` now runs without become; have an admin run it, or give the operator `runs:become`
-  (admin role). The API applies database migration 0015 (runs remember this) when it starts.
+  of whoever runs it again.
 
 ## [0.3.0] - 2026-10-06
 
@@ -83,7 +109,8 @@ and a layout that works on phones, checked in a real browser on every pull reque
 - Dynamic inventory sources can no longer set Ansible connection settings beyond where and as whom to
   connect (`ansible_host`, `ansible_port`, `ansible_user`, `ansible_network_os`, and `ansible_connection`
   limited to remote connection types). Other `ansible_*` variables from a source are dropped with a
-  refresh warning, also in snapshots stored before upgrading. See the security advisory for details.
+  refresh warning, also in snapshots stored before upgrading. See the security advisory
+  [GHSA-7xj5-pxgx-h5w4](https://github.com/HoneyBearTech/AnsiDeck/security/advisories/GHSA-7xj5-pxgx-h5w4).
 - Viewers (anyone who can see an inventory but not edit it) no longer receive the inventory's host vars in
   full: secret-looking keys (passwords, tokens, keys) and vault-encrypted values are masked in
   `GET /api/inventories/{id}`. Operators and admins still get the real values, which the Edit host
@@ -216,7 +243,8 @@ come with SBOM and provenance attestations; see [docs/verifying-releases.md](doc
   need the usual pull-and-restart: database migrations run on start-up. An installation still on the
   old SQLite database must run the one-time import first (see [docs/upgrading.md](docs/upgrading.md)).
 
-[Unreleased]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/HoneyBearTech/AnsiDeck/releases/tag/v0.1.0

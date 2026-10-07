@@ -14,7 +14,7 @@ best-effort policy, not a contract.
 
 | Version | Supported with | Until |
 | --- | --- | --- |
-| The latest release (currently 0.3.x) | bug fixes and security fixes | the next release is published |
+| The latest release (currently 0.4.x) | bug fixes and security fixes | the next release is published |
 | An older release | nothing | it stopped being supported when the next release came out |
 | `main` | bug fixes and security fixes | always (it's where fixes land first) |
 
