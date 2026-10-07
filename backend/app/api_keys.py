@@ -56,6 +56,22 @@ def key_status(key: ApiKey, now: datetime | None = None) -> str:
     return "active"
 
 
+def creator_problem(db: Session, key: ApiKey) -> str | None:
+    """Why the key's creator no longer vouches for it, or None. Checked on every use, so a key
+    is suspended while its creator is deactivated, demoted or out of the project (and works
+    again if that changes), and for good once they are deleted."""
+    from app.permissions import Permission, project_permissions  # imports this module
+
+    creator = db.get(User, key.created_by_id) if key.created_by_id is not None else None
+    if creator is None:
+        return "creator deleted"
+    if not creator.is_active:
+        return "creator deactivated"
+    if Permission.API_KEYS_MANAGE not in project_permissions(db, creator, key.project_id):
+        return "creator can no longer manage this project's keys"
+    return None
+
+
 def principal_for(key: ApiKey) -> User:
     # "apikey:" can't collide with a real username (usernames may not contain ":").
     principal = User(
@@ -89,6 +105,8 @@ def authenticate_api_key(
     state = key_status(key, now)
     if state != "active":
         return None, state, prefix
+    if problem := creator_problem(db, key):
+        return None, f"suspended: {problem}", prefix
 
     principal = principal_for(key)
     last_used = key.last_used_at

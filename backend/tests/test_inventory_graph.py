@@ -221,7 +221,10 @@ def test_who_may_see_the_graph(client: TestClient) -> None:
     path = f"/api/inventories/{inventory_id}/graph"
     assert TestClient(app).get(path).status_code == 401
     assert make_user_client("viewer1", "viewer").get(path).status_code == 200
-    key = client.post("/api/projects/1/api-keys", json={"name": "ro", "preset": "read-only"})
+    key = client.post(
+        "/api/projects/1/api-keys",
+        json={"name": "ro", "preset": "read-only", "current_password": "admin"},
+    )
     assert key.status_code == 201, key.text
     # Like /targets and /hosts, the graph is for the UI: API keys can't use it.
     reader = TestClient(app, headers={"Authorization": f"Bearer {key.json()['token']}"})

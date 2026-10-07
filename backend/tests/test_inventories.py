@@ -172,6 +172,9 @@ def test_readers_who_cant_edit_get_secret_host_vars_masked(client: TestClient) -
         assert listed.json()["hosts"][0]["vars"] == masked
         assert "6161616161" not in listed.text
     # API keys can't read inventories at all (the router's guard doesn't allow keys).
-    key = client.post("/api/projects/1/api-keys", json={"name": "ro", "preset": "read-only"})
+    key = client.post(
+        "/api/projects/1/api-keys",
+        json={"name": "ro", "preset": "read-only", "current_password": "admin"},
+    )
     reader = TestClient(app, headers={"Authorization": f"Bearer {key.json()['token']}"})
     assert reader.get(path).status_code == 403

@@ -3,6 +3,18 @@
     "schemas": {
       "ApiKeyCreate": {
         "properties": {
+          "current_password": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Password"
+          },
           "expires_in_days": {
             "default": 90,
             "maximum": 365.0,
@@ -103,11 +115,23 @@
           "status": {
             "enum": [
               "active",
+              "suspended",
               "expired",
               "revoked"
             ],
             "title": "Status",
             "type": "string"
+          },
+          "suspended_because": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suspended Because"
           },
           "token": {
             "title": "Token",
@@ -201,11 +225,23 @@
           "status": {
             "enum": [
               "active",
+              "suspended",
               "expired",
               "revoked"
             ],
             "title": "Status",
             "type": "string"
+          },
+          "suspended_because": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suspended Because"
           }
         },
         "required": [
@@ -4972,6 +5008,15 @@
           },
           "role": {
             "title": "Role",
+            "type": "string"
+          },
+          "signed_in_with": {
+            "default": "password",
+            "enum": [
+              "password",
+              "sso"
+            ],
+            "title": "Signed In With",
             "type": "string"
           },
           "totp_enabled": {

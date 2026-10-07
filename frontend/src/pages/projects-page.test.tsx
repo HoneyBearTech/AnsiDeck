@@ -2,11 +2,18 @@ import { within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { reply } from "@/test/fake-api";
-import { project, viewerUser } from "@/test/fixtures";
+import { adminUser, project, viewerUser } from "@/test/fixtures";
 import { choose, renderApp } from "@/test/render";
 
 function summary(overrides = {}) {
-  return { id: 1, name: "Default", description: "Everything", created_at: "2026-10-05T12:00:00Z", my_role: "admin", ...overrides };
+  return {
+    id: 1,
+    name: "Default",
+    description: "Everything",
+    created_at: "2026-10-05T12:00:00Z",
+    my_role: "admin",
+    ...overrides,
+  };
 }
 
 function apiKey(overrides = {}) {
@@ -124,8 +131,14 @@ describe("projects", () => {
     const { api, user, screen } = renderApp("/projects", {
       routes: {
         "GET /projects": [summary()],
-        "GET /projects/:id/api-keys": [apiKey(), apiKey({ id: 2, name: "old", status: "revoked", last_used_at: "2026-10-01T00:00:00Z" })],
-        "POST /projects/:id/api-keys": { ...apiKey({ id: 3, name: "ci-read", preset: "read-only" }), token: "ansd_1a2b3c4d_secret" },
+        "GET /projects/:id/api-keys": [
+          apiKey(),
+          apiKey({ id: 2, name: "old", status: "revoked", last_used_at: "2026-10-01T00:00:00Z" }),
+        ],
+        "POST /projects/:id/api-keys": {
+          ...apiKey({ id: 3, name: "ci-read", preset: "read-only" }),
+          token: "ansd_1a2b3c4d_secret",
+        },
         "DELETE /projects/:id/api-keys/:kid": reply(204),
       },
     });
@@ -140,6 +153,9 @@ describe("projects", () => {
     await choose(user, screen.getByLabelText("Key permissions"), "read-only");
     expect(screen.getByText(/Cannot start runs/)).toBeInTheDocument();
     await choose(user, screen.getByLabelText("Key lifetime"), "1 year");
+    expect(screen.getByRole("button", { name: "Create key" })).toBeDisabled(); // no password yet
+    expect(screen.getByText(/creating one asks for your password/)).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Current password"), "my-password");
     await user.click(screen.getByRole("button", { name: "Create key" }));
 
     const dialog = within(await screen.findByRole("dialog"));
@@ -150,7 +166,13 @@ describe("projects", () => {
     expect(dialog.getByRole("button", { name: "Copied" })).toBeInTheDocument();
     await user.click(dialog.getByRole("button", { name: "Done" }));
     expect(screen.queryByText("ansd_1a2b3c4d_secret")).not.toBeInTheDocument();
-    expect(api.requests("POST /projects/1/api-keys")[0]?.body).toEqual({ name: "ci-read", preset: "read-only", expires_in_days: 365 });
+    expect(api.requests("POST /projects/1/api-keys")[0]?.body).toEqual({
+      name: "ci-read",
+      preset: "read-only",
+      expires_in_days: 365,
+      current_password: "my-password",
+    });
+    expect(screen.getByLabelText("Current password")).toHaveValue(""); // not kept around
 
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     await user.click(screen.getByRole("button", { name: "Revoke" }));
@@ -172,6 +194,7 @@ describe("projects", () => {
     await user.click(await screen.findByRole("button", { name: "API keys" }));
     expect(await screen.findByText("No API keys yet.")).toBeInTheDocument();
     await user.type(screen.getByLabelText("New API key"), "ci");
+    await user.type(screen.getByLabelText("Current password"), "pw");
     await user.click(screen.getByRole("button", { name: "Create key" }));
     expect(await screen.findByText("Too many keys")).toBeInTheDocument();
 
@@ -181,5 +204,42 @@ describe("projects", () => {
     vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("denied"));
     await user.click(dialog.getByRole("button", { name: "Copy" }));
     expect(await screen.findByText(/Couldn't copy automatically/)).toBeInTheDocument();
+  });
+  it("needs no password right after an SSO sign-in", async () => {
+    const { api, user, screen } = renderApp("/projects", {
+      user: adminUser({ signed_in_with: "sso" }),
+      routes: {
+        "GET /projects": [summary()],
+        "GET /projects/:id/api-keys": [],
+        "POST /projects/:id/api-keys": { ...apiKey(), token: "ansd_1a2b3c4d_secret" },
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "API keys" }));
+    expect(await screen.findByText(/Signed in with single sign-on/)).toBeInTheDocument();
+    await user.type(screen.getByLabelText("New API key"), "ci");
+    await user.click(screen.getByRole("button", { name: "Create key" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(api.requests("POST /projects/1/api-keys")[0]?.body).toEqual({
+      name: "ci",
+      preset: "trigger",
+      expires_in_days: 90,
+    });
+  });
+
+  it("shows why a key is suspended and lets admins revoke it", async () => {
+    const reason = "creator deactivated";
+    const { api, user, screen } = renderApp("/projects", {
+      routes: {
+        "GET /projects": [summary()],
+        "GET /projects/:id/api-keys": [apiKey({ status: "suspended", suspended_because: reason })],
+        "DELETE /projects/:id/api-keys/:kid": reply(204),
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "API keys" }));
+    expect(await screen.findByText("suspended")).toBeInTheDocument();
+    expect(screen.getByText(`Not working: ${reason}.`)).toBeInTheDocument();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
+    expect(api.requests("DELETE /projects/1/api-keys/1")).toHaveLength(1);
   });
 });

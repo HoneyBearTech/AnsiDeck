@@ -131,6 +131,11 @@ class ApiKey(Base):
     prefix: Mapped[str] = mapped_column(String(16), unique=True, index=True)
     token_hash: Mapped[str] = mapped_column(String(64))
     created_by: Mapped[str] = mapped_column(String(150))
+    # The key works only while this user is active and may still manage the project's keys
+    # (app.api_keys.creator_problem); NULL once they are deleted.
+    created_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True, default=None
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

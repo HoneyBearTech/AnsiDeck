@@ -1,4 +1,5 @@
 import functools
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
@@ -33,8 +34,10 @@ from app.schemas.auth import (
 from app.security import (
     MFA_MAX_AGE_SECONDS,
     SESSION_MAX_AGE_SECONDS,
+    SignInMethod,
     create_mfa_token,
     create_session_token,
+    session_info,
     verify_mfa_token,
 )
 
@@ -45,6 +48,10 @@ MFA_COOKIE_PATH = "/api/auth/login"
 
 _authenticated = require_authenticated()
 
+# An SSO session this young counts as re-authentication: SSO users may never have been told the
+# password an admin set for them.
+RECENT_SSO_SIGN_IN = timedelta(minutes=15)
+
 
 # Verified against when the username doesn't exist, so an unknown user costs the
 # same argon2 time as a wrong password (no timing/enumeration oracle).
@@ -53,7 +60,7 @@ def _get_dummy_hash() -> str:
     return hash_password("ansideck-dummy-password")
 
 
-def _to_out(db: Session, user: User) -> UserOut:
+def _to_out(db: Session, user: User, signed_in_with: SignInMethod = "password") -> UserOut:
     if is_global_admin(user):
         access = {project.id: (project, "admin") for project in db.query(Project).all()}
     else:
@@ -74,6 +81,7 @@ def _to_out(db: Session, user: User) -> UserOut:
             for project, role in sorted(access.values(), key=lambda pr: pr[0].name.lower())
         ],
         totp_enabled=user.totp_enabled,
+        signed_in_with=signed_in_with,
     )
 
 
@@ -124,6 +132,28 @@ def _check_current_password(
     return ip
 
 
+def check_reauthentication(
+    db: Session, request: Request, user: User, current_password: str | None, action: str
+) -> str:
+    """For actions that hand out lasting access: the current password, or a session that SSO
+    started within RECENT_SSO_SIGN_IN. Returns the client IP; refusals are audited."""
+    if current_password is not None:
+        return _check_current_password(db, request, user, current_password, action)
+    ip = client_ip(request)
+    info = session_info(request.cookies.get(SESSION_COOKIE_NAME, ""))
+    if info and info.method == "sso":
+        if datetime.now(UTC) - info.issued_at <= RECENT_SSO_SIGN_IN:
+            return ip
+        reason, message = (
+            "sso sign-in too old",
+            "Sign in with single sign-on again (or enter your password), then try again.",
+        )
+    else:
+        reason, message = "no current password", "Enter your current password."
+    audit.record(db, action, outcome="failure", actor=user, ip=ip, detail={"reason": reason})
+    raise HTTPException(status.HTTP_401_UNAUTHORIZED, message)
+
+
 def _check_second_factor(
     db: Session, user: User, ip: str, action: str, *, code: str | None, recovery_code: str | None
 ) -> str:
@@ -158,10 +188,10 @@ def _check_second_factor(
     return method
 
 
-def _set_session_cookie(response: Response, user: User) -> None:
+def _set_session_cookie(response: Response, user: User, method: SignInMethod = "password") -> None:
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
-        value=create_session_token(user.id, user.session_version),
+        value=create_session_token(user.id, user.session_version, method),
         httponly=True,
         samesite="lax",
         secure=get_settings().cookie_secure,
@@ -272,8 +302,11 @@ def logout(
 
 
 @router.get("/me", response_model=UserOut)
-def me(current_user: User = Depends(_authenticated), db: Session = Depends(get_db)) -> UserOut:
-    return _to_out(db, current_user)
+def me(
+    request: Request, current_user: User = Depends(_authenticated), db: Session = Depends(get_db)
+) -> UserOut:
+    info = session_info(request.cookies.get(SESSION_COOKIE_NAME, ""))
+    return _to_out(db, current_user, info.method if info else "password")
 
 
 @router.post("/change-password")

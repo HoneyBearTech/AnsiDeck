@@ -4,11 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.api_keys import hash_token, key_status, new_token
+from app.api_keys import creator_problem, hash_token, key_status, new_token
 from app.db import get_db
 from app.hardening import client_ip
 from app.models import ApiKey, User
 from app.permissions import Permission, Scope, guard
+from app.routers.auth import check_reauthentication
 from app.schemas.api_keys import ApiKeyCreate, ApiKeyCreated, ApiKeyOut
 from app.scoping import require_project_permission
 
@@ -20,7 +21,10 @@ _guard = guard(Permission.API_KEYS_MANAGE, Permission.API_KEYS_MANAGE, scope=Sco
 MAX_KEYS_PER_PROJECT = 50
 
 
-def _out(key: ApiKey, **extra) -> dict:
+def _out(db: Session, key: ApiKey, **extra) -> dict:
+    status_, problem = key_status(key), None
+    if status_ == "active" and (problem := creator_problem(db, key)):
+        status_ = "suspended"
     return {
         "id": key.id,
         "name": key.name,
@@ -32,7 +36,8 @@ def _out(key: ApiKey, **extra) -> dict:
         "last_used_at": key.last_used_at,
         "last_used_ip": key.last_used_ip,
         "revoked_at": key.revoked_at,
-        "status": key_status(key),
+        "status": status_,
+        "suspended_because": problem,
         **extra,
     }
 
@@ -46,7 +51,7 @@ def list_api_keys(
 ) -> list[dict]:
     require_project_permission(db, user, request, project_id, Permission.API_KEYS_MANAGE)
     keys = db.query(ApiKey).filter(ApiKey.project_id == project_id).order_by(ApiKey.id.desc()).all()
-    return [_out(key) for key in keys]
+    return [_out(db, key) for key in keys]
 
 
 @router.post("", response_model=ApiKeyCreated, status_code=status.HTTP_201_CREATED)
@@ -58,6 +63,8 @@ def create_api_key(
     db: Session = Depends(get_db),
 ) -> dict:
     require_project_permission(db, user, request, project_id, Permission.API_KEYS_MANAGE)
+    # A key outlives the session that made it: a stolen session must not be enough.
+    check_reauthentication(db, request, user, payload.current_password, "apikey.create")
     now = datetime.now(UTC)
 
     existing = db.query(ApiKey).filter(ApiKey.project_id == project_id).all()
@@ -81,6 +88,7 @@ def create_api_key(
         prefix=prefix,
         token_hash=hash_token(token),
         created_by=user.username,
+        created_by_id=user.id,
         expires_at=now + timedelta(days=payload.expires_in_days),
     )
     db.add(key)
@@ -101,7 +109,7 @@ def create_api_key(
             "expires_at": key.expires_at.isoformat(),
         },
     )
-    return _out(key, token=token)
+    return _out(db, key, token=token)
 
 
 @router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -124,7 +124,7 @@ def _callback(
     response.delete_cookie(
         provider.module.STATE_COOKIE_NAME, path=provider.module.STATE_COOKIE_PATH
     )
-    _set_session_cookie(response, user)
+    _set_session_cookie(response, user, "sso")
     if newly_linked:
         audit.record(
             db,
