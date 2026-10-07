@@ -20,8 +20,9 @@ behind a coverage floor, stricter compiler and lint settings, and an accessibili
 **v0.2.0** (October 2026) added saved run templates (also for CI keys), running a run again, downloading
 run output, a code editor with ansible-lint checks, a reworked dashboard and a phone-friendly layout, and
 SLSA build provenance on release files. **v0.3.0** (October 2026) added a group graph for inventories, a
-phone-friendly layout checked in a real browser on every pull request, and security fixes. The most recent
-release is the supported version.
+phone-friendly layout checked in a real browser on every pull request, and security fixes. **v0.4.0**
+(October 2026) fixed the findings of a full security review and added changing the credential encryption
+key. The most recent release is the supported version.
 
 ## Over the following year
 

@@ -21,13 +21,13 @@ The images are `ghcr.io/honeybeartech/ansideck-backend` (the API and the workers
 ## 1. Get the deployment files
 
 Download `compose.yaml` and `.env.example` from the [`deploy/` folder](../deploy) of the release you install
-(for v0.3.0: `https://raw.githubusercontent.com/HoneyBearTech/AnsiDeck/v0.3.0/deploy/compose.yaml`), into a
+(for v0.4.0: `https://raw.githubusercontent.com/HoneyBearTech/AnsiDeck/v0.4.0/deploy/compose.yaml`), into a
 directory of their own, for example `/opt/ansideck`:
 
 ```sh
 sudo mkdir -p /opt/ansideck && cd /opt/ansideck
-sudo curl -fsSLO https://raw.githubusercontent.com/HoneyBearTech/AnsiDeck/v0.3.0/deploy/compose.yaml
-sudo curl -fsSL -o .env https://raw.githubusercontent.com/HoneyBearTech/AnsiDeck/v0.3.0/deploy/.env.example
+sudo curl -fsSLO https://raw.githubusercontent.com/HoneyBearTech/AnsiDeck/v0.4.0/deploy/compose.yaml
+sudo curl -fsSL -o .env https://raw.githubusercontent.com/HoneyBearTech/AnsiDeck/v0.4.0/deploy/.env.example
 ```
 
 ## 2. Create the secrets
@@ -139,7 +139,7 @@ Open `https://ansideck.example.com`, sign in as `admin` with the password you ch
 cd /opt/ansideck
 sudo docker compose down        # stops and removes the containers; data stays in the volumes
 sudo docker compose down -v     # also deletes the database and run history: this can't be undone
-sudo docker image rm ghcr.io/honeybeartech/ansideck-backend:0.3.0 ghcr.io/honeybeartech/ansideck-frontend:0.3.0
+sudo docker image rm ghcr.io/honeybeartech/ansideck-backend:0.4.0 ghcr.io/honeybeartech/ansideck-frontend:0.4.0
 ```
 
 Then delete `/opt/ansideck`, including `secrets/` (or keep `credential_encryption_key` with your backups
