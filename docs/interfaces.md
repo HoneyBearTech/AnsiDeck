@@ -58,6 +58,7 @@ In the backend container (`docker compose exec backend python -m app.cli …`):
 | `migrate` | bring the database schema to the latest revision (the API also does this when it starts) |
 | `import-sqlite` | import a pre-Postgres `ansideck.db` once (see [upgrading.md](upgrading.md#from-the-sqlite-era)) |
 | `reset-totp <username>` | turn off a user's two-factor login |
+| `reencrypt-secrets` | re-encrypt stored secrets under the first `CREDENTIAL_ENCRYPTION_KEY` (see [upgrading.md](upgrading.md#changing-the-encryption-key)) |
 | `analytics-grant <role>` / `analytics-check <role>` / `analytics-revoke <role>` | manage a database role's read access to the analytics views |
 
 ## Interfaces AnsiDeck uses

@@ -114,7 +114,7 @@ def test_bad_oidc_configuration_refuses_to_start() -> None:
             **base,
             public_url="http://ansideck.example.com",
             environment="production",
-            auth_secret_key="a-real-secret-value",
+            auth_secret_key="a-real-secret-value-of-32-characters",
             admin_password="a-real-admin-password",
         )
     assert Settings(**base, public_url="https://ansideck.example.com/").public_url == (

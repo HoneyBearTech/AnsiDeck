@@ -99,7 +99,7 @@ def test_bad_github_configuration_refuses_to_start() -> None:
     base = {"github_client_id": "c", "github_client_secret": "s"}
     production = {
         "environment": "production",
-        "auth_secret_key": "a-real-secret-value",
+        "auth_secret_key": "a-real-secret-value-of-32-characters",
         "admin_password": "a-real-admin-password",
     }
     with pytest.raises(ValueError, match="requires https"):

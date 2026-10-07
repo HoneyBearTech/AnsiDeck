@@ -148,6 +148,12 @@ async def _reap_forever() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     disable_process_inspection()
+    if old_keys := len(settings.credential_encryption_keys) - 1:
+        logger.warning(
+            "CREDENTIAL_ENCRYPTION_KEY lists %d old key(s) after the current one: run "
+            "`python -m app.cli reencrypt-secrets`, then remove them",
+            old_keys,
+        )
     init_db()
     session = get_sessionmaker()()
     try:

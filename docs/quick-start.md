@@ -17,7 +17,8 @@ docker compose up --build
 
 The first start builds the images and takes a few minutes. When the log shows the backend answering
 health checks, open <http://localhost:5173> and sign in as `admin` with the password from `ADMIN_PASSWORD`
-in `.env` (`change-me` unless you edited it).
+in `.env` (`change-me` unless you edited it). The ports are only open on this machine; to reach them from
+elsewhere, set `DEV_BIND_ADDRESS=0.0.0.0` in `.env`, but change the admin password first.
 
 ## 2. Add what a run needs
 
