@@ -255,7 +255,8 @@ def test_run_success(client: TestClient, tmp_path) -> None:
     )
     assert create_response.status_code == 201
     run_id = create_response.json()["id"]
-    assert create_response.json()["status"] == "queued"
+    # The response re-reads the run after the commit: a worker may have claimed it already.
+    assert create_response.json()["status"] in ("queued", "running")
     assert create_response.json()["triggered_by"] == "admin"
 
     run = _wait_for_completion(client, run_id)
