@@ -20,6 +20,7 @@ RUN apk upgrade --no-cache
 USER 101
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --chmod=0755 docker/15-ansideck-real-ip.sh /docker-entrypoint.d/15-ansideck-real-ip.sh
 # The license travels with the image (the named build context "repo" is the repository root:
 # docker-compose.yml, and build-contexts in the workflows).
 COPY --from=repo LICENSE /usr/share/licenses/ansideck/LICENSE

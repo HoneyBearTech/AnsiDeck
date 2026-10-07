@@ -3,25 +3,80 @@ lives in app.process_hardening (the worker uses it too)."""
 
 import ipaddress
 import json
+import socket
 import threading
 import time
 from urllib.parse import urlsplit
 
 from fastapi import Request
 
+from app.config import get_settings
+
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
+Network = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
+class TrustedProxies:
+    """TRUSTED_PROXY_HOSTS as networks, its names looked up again after TTL seconds."""
+
+    TTL = 30.0
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cached: tuple[str, float, tuple[Network, ...]] = ("", 0.0, ())
+
+    def networks(self) -> tuple[Network, ...]:
+        setting = get_settings().trusted_proxy_hosts
+        with self._lock:
+            cached_setting, expires, networks = self._cached
+            if cached_setting == setting and time.monotonic() < expires:
+                return networks
+        networks = tuple(_networks(setting))
+        with self._lock:
+            self._cached = (setting, time.monotonic() + self.TTL, networks)
+        return networks
+
+    def trusts(self, addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+        return addr.is_loopback or any(addr in network for network in self.networks())
+
+    def clear(self) -> None:
+        with self._lock:
+            self._cached = ("", 0.0, ())
+
+
+def _networks(setting: str) -> list[Network]:
+    found: list[Network] = []
+    for entry in (e.strip() for e in setting.split(",")):
+        if not entry:
+            continue
+        try:
+            found.append(ipaddress.ip_network(entry, strict=False))
+            continue
+        except ValueError:
+            pass
+        try:
+            infos = socket.getaddrinfo(entry, None, type=socket.SOCK_STREAM)
+        except (OSError, UnicodeError):
+            continue  # not resolvable (yet): nothing to trust under that name
+        found += [ipaddress.ip_network(info[4][0]) for info in infos]
+    return found
+
+
+trusted_proxies = TrustedProxies()
+
+
 def client_ip(request: Request) -> str:
-    """The peer address, or X-Real-IP when (and only when) the peer is a private
-    or loopback address — i.e. our own reverse proxy. Otherwise a client could
-    spoof the header to dodge throttling."""
+    """The peer address, or X-Real-IP when (and only when) the peer is a trusted proxy
+    (TRUSTED_PROXY_HOSTS: our own nginx) or loopback. Anyone else, a worker's playbook
+    included, could otherwise pick an address per request and dodge the throttles."""
     peer = request.client.host if request.client else ""
     try:
         addr = ipaddress.ip_address(peer)
     except ValueError:
         return peer
-    if addr.is_private or addr.is_loopback:
+    if trusted_proxies.trusts(addr):
         forwarded = request.headers.get("x-real-ip", "").strip()
         try:
             return str(ipaddress.ip_address(forwarded))

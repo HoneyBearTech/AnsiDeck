@@ -98,6 +98,12 @@ class Settings(BaseSettings):
     metrics_host: str = "127.0.0.1"
     metrics_port: int = 8002
 
+    # Peers whose X-Real-IP header names the client (the frontend's nginx): host names (looked up
+    # again every 30 s, so a recreated container's new address counts), addresses or CIDRs,
+    # comma-separated. Loopback always counts. Anyone else's header is ignored: a worker's
+    # playbook could otherwise pick its own address and dodge the login throttles.
+    trusted_proxy_hosts: str = "frontend"
+
     # Audit events older than this are pruned at startup; 0 keeps them forever.
     audit_retention_days: int = 365
 
