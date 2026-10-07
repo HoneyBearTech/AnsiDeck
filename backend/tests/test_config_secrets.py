@@ -46,7 +46,7 @@ def test_production_accepts_its_secrets_from_files(secrets_dir, monkeypatch) -> 
         "admin_password": "a-real-admin-password",
         "worker_token": "w" * 40,
         "database_url": "postgresql+psycopg://ansideck:a-real-db-password@postgres:5432/ansideck",
-        "credential_encryption_key": "R_7QcKt5d6tHB-rDQU_gp4q4YaECbGwV-pehrJOn3NM=",
+        "credential_encryption_key": "4Cvy0sRsJw2HHWGPxQDoOKVFv3QBVyl5I_XUfh7eDUQ=",
     }
     for name, value in files.items():
         (secrets_dir / name).write_text(value + "\n")

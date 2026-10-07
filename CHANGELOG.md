@@ -7,8 +7,21 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+### Added
+
+- Changing `CREDENTIAL_ENCRYPTION_KEY`: it can list several keys (the first encrypts, all decrypt), and
+  `python -m app.cli reencrypt-secrets` rewrites every stored secret under the first one. See
+  [docs/upgrading.md](docs/upgrading.md#changing-the-encryption-key).
+
 ### Security
 
+- With `ENVIRONMENT=production`, the API refuses to start on the placeholders from `.env.example`
+  (`change-me...` values for `AUTH_SECRET_KEY`, `ADMIN_PASSWORD`, the database password, `WORKER_TOKEN`,
+  `METRICS_TOKEN`), on an `AUTH_SECRET_KEY` shorter than 32 characters or equal to `WORKER_TOKEN`, and
+  on the example `CREDENTIAL_ENCRYPTION_KEY` as its current key. Settings errors no longer print the
+  rejected value. The installation guide's generated secrets are not affected.
+- The development `docker-compose.yml` publishes the backend and frontend on 127.0.0.1 only (it has a
+  well-known admin password); set `DEV_BIND_ADDRESS=0.0.0.0` in `.env` to open them to your network.
 - An inventory refresh no longer evaluates templates in the inventory's own host vars. A `constructed`
   source that read such a var (in `compose`, `keyed_groups` or `groups`) ran `{{ ... }}` in it, lookups
   included, during the refresh, which holds the sources' environment-variable credentials: anyone who

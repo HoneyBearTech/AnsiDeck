@@ -159,7 +159,7 @@ def test_unsafe_urls_are_refused(url: str) -> None:
 def test_file_urls_need_the_test_only_setting(monkeypatch) -> None:
     assert git_sync.parse_url("file:///srv/repo", allow_local=True).kind == "file"
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("AUTH_SECRET_KEY", "a-real-secret-value")
+    monkeypatch.setenv("AUTH_SECRET_KEY", "a-real-secret-value-of-32-characters")
     monkeypatch.setenv("ADMIN_PASSWORD", "a-real-admin-password")
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://ansideck:s3cret-db@db/ansideck")
     monkeypatch.setenv("WORKER_TOKEN", "w" * 32)

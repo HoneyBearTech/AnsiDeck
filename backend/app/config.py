@@ -4,6 +4,7 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
 
+from cryptography.fernet import Fernet
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
@@ -14,10 +15,22 @@ _DEFAULT_DB_PASSWORD = "ansideck"  # noqa: S105 - dev default, refused in produc
 # The worker has its own copy (app.worker.settings must not import this module).
 DEFAULT_WORKER_TOKEN = "change-me-dev-only-worker-token"  # noqa: S105 - dev default, refused in production
 MIN_WORKER_TOKEN_LENGTH = 32
+MIN_AUTH_SECRET_KEY_LENGTH = 32
+# The key published in .env.example: anyone can decrypt with it. Production may keep it only as an
+# old key, to re-encrypt what it encrypted (see docs/upgrading.md).
+EXAMPLE_CREDENTIAL_ENCRYPTION_KEY = "R_7QcKt5d6tHB-rDQU_gp4q4YaECbGwV-pehrJOn3NM="
+
+
+def is_placeholder(value: str) -> bool:
+    """A value copied from .env.example without being changed ("change-me...")."""
+    return value.strip().lower().startswith("change-me")
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
+    # Errors must not print what they rejected: it is often a secret (and lands in the logs).
+    model_config = SettingsConfigDict(
+        env_file=".env", extra="ignore", populate_by_name=True, hide_input_in_errors=True
+    )
 
     environment: str = "development"
     auth_secret_key: str = _DEFAULT_AUTH_SECRET_KEY
@@ -164,6 +177,30 @@ class Settings(BaseSettings):
         'Generate with: python -c "from cryptography.fernet import Fernet; '
         'print(Fernet.generate_key().decode())"'
     )
+
+    @field_validator("credential_encryption_key")
+    @classmethod
+    def _valid_fernet_keys(cls, v: str) -> str:
+        keys = [key.strip() for key in v.split(",") if key.strip()]
+        if not keys:
+            raise ValueError("CREDENTIAL_ENCRYPTION_KEY is empty")
+        for position, key in enumerate(keys, start=1):
+            try:
+                Fernet(key)
+            except ValueError:
+                # The message names the position only: a typo'd key is still mostly a secret.
+                raise ValueError(
+                    f"CREDENTIAL_ENCRYPTION_KEY: key {position} is not a Fernet key (44 characters "
+                    "of url-safe base64)"
+                ) from None
+        if len(set(keys)) != len(keys):
+            raise ValueError("CREDENTIAL_ENCRYPTION_KEY lists the same key twice")
+        return ",".join(keys)
+
+    @property
+    def credential_encryption_keys(self) -> list[str]:
+        """The current key first (it encrypts), then old ones that only decrypt (a rotation)."""
+        return self.credential_encryption_key.split(",")
 
     @field_validator("public_url", "github_url", "github_api_url")
     @classmethod
@@ -316,20 +353,41 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _refuse_shared_secrets(self) -> "Settings":
+        if self.auth_secret_key == self.worker_token:
+            raise ValueError(
+                "AUTH_SECRET_KEY must differ from WORKER_TOKEN: workers (and so playbooks) see "
+                "WORKER_TOKEN, and AUTH_SECRET_KEY signs every session."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _refuse_insecure_defaults_in_production(self) -> "Settings":
         if self.environment.lower() == "production":
             insecure = []
-            if self.auth_secret_key == _DEFAULT_AUTH_SECRET_KEY:
-                insecure.append("AUTH_SECRET_KEY")
-            if self.admin_password == _DEFAULT_ADMIN_PASSWORD:
+            if (
+                self.auth_secret_key == _DEFAULT_AUTH_SECRET_KEY
+                or is_placeholder(self.auth_secret_key)
+                or len(self.auth_secret_key) < MIN_AUTH_SECRET_KEY_LENGTH
+            ):
+                insecure.append(
+                    f"AUTH_SECRET_KEY (at least {MIN_AUTH_SECRET_KEY_LENGTH} characters)"
+                )
+            if self.admin_password == _DEFAULT_ADMIN_PASSWORD or is_placeholder(
+                self.admin_password
+            ):
                 insecure.append("ADMIN_PASSWORD")
-            if make_url(self.database_url).password == _DEFAULT_DB_PASSWORD:
+            db_password = make_url(self.database_url).password or ""
+            if db_password == _DEFAULT_DB_PASSWORD or is_placeholder(db_password):
                 insecure.append("the database password (POSTGRES_PASSWORD / DATABASE_URL)")
             if (
                 self.worker_token == DEFAULT_WORKER_TOKEN
+                or is_placeholder(self.worker_token)
                 or len(self.worker_token) < MIN_WORKER_TOKEN_LENGTH
             ):
                 insecure.append(f"WORKER_TOKEN (at least {MIN_WORKER_TOKEN_LENGTH} characters)")
+            if is_placeholder(self.metrics_token):
+                insecure.append("METRICS_TOKEN")
             if self.git_allow_local_sources:
                 raise ValueError(
                     "ENVIRONMENT=production refuses GIT_ALLOW_LOCAL_SOURCES (test-only: it lets "
@@ -339,6 +397,16 @@ class Settings(BaseSettings):
                 raise ValueError(
                     f"ENVIRONMENT=production but {', '.join(insecure)} still has its insecure "
                     "default. Set a real value."
+                )
+            if self.credential_encryption_keys[0] == EXAMPLE_CREDENTIAL_ENCRYPTION_KEY:
+                raise ValueError(
+                    "ENVIRONMENT=production refuses the example CREDENTIAL_ENCRYPTION_KEY from "
+                    '.env.example: anyone can decrypt with it. Generate a key (python -c "from '
+                    'cryptography.fernet import Fernet; print(Fernet.generate_key().decode())") '
+                    "and put it first, keeping the example key after a comma "
+                    "(CREDENTIAL_ENCRYPTION_KEY=<new key>,<example key>); start AnsiDeck, run "
+                    "`python -m app.cli reencrypt-secrets` in the backend container, then remove "
+                    "the example key. See docs/upgrading.md."
                 )
         return self
 

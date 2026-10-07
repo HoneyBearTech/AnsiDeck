@@ -21,7 +21,8 @@ A complete backup has three parts. Take them together, and keep them apart from 
      tar czf /backup/ansideck-data-$(date +%F).tgz -C /data .
    ```
 
-3. **The encryption key**, `secrets/credential_encryption_key`, once (it doesn't change). Without it the
+3. **The encryption key**, `secrets/credential_encryption_key`, once (and again if you
+   [change it](#changing-the-encryption-key)). Without it the
    stored credentials, vault passwords, tokens and two-factor secrets in a database backup can't be
    decrypted. Store it separately from the backups: whoever has both can read every stored secret.
 
@@ -63,6 +64,42 @@ only the database (`docker compose up -d postgres`), restore as above, then `doc
 
 Downgrades aren't supported: migrations only go forward. To go back, restore the backup you took before
 upgrading, with the old `ANSIDECK_VERSION`.
+
+## Changing the encryption key
+
+Change `credential_encryption_key` when it may have leaked, or if your installation still uses the example
+key from the repository's `.env.example` (production refuses to start with that one first). The file can
+list several keys, separated by commas: the first encrypts, and all of them decrypt.
+
+1. [Back up](#back-up), including the current key.
+2. Generate a new key and put it first, keeping the old one after a comma:
+
+   ```sh
+   new=$(python3 -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
+   printf '%s,%s\n' "$new" "$(cat secrets/credential_encryption_key)" \
+     | sudo tee secrets/credential_encryption_key.new >/dev/null
+   sudo chmod 444 secrets/credential_encryption_key.new
+   sudo mv secrets/credential_encryption_key.new secrets/credential_encryption_key
+   sudo docker compose up -d --wait --force-recreate backend
+   ```
+
+   The API now writes new secrets with the new key and still reads the old ones (its log warns that an old
+   key is listed).
+3. Re-encrypt everything stored under the new key:
+
+   ```sh
+   sudo docker compose exec backend python -m app.cli reencrypt-secrets
+   ```
+
+   It changes nothing if any stored value can't be decrypted with the listed keys, and says which.
+4. Remove the old key, recreate the backend again, and back the new key up separately as before:
+
+   ```sh
+   cut -d, -f1 secrets/credential_encryption_key | sudo tee secrets/credential_encryption_key.new >/dev/null
+   sudo chmod 444 secrets/credential_encryption_key.new
+   sudo mv secrets/credential_encryption_key.new secrets/credential_encryption_key
+   sudo docker compose up -d --wait --force-recreate backend
+   ```
 
 ## From the SQLite era
 
