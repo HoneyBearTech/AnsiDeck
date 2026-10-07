@@ -3,8 +3,8 @@
 ansible-runner seeds the playbook's environment from os.environ with no way to opt out,
 so run_executor spawns this module with an allowlisted environment instead of running
 ansible-runner in the app process. Deliberately imports nothing from app.* but
-app.process_hardening (standard library only) — in particular not app.config, which would
-load the app's secrets.
+app.process_hardening and app.run_isolation (standard library only) — in particular not
+app.config, which would load the app's secrets.
 
 Protocol: one JSON job line on stdin: ansible_runner.run kwargs plus "event_fd", "files"
 ({"playbook": text, "inventory": text}), "prefix" (of the private data dir's name),
@@ -24,9 +24,10 @@ This process creates the run's files itself: when runs are isolated it runs as t
 own user (app.run_isolation), and the worker never touches a run's files.
 
 `python -m app.run_worker --sweep DIR...` is the cleanup after an isolated run, executed
-as the slot's user: it kills every process of that user, makes its home private again and
-deletes the user's files under the given directories. It exits with HOME_NOT_CLEAN if
-another user's directory is left in the home (the worker then replaces the home).
+as the slot's user: it kills every process of that user, makes its home private again,
+removes its System V IPC objects and deletes the user's files under the given directories.
+It exits with HOME_NOT_CLEAN if another user's directory is left in the home (the worker then
+replaces the home).
 """
 
 import contextlib
@@ -43,6 +44,7 @@ import time
 from pathlib import Path
 
 from app.process_hardening import disable_process_inspection
+from app.run_isolation import ipc_objects
 
 # Same value as app.run_isolation.RUN_UID_BASE: --sweep refuses to run as anyone else, since
 # kill(-1) as root (or as a developer) would kill far more than one run.
@@ -580,6 +582,24 @@ def remove_own_files(roots: list[str]) -> None:
             dirnames[:] = keep
 
 
+_IPC_RMID = 0
+
+
+def remove_own_ipc() -> None:
+    """Removes the System V IPC objects this user owns or created (either may remove one).
+    Shared memory goes once nothing has it attached: everything of this user is dead by now."""
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    for kind, ipc_id in ipc_objects(os.getuid()):
+        if kind == "shm":
+            libc.shmctl(ipc_id, _IPC_RMID, None)
+        elif kind == "msg":
+            libc.msgctl(ipc_id, _IPC_RMID, None)
+        else:
+            libc.semctl(ipc_id, 0, _IPC_RMID)
+
+
 def clear_home(home: str) -> bool:
     """Makes the home private again and empties it of other users' files (its owner may
     delete any entry of it). False if another user's directory stays: this user may not be
@@ -610,6 +630,7 @@ def sweep(roots: list[str]) -> int:
     kill_own_processes()
     # Closed first: with every process of this user gone, nothing can reopen it.
     home_clean = clear_home(pwd.getpwuid(os.getuid()).pw_dir)
+    remove_own_ipc()
     remove_own_files(roots)
     return 0 if home_clean else HOME_NOT_CLEAN
 
