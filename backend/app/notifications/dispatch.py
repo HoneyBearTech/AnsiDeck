@@ -53,11 +53,19 @@ def claim(db: Session, limit: int = BATCH) -> list[int]:
         .limit(limit)
         .with_for_update(skip_locked=True)
     ).all()
+    claimed = []
     for row in rows:
+        if row.attempts >= MAX_ATTEMPTS:
+            # Its last attempt never finished (the process died while sending): give up
+            # rather than retry it every lease for ever.
+            row.status = "failed"
+            row.last_error = row.last_error or "gave up: the last attempt never finished"
+            continue
         row.status = "sending"
         row.next_attempt_at = _in(LEASE_SECONDS)
+        claimed.append(row.id)
     db.commit()
-    return [row.id for row in rows]
+    return claimed
 
 
 def _wait_for_pacing(db: Session, channel_id: int) -> float | None:
@@ -113,7 +121,13 @@ def deliver(
             delivery.payload = payload  # the same list on every retry
         delivery.attempts += 1
         db.commit()  # the attempt counts even if this process dies while sending
-        outcome = send(channel, delivery.event, payload, settings, transport)
+        try:
+            outcome = send(channel, delivery.event, payload, settings, transport)
+        except Exception as exc:  # a bug (bad input in a message), not the network: no retry
+            logger.exception("notification %s: sending failed unexpectedly", delivery.id)
+            outcome = Outcome(
+                False, error=f"unexpected error: {type(exc).__name__}", permanent=True
+            )
         _record(delivery, outcome)
         kind, status_after = channel.kind, delivery.status
         db.commit()
