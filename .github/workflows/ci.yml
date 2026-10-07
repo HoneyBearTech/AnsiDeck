@@ -12,8 +12,9 @@ jobs:
   backend:
     name: Backend lint + test
     runs-on: ubuntu-latest
-    # Normally ~5 min; cap a hang well below GitHub's 6-hour default.
-    timeout-minutes: 20
+    # Normally 11-15 min (1,000+ tests on Postgres, many with real ansible runs); 30 leaves room to
+    # grow and still caps a hang far below GitHub's 6-hour default.
+    timeout-minutes: 30
     # The tests need a real Postgres (same pinned image as docker-compose.yml; bump both
     # together). The fixtures create and drop their own ansideck_test database in it.
     services:
