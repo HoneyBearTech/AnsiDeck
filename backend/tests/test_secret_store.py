@@ -339,7 +339,7 @@ def test_the_store_settings_are_checked(tmp_path, monkeypatch) -> None:
         with pytest.raises(ValidationError, match=message):
             _settings(**{**good, **bad})
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("AUTH_SECRET_KEY", "a-real-secret-value")
+    monkeypatch.setenv("AUTH_SECRET_KEY", "a-real-secret-value-of-32-characters")
     monkeypatch.setenv("ADMIN_PASSWORD", "a-real-admin-password")
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://ansideck:s3cret-db@db/ansideck")
     monkeypatch.setenv("WORKER_TOKEN", "w" * 32)

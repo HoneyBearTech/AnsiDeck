@@ -39,7 +39,8 @@ services:
       - backend-venv:/app/.venv
       - backend-data:/data
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      # Loopback by default: this is a development setup with a known admin password.
+      - "${DEV_BIND_ADDRESS:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
       # Loopback only, for a Prometheus on this machine (host.docker.internal:8002 from a
       # container). Never publish it further.
       - "127.0.0.1:${BACKEND_METRICS_PORT:-8002}:8002"
@@ -144,7 +145,7 @@ services:
       - ./frontend:/app
       - frontend-node-modules:/app/node_modules
     ports:
-      - "${FRONTEND_PORT:-5173}:5173"
+      - "${DEV_BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-5173}:5173"
     command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
     depends_on:
       backend:

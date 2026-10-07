@@ -7,6 +7,8 @@
                                      (the app also does this at startup)
     import-sqlite <path> [--check]   one-time import of a pre-Postgres ansideck.db
     reset-totp <username>            turn off a user's two-factor login
+    reencrypt-secrets                re-encrypt stored secrets under the first
+                                     CREDENTIAL_ENCRYPTION_KEY (a key rotation)
     analytics-grant <role>           let a (Grafana) database role read the analytics views
     analytics-check <role>           check such a role can read nothing else
     analytics-revoke <role>          take that access away again
@@ -20,7 +22,9 @@ import sys
 from pathlib import Path
 
 from app import analytics, audit, totp
+from app.config import get_settings
 from app.db import get_sessionmaker, init_db
+from app.key_rotation import RotationFailed, reencrypt_all
 from app.models import User
 from app.sqlite_import import ImportFailed, import_sqlite
 
@@ -48,6 +52,39 @@ def reset_totp(username: str) -> int:
             target_name=user.username,
         )
         print(f"Two-factor login turned off for {username}; their sessions were signed out.")
+        return 0
+    finally:
+        db.close()
+
+
+def reencrypt_secrets() -> int:
+    init_db()
+    old_keys = len(get_settings().credential_encryption_keys) - 1
+    db = get_sessionmaker()()
+    try:
+        try:
+            result = reencrypt_all(db)
+        except RotationFailed as exc:
+            db.rollback()
+            print(f"Nothing was changed. {exc}.", file=sys.stderr)
+            return 1
+        db.commit()
+        if result.reencrypted:
+            audit.record(
+                db,
+                "secrets.reencrypt",
+                actor_username="(server cli)",
+                detail={"reencrypted": result.reencrypted},
+            )
+        print(
+            f"Re-encrypted {result.reencrypted} secret(s) under the current key; "
+            f"{result.current} already were."
+        )
+        if old_keys:
+            print(
+                f"CREDENTIAL_ENCRYPTION_KEY still lists {old_keys} old key(s) after the first: "
+                "remove them and restart the API."
+            )
         return 0
     finally:
         db.close()
@@ -116,6 +153,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     reset = commands.add_parser("reset-totp", help="turn off a user's two-factor login")
     reset.add_argument("username")
+    commands.add_parser(
+        "reencrypt-secrets",
+        help="re-encrypt stored secrets under the first CREDENTIAL_ENCRYPTION_KEY (key rotation)",
+    )
     for name, about in (
         ("analytics-grant", "let a database role read the analytics views (for Grafana)"),
         ("analytics-check", "check a role can read the analytics views and nothing else"),
@@ -129,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
         return migrate()
     if args.command == "import-sqlite":
         return import_legacy(args.path, args.check)
+    if args.command == "reencrypt-secrets":
+        return reencrypt_secrets()
     return reset_totp(args.username)
 
 

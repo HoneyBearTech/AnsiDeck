@@ -14,7 +14,7 @@ MIN_WORKER_TOKEN_LENGTH = 32
 class WorkerSettings(BaseSettings):
     """From the environment only (no .env file: the worker must not pick up the API's)."""
 
-    model_config = SettingsConfigDict(extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore", hide_input_in_errors=True)
 
     environment: str = "development"
     ansideck_api_url: str = "http://backend:8001"
@@ -30,6 +30,7 @@ class WorkerSettings(BaseSettings):
     def _refuse_default_token_in_production(self) -> "WorkerSettings":
         if self.environment.lower() == "production" and (
             self.worker_token == DEFAULT_WORKER_TOKEN
+            or self.worker_token.strip().lower().startswith("change-me")  # from .env.example
             or len(self.worker_token) < MIN_WORKER_TOKEN_LENGTH
         ):
             raise ValueError(

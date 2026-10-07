@@ -10,6 +10,7 @@ from typing import ClassVar
 
 import httpx
 import pytest
+from cryptography.fernet import Fernet
 from sqlalchemy import select, text, update
 
 from app.config import Settings, get_settings
@@ -258,10 +259,10 @@ def test_email_channels_need_valid_recipients(settings_env) -> None:
 
 def test_smtp_settings_are_checked() -> None:
     with pytest.raises(ValueError, match="SMTP_FROM"):
-        Settings(credential_encryption_key="k", smtp_host="mail.example")
+        Settings(credential_encryption_key=Fernet.generate_key().decode(), smtp_host="mail.example")
     with pytest.raises(ValueError, match="SMTP_TLS=none"):
         Settings(
-            credential_encryption_key="k",
+            credential_encryption_key=Fernet.generate_key().decode(),
             environment="production",
             auth_secret_key="x" * 40,
             admin_password="y" * 20,

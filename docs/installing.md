@@ -53,7 +53,8 @@ database (uid 999) and the API (uid 1000) read them inside their containers.
 
 - `credential_encryption_key` encrypts every stored SSH key, vault password and token. **Back it up
   separately** (for example in your password manager): without it, a database backup can't be decrypted,
-  and anyone who has both can decrypt everything.
+  and anyone who has both can decrypt everything. To change it later, see
+  [upgrading.md](upgrading.md#changing-the-encryption-key).
 - `admin_password` is only used to create the first admin, on the very first start. Change it later under
   **Account**, and turn on two-factor login there.
 
