@@ -9,6 +9,10 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Security
 
+- The run output viewer shows terminal hyperlinks (OSC 8) as plain text: output from a playbook, a
+  repository or a managed host could make any text a clickable link to anywhere. Colours no longer carry
+  from one line into the next, so a colour left switched on (black on black, say) can't hide later
+  output, such as a failed task.
 - Edits to playbooks, inventories, groups and hosts, and requests to sync a git source, are now in the
   audit log (`playbook.*`, `inventory.*`, `git_source.sync_requested`), as the security documentation
   already said. Before, someone who can edit content could change a playbook or point a host somewhere
