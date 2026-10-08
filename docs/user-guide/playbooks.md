@@ -70,6 +70,11 @@ Global admins install roles and collections on the **Galaxy** page, for every pr
 2. Tick **I understand this runs third-party code** (and **Upgrade / reinstall** if wanted), then
    **Install**. The output shows live; **Install history** keeps past installs.
 
+Dependencies are not installed automatically: they could come from anywhere their metadata points, past
+the source rules above. List every collection and role you need in **requirements.yml**. After an install,
+the output ends with any dependency that installed content declares but that isn't installed (collections
+that ship with Ansible count as installed).
+
 While an install waits or runs, no new run starts, and an install waits for running runs to finish.
 Installed content is code that runs with your playbooks, with access to the secrets they use: install only
 what you trust. **Installed** lists the collections and roles present.
