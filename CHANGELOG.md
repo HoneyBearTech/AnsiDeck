@@ -30,6 +30,14 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   now removes them, and a slot is not used again while any are left. The worker also no longer collects
   the exit status of its own cleanup process by mistake (it collects orphaned processes as PID 1), which
   could make it miss that another slot had planted files in a run user's home.
+- The two-factor setup's QR code shows again in production: the frontend's Content-Security-Policy blocked
+  it (it is a `data:` image). After an upgrade, browsers no longer keep the previous release's page (app
+  pages are now revalidated, while the hashed assets are cached for good), and a missing asset is a 404
+  rather than a blank page. A refused request (422) no longer repeats what was sent, so a private key or
+  vault password in it can't land in proxy or client logs. The API answers only to `ALLOWED_HOSTS`
+  (by default localhost, 127.0.0.1 and the compose service name in development, any host in production
+  behind your reverse proxy), so a DNS-rebinding page can't drive a development backend on localhost.
+  The build pins uv by version and digest.
 - A playbook could reach the process that runs it, which runs as the same user: reopen its message pipe
   through `/proc` to add forged output to the run's log or report a result of its choosing, and read the
   run's job (its SSH key and vault password) from that process's memory. The run process is now

@@ -10,12 +10,24 @@ from urllib.parse import urlsplit
 
 from fastapi import Request
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
+# The dev compose's names for the API: the browser's (localhost, 127.0.0.1) and the one Vite's
+# proxy uses (the compose service).
+DEV_HOSTS = ("localhost", "127.0.0.1", "backend")
+
+
+def allowed_hosts(settings: Settings) -> list[str]:
+    """Host names the API answers to (Settings.allowed_hosts)."""
+    if settings.allowed_hosts:
+        return settings.allowed_hosts
+    return ["*"] if settings.environment.lower() == "production" else list(DEV_HOSTS)
 
 
 class TrustedProxies:
