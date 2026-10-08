@@ -295,6 +295,58 @@ def test_install_then_run_uses_installed_collection_and_role(
     assert Path(f"{marker}.role").read_text() == "from-role"
 
 
+def test_dependencies_are_not_installed_but_reported(
+    client: TestClient, tmp_path: Path, monkeypatch
+) -> None:
+    """ansible-galaxy would fetch dependencies from wherever their metadata says (plain http,
+    local paths), past the requirement checks: --no-deps, and the missing ones are listed."""
+    monkeypatch.setenv("GALAXY_ALLOW_LOCAL_SOURCES", "true")
+    get_settings.cache_clear()
+    collection = tmp_path / "src" / "acme_deps"
+    collection.mkdir(parents=True)
+    (collection / "galaxy.yml").write_text(
+        "namespace: acme\nname: deps\nversion: 1.0.0\nreadme: README.md\nauthors: [t]\n"
+        "dependencies:\n  acme.other: '>=1.0'\n  ansible.utils: '*'\n"
+    )
+    (collection / "README.md").write_text("deps\n")
+    role = tmp_path / "src" / "deprole"
+    (role / "tasks").mkdir(parents=True)
+    (role / "meta").mkdir()
+    (role / "tasks" / "main.yml").write_text("- ansible.builtin.debug: {msg: hi}\n")
+    (role / "meta" / "main.yml").write_text(
+        "galaxy_info: {author: t, description: d, license: MIT}\n"
+        "dependencies:\n  - geerlingguy.java\n  - {role: acme.deps.inside}\n"
+    )
+    out = tmp_path / "out"
+    out.mkdir()
+    subprocess.run(
+        [_galaxy_binary(), "collection", "build", str(collection), "--output-path", str(out)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        check=True,
+    )
+    with tarfile.open(out / "deprole.tar.gz", "w:gz") as tar:
+        tar.add(role, arcname=".")
+
+    _login(client)
+    requirements = (
+        f"collections:\n  - name: {out / 'acme-deps-1.0.0.tar.gz'}\n"
+        f"roles:\n  - name: deprole\n    src: {out / 'deprole.tar.gz'}\n"
+    )
+    assert client.put("/api/galaxy/requirements", json={"content": requirements}).status_code == 200
+    install = _wait_for_install(client, client.post("/api/galaxy/installs", json={}).json()["id"])
+    assert install["status"] == "success", install["log"]
+    log = install["log"]
+    assert "--no-deps" in log
+    assert "acme.other (needed by acme.deps)" in log
+    assert "geerlingguy.java (needed by deprole)" in log
+    assert "ansible.utils" not in log.split("[not installed")[1]  # bundled with ansible
+    assert "acme.deps.inside" not in log  # a role in an installed collection
+    installed = client.get("/api/galaxy/installed").json()
+    assert [c["name"] for c in installed["collections"]] == ["acme.deps"]
+    assert [r["name"] for r in installed["roles"]] == ["deprole"]
+
+
 def test_install_failure_is_reported_cleanly(
     client: TestClient, tmp_path: Path, local_sources: dict[str, Path]
 ) -> None:
