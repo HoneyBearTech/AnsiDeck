@@ -9,6 +9,15 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Security
 
+- Inventory sources, environment-variable credentials and outgoing destinations are checked more tightly:
+  refresh output whose host or group lists hold anything but names is refused (it caused an error and a
+  refresh that hung until its lease ran out); the plugins that can't be sources are refused under their
+  `ansible.legacy.` names too; IPv6 addresses that carry an IPv4 address (`::/96`, NAT64's
+  `64:ff9b::/96`) are judged by that address, so they can't reach private or metadata addresses through a
+  NAT64 gateway; and credentials can no longer set `AWS_CONTAINER_*` (a refresh would have used an ECS
+  task's own role), AWS credential file paths or CA bundle, `GIT_*`, `KRB5*`, `OPENSSL_MODULES`,
+  `SSH_AUTH_SOCK`, `HOSTALIASES` or `NETRC`. Upgrading: a credential that uses one of these names must
+  be renamed or removed before it can be saved again.
 - Galaxy installs no longer install dependencies: ansible-galaxy fetched a collection's or role's
   dependencies from wherever their metadata pointed (plain `http://`, local paths), past the rules for
   `requirements.yml`, into the content every run loads. List every collection and role you need in
