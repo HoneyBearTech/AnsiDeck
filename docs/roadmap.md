@@ -22,7 +22,8 @@ run output, a code editor with ansible-lint checks, a reworked dashboard and a p
 SLSA build provenance on release files. **v0.3.0** (October 2026) added a group graph for inventories, a
 phone-friendly layout checked in a real browser on every pull request, and security fixes. **v0.4.0**
 (October 2026) fixed the findings of a full security review and added changing the credential encryption
-key. The most recent release is the supported version.
+key. **v0.5.0** (October 2026) fixed the rest of that review's findings and made the run output viewer fast
+on long runs. The most recent release is the supported version.
 
 ## Over the following year
 

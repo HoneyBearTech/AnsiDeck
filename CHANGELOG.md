@@ -7,6 +7,33 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-07
+
+The rest of the security review's findings: API keys that outlived their creator, what playbooks can reach
+of the process that runs them and what runs leave behind, Galaxy dependencies, unaudited changes and
+probes, and a set of smaller hardening fixes. The two-factor setup's QR code works in production again, and
+the run output viewer stays fast on long runs.
+
+### Upgrading
+
+- Follow [docs/upgrading.md](docs/upgrading.md) (back up, set `ANSIDECK_VERSION=0.5.0`, pull, restart).
+  The API applies database migration 0016 when it starts.
+- **API keys follow their creator.** A key stops working while whoever created it is deactivated, no
+  longer an admin of the key's project, or removed from it, and for good once they are deleted. Keys whose
+  creator is already gone or deactivated stop working on upgrade: create new ones. Creating a key now asks
+  for your current password (single sign-on users: a sign-in within the last 15 minutes).
+- **Galaxy dependencies are no longer installed automatically.** List every collection and role you need
+  in `requirements.yml`; an install's output names any declared dependency that is missing.
+- **Environment-variable credentials:** a refresh that uses a credential holding a newly refused name
+  (`AWS_CONTAINER_*`, AWS credential file paths or CA bundle, `GIT_*`, `KRB5*`, `OPENSSL_MODULES`,
+  `SSH_AUTH_SOCK`, `HOSTALIASES`, `NETRC`) fails, naming it, until the variable is removed.
+- **`ALLOWED_HOSTS`** (new): the host names the API answers to. Production answers to any host unless you
+  set it (your reverse proxy decides). The development setup answers to localhost, 127.0.0.1 and the
+  compose service only; add others to reach the backend's port under another name.
+- API clients: `PUT /api/projects/{id}/members/{user_id}` no longer adds someone for a project admin (only
+  global admins); add members with `POST /api/projects/{id}/members` by username. Validation errors (422)
+  no longer include the submitted `input`.
+
 ### Security
 
 - Inventory sources, environment-variable credentials and outgoing destinations are checked more tightly:
@@ -16,14 +43,13 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   `64:ff9b::/96`) are judged by that address, so they can't reach private or metadata addresses through a
   NAT64 gateway; and credentials can no longer set `AWS_CONTAINER_*` (a refresh would have used an ECS
   task's own role), AWS credential file paths or CA bundle, `GIT_*`, `KRB5*`, `OPENSSL_MODULES`,
-  `SSH_AUTH_SOCK`, `HOSTALIASES` or `NETRC`. Upgrading: names are now also checked for every refresh, so
-  a refresh that uses a credential holding one of these names fails, naming it, until the variable is
-  removed from the credential.
+  `SSH_AUTH_SOCK`, `HOSTALIASES` or `NETRC`; names are now checked for every refresh too, not only when a
+  credential is saved.
 - Galaxy installs no longer install dependencies: ansible-galaxy fetched a collection's or role's
   dependencies from wherever their metadata pointed (plain `http://`, local paths), past the rules for
   `requirements.yml`, into the content every run loads. List every collection and role you need in
   `requirements.yml`; an install's output now ends with any dependency that installed content declares but
-  that isn't installed. Upgrading: content that relied on automatic dependencies needs them listed.
+  that isn't installed.
 - System V shared memory, message queues and semaphores, and POSIX message queues, that a run created
   outlived it: the cleanup after each run only ended processes and deleted files. A run could leave data
   (readable by anyone, if it chose so) for the slot's later runs, including other projects'. The cleanup
@@ -72,8 +98,7 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   Before, keys kept starting runs after their creator was offboarded. The key list shows such keys as
   suspended, with the reason, and refused requests are audited. Creating a key now needs your current
   password, or a single sign-on sign-in within the last 15 minutes, so a stolen session alone can't mint
-  one. Upgrading: keys whose creator is already gone or deactivated stop working; create new ones. The API
-  applies database migration 0016 when it starts.
+  one.
 
 ### Fixed
 
@@ -316,7 +341,8 @@ come with SBOM and provenance attestations; see [docs/verifying-releases.md](doc
   need the usual pull-and-restart: database migrations run on start-up. An installation still on the
   old SQLite database must run the one-time import first (see [docs/upgrading.md](docs/upgrading.md)).
 
-[Unreleased]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.1.0...v0.2.0
