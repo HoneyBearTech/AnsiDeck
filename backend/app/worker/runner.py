@@ -365,7 +365,7 @@ class Worker:
             if response.status_code == 204:
                 continue
             if response.status_code != 200:
-                logger.error("claim refused: HTTP %s", response.status_code)
+                logger.error("claim refused: HTTP %s %s", response.status_code, response.text[:300])
                 self._stopping.wait(5)
                 continue
             claim = response.json()

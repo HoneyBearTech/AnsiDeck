@@ -81,7 +81,9 @@ without a user account.
    enter your current password, and **Create key**. (If you signed in with single sign-on in the last 15
    minutes, no password is needed; otherwise sign in again first.)
    - **trigger**: start runs and read their status and output, in this project only. It can never run as
-     root or edit anything.
+     root or edit anything. Its runs' extra vars are templated by Ansible, though, so whoever holds it can
+     run commands in a worker slot and on the project's hosts, with the run's SSH key, like an operator:
+     keep it as safe as that.
    - **read-only**: read run status and output.
 2. Copy the key from the dialog: it's shown **once**. Send it as `Authorization: Bearer <key>`, over HTTPS.
 3. The list shows each key's status, when it was last used, and when it expires. **Revoke** (after a

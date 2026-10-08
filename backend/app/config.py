@@ -225,6 +225,17 @@ class Settings(BaseSettings):
     def notify_allowlist(self) -> list[str]:
         return [e.strip() for e in self.notify_allowed_private_hosts.split(",") if e.strip()]
 
+    @field_validator("cors_origins")
+    @classmethod
+    def _exact_origins(cls, origins: list[str]) -> list[str]:
+        # The API allows credentials, and Starlette answers "*" by echoing any Origin back.
+        if any("*" in origin for origin in origins):
+            raise ValueError(
+                "CORS_ORIGINS can't contain '*': list the exact origins, e.g. "
+                '["https://ansideck.example.com"]'
+            )
+        return origins
+
     @model_validator(mode="after")
     def _validate_smtp(self) -> "Settings":
         if not self.smtp_host:
