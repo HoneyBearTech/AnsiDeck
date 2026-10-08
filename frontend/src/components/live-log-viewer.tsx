@@ -8,6 +8,42 @@ interface LogLine {
   html: string;
 }
 
+// Lines are kept in chunks that never change once full, each a memoized component: a new line
+// re-renders only the last chunk, not every line so far (a 100k-line run would otherwise
+// take seconds per update). Lines that arrive within one frame are added in one update.
+const CHUNK_LINES = 200;
+
+interface Chunk {
+  key: number;
+  lines: LogLine[];
+}
+
+function appendLines(chunks: Chunk[], added: LogLine[]): Chunk[] {
+  const next = chunks.slice(0, -1);
+  let last = chunks.at(-1);
+  for (const line of added) {
+    if (!last || last.lines.length >= CHUNK_LINES) {
+      if (last) next.push(last);
+      last = { key: next.length, lines: [] };
+    } else if (last === chunks.at(-1)) {
+      last = { key: last.key, lines: [...last.lines] }; // a new object: memo sees the change
+    }
+    last.lines.push(line);
+  }
+  if (last) next.push(last);
+  return next;
+}
+
+const LogChunk = React.memo(function LogChunk({ lines }: { lines: LogLine[] }) {
+  return lines.map((line) => (
+    <div
+      key={line.key}
+      className="whitespace-pre-wrap [overflow-wrap:anywhere]"
+      dangerouslySetInnerHTML={{ __html: line.html }}
+    />
+  ));
+});
+
 // The server closes with 1000 once the run has finished and every line was sent, and with
 // 1008 when the viewer may not read this run. Any other close cut the output short.
 const CLOSE_COMPLETE = 1000;
@@ -67,15 +103,27 @@ function toHtml(stdout: string): string {
 
 /** A run's output as it is produced; `follow` keeps the newest line in view (for a live run). */
 export function LiveLogViewer({ runId, follow = true }: { runId: number; follow?: boolean }) {
-  const [lines, setLines] = React.useState<LogLine[]>([]);
+  const [chunks, setChunks] = React.useState<Chunk[]>([]);
   const [state, setState] = React.useState<StreamState>("streaming");
   const containerRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- a new run id starts a new stream from empty
-    setLines([]);
+    setChunks([]);
     setState("streaming");
     let received = 0; // every log line, shown or not: the resume point for ?from=
+    let shown = 0;
+    let pending: LogLine[] = [];
+    let frame = 0;
+
+    function flush() {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      if (pending.length === 0) return;
+      const added = pending;
+      pending = [];
+      setChunks((prev) => appendLines(prev, added));
+    }
     let attempt = 0;
     let failedConnects = 0;
     let disposed = false;
@@ -102,12 +150,14 @@ export function LiveLogViewer({ runId, follow = true }: { runId: number; follow?
           return;
         }
         if (typeof data.stdout !== "string" || data.stdout.length === 0) return;
-        const html = toHtml(data.stdout);
-        setLines((prev) => [...prev, { key: `${data.counter ?? "e"}-${prev.length}`, html }]);
+        pending.push({ key: `${data.counter ?? "e"}-${shown}`, html: toHtml(data.stdout) });
+        shown += 1;
+        if (!frame) frame = requestAnimationFrame(flush);
       });
 
       socket.addEventListener("close", (event: CloseEvent) => {
         if (disposed) return;
+        flush(); // a hidden tab gets no animation frames: show what came before saying so
         if (event.code === CLOSE_COMPLETE) {
           setState("complete");
           return;
@@ -127,6 +177,7 @@ export function LiveLogViewer({ runId, follow = true }: { runId: number; follow?
 
     return () => {
       disposed = true;
+      cancelAnimationFrame(frame);
       clearTimeout(timer);
       socket.close();
     };
@@ -139,7 +190,7 @@ export function LiveLogViewer({ runId, follow = true }: { runId: number; follow?
   React.useEffect(() => {
     if (followRef.current) containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight });
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- scroll to the bottom whenever lines arrive
-  }, [lines]);
+  }, [chunks]);
 
   return (
     <div className="flex flex-col gap-2">
@@ -147,17 +198,13 @@ export function LiveLogViewer({ runId, follow = true }: { runId: number; follow?
         ref={containerRef}
         className="max-h-[32rem] overflow-y-auto rounded-md bg-muted p-4 font-mono text-sm leading-relaxed"
       >
-        {lines.length === 0 && (
+        {chunks.length === 0 && (
           <p className="text-muted-foreground">
             {state === "complete" ? "This run produced no output." : "Waiting for output…"}
           </p>
         )}
-        {lines.map((line) => (
-          <div
-            key={line.key}
-            className="whitespace-pre-wrap [overflow-wrap:anywhere]"
-            dangerouslySetInnerHTML={{ __html: line.html }}
-          />
+        {chunks.map((chunk) => (
+          <LogChunk key={chunk.key} lines={chunk.lines} />
         ))}
       </div>
       {state === "reconnecting" && (

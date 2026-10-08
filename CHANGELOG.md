@@ -75,6 +75,11 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   one. Upgrading: keys whose creator is already gone or deactivated stop working; create new ones. The API
   applies database migration 0016 when it starts.
 
+### Fixed
+
+- The run output viewer stays fast on long runs: every new line used to re-render the whole log, so the
+  cost grew with the square of the output (150,000 lines took 16 s in Chrome, now 6 s).
+
 ## [0.4.0] - 2026-10-07
 
 Security fixes from a full review: secrets in run output, become for operators, credentials in inventory
