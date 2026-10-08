@@ -13,7 +13,7 @@ import hmac
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, FastAPI, Header, Request, status
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
@@ -242,6 +242,13 @@ def _seen(worker_id: str, slots: int, isolated: bool | None) -> None:
 async def claim(body: ClaimIn) -> ClaimOut | Response:
     """Long poll: returns as soon as a run can be claimed, or 204 after wait_seconds."""
     await asyncio.to_thread(_seen, body.worker_id, body.slots, body.isolated)
+    # A production worker refuses to start without isolation; this covers one started without
+    # ENVIRONMENT=production (or from before 4C): it stays visible, and alerts, but gets no work.
+    if body.isolated is not True and get_settings().environment.lower() == "production":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "this API hands work only to workers that isolate runs (ENVIRONMENT=production)",
+        )
     loop = asyncio.get_running_loop()
     deadline = loop.time() + body.wait_seconds
     with notifier.listen(QUEUE_TOPIC) as listener:

@@ -4,10 +4,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text, update
 
+from app import internal_api
 from app.db import get_engine, get_sessionmaker
 from app.internal_api import MAX_BODY_BYTES, internal_app
 from app.main import app
-from app.models import AuditEvent, Credential, Run
+from app.models import AuditEvent, Credential, Run, Worker
 from tests.conftest import internal_client
 from tests.test_runs import (
     SUCCESS_PLAYBOOK,
@@ -125,6 +126,26 @@ def test_oversized_bodies_are_refused(client) -> None:
 def test_claim_returns_204_when_there_is_nothing_to_run(client) -> None:
     response = internal_client().post("/internal/claim", json={"worker_id": "w", "wait_seconds": 0})
     assert response.status_code == 204
+
+
+@pytest.mark.parametrize("isolated", [False, None])
+def test_a_production_api_gives_no_work_to_a_worker_that_doesnt_isolate(
+    client, monkeypatch, isolated
+) -> None:
+    """Such a worker refuses to start in production; one started without ENVIRONMENT (or from
+    before per-slot users) is refused here, while it stays listed (and alerts)."""
+    production = internal_api.get_settings().model_copy(update={"environment": "production"})
+    monkeypatch.setattr(internal_api, "get_settings", lambda: production)
+    body = {"worker_id": "w-loose", "wait_seconds": 0}
+    if isolated is not None:
+        body["isolated"] = isolated
+    refused = internal_client().post("/internal/claim", json=body)
+    assert refused.status_code == 403
+    assert "isolate" in refused.json()["detail"]
+    with get_sessionmaker()() as db:
+        assert db.get(Worker, "w-loose") is not None
+    isolated_worker = {"worker_id": "w-ok", "wait_seconds": 0, "isolated": True}
+    assert internal_client().post("/internal/claim", json=isolated_worker).status_code == 204
 
 
 def test_the_job_is_handed_out_once_and_only_to_the_claim(client) -> None:

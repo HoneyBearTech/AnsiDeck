@@ -2,8 +2,11 @@
 
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
+from app.config import Settings
 from app.hardening import DEV_HOSTS, allowed_hosts
 from app.main import app
 
@@ -40,3 +43,13 @@ def test_a_refused_request_does_not_echo_what_was_sent(admin_client: TestClient)
         for error in response.json()["detail"]:
             assert set(error) <= {"loc", "msg", "type", "url"}
             assert error["msg"]
+
+
+@pytest.mark.parametrize("origins", ['["*"]', '["https://*.example.com"]'])
+def test_cors_origins_must_be_exact(monkeypatch, origins: str) -> None:
+    """The API allows credentials, and a wildcard would let every site read it as the user."""
+    monkeypatch.setenv("CORS_ORIGINS", origins)
+    with pytest.raises(ValidationError, match="can't contain"):
+        Settings(_env_file=None)
+    monkeypatch.setenv("CORS_ORIGINS", '["https://deck.example.com"]')
+    assert Settings(_env_file=None).cors_origins == ["https://deck.example.com"]
