@@ -4,6 +4,7 @@ worker image, is tests/test_isolation_root.py."""
 import json
 import os
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -335,28 +336,50 @@ def test_sweep_runs_as_the_slot_user_and_checks_nothing_is_left(monkeypatch) -> 
     commands = []
     left = [[123], []]
     monkeypatch.setattr(run_isolation.shutil, "which", lambda _name: "/usr/bin/setpriv")
-    monkeypatch.setattr(
-        run_executor.subprocess,
-        "run",
-        lambda cmd, **kw: commands.append(cmd) or SimpleNamespace(returncode=0),
-    )
+    monkeypatch.setattr(run_executor, "_sweep_once", lambda cmd: commands.append(cmd) or 0)
     monkeypatch.setattr(run_executor, "processes_of", lambda uid: left.pop(0))
+    monkeypatch.setattr(run_executor, "ipc_objects", lambda uid: [])
     monkeypatch.setattr(run_executor.time, "sleep", lambda _s: None)
 
     assert run_executor.sweep(identity_for_slot(1)) is True
     assert len(commands) == 2  # the first sweep left a process: it tried again
     assert commands[0][:2] == ["/usr/bin/setpriv", "--reuid=20001"]
-    assert commands[0][-6:] == ["-m", "app.run_worker", "--sweep", "/tmp", "/var/tmp", "/dev/shm"]
+    assert commands[0][-7:] == [
+        "-m", "app.run_worker", "--sweep", "/tmp", "/var/tmp", "/dev/shm", "/dev/mqueue",
+    ]  # fmt: skip
+
+
+def test_sweep_is_not_clean_while_ipc_objects_are_left(monkeypatch) -> None:
+    left = [[("shm", 5)], [("shm", 5)], [("shm", 5)]]
+    monkeypatch.setattr(run_executor, "_sweep_once", lambda cmd: 0)
+    monkeypatch.setattr(run_executor, "processes_of", lambda uid: [])
+    monkeypatch.setattr(run_executor, "ipc_objects", lambda uid: left.pop(0))
+    monkeypatch.setattr(run_executor.time, "sleep", lambda _s: None)
+    assert run_executor.sweep(identity_for_slot(1)) is False
+    assert left == []  # every attempt checked
+
+
+def test_ipc_objects_finds_what_a_user_owns_or_created(tmp_path) -> None:
+    (tmp_path / "shm").write_text(
+        "       key      shmid perms   size  cpid  lpid nattch   uid   gid  cuid  cgid\n"
+        "         1          7   666   4096    10    10      0 20001 20001 20001 20001\n"
+        "         2          8   600   4096    11    11      0  1000  1000  1000  1000\n"
+    )
+    (tmp_path / "msg").write_text(
+        "       key      msqid perms  cbytes  qnum lspid lrpid   uid   gid  cuid  cgid\n"
+        "         3          9   666      10     1    10     0  1000  1000 20001 20001\n"
+    )
+    (tmp_path / "sem").write_text("       key      semid perms  nsems   uid   gid  cuid  cgid\n")
+    assert run_isolation.ipc_objects(20001, str(tmp_path)) == [("shm", 7), ("msg", 9)]
+    assert run_isolation.ipc_objects(20002, str(tmp_path)) == []
+    assert run_isolation.ipc_objects(20001, str(tmp_path / "missing")) == []
 
 
 def test_sweep_replaces_a_home_the_user_could_not_clear(monkeypatch) -> None:
     replaced = []
-    monkeypatch.setattr(
-        run_executor.subprocess,
-        "run",
-        lambda cmd, **kw: SimpleNamespace(returncode=run_worker.HOME_NOT_CLEAN),
-    )
+    monkeypatch.setattr(run_executor, "_sweep_once", lambda cmd: run_worker.HOME_NOT_CLEAN)
     monkeypatch.setattr(run_executor, "processes_of", lambda uid: [])
+    monkeypatch.setattr(run_executor, "ipc_objects", lambda uid: [])
     monkeypatch.setattr(run_executor, "replace_home", replaced.append)
     assert run_executor._HOME_NOT_CLEAN == run_worker.HOME_NOT_CLEAN
     assert run_executor.sweep(identity_for_slot(0)) is True
@@ -364,10 +387,9 @@ def test_sweep_replaces_a_home_the_user_could_not_clear(monkeypatch) -> None:
 
 
 def test_sweep_reports_a_user_it_could_not_empty(monkeypatch) -> None:
-    monkeypatch.setattr(
-        run_executor.subprocess, "run", lambda cmd, **kw: SimpleNamespace(returncode=0)
-    )
+    monkeypatch.setattr(run_executor, "_sweep_once", lambda cmd: 0)
     monkeypatch.setattr(run_executor, "processes_of", lambda uid: [123])
+    monkeypatch.setattr(run_executor, "ipc_objects", lambda uid: [])
     monkeypatch.setattr(run_executor.time, "sleep", lambda _s: None)
     assert run_executor.sweep(identity_for_slot(0)) is False
 
@@ -448,6 +470,37 @@ def test_an_event_too_large_to_send_is_left_out_not_cut(monkeypatch) -> None:
     assert (small["event"], small["uuid"], small["counter"]) == ("runner_on_ok", "u", 7)
     assert small["stdout"] == "[AnsiDeck: event left out, it exceeded 1000 bytes]"
     assert run_worker.bounded_event({"stdout": "fine"}) == {"stdout": "fine"}
+
+
+def test_a_sweep_that_runs_too_long_is_killed(monkeypatch) -> None:
+    monkeypatch.setattr(run_executor, "_SWEEP_TIMEOUT_SECONDS", 0.2)
+    assert run_executor._sweep_once([sys.executable, "-c", "import sys; sys.exit(3)"]) == 3
+    assert run_executor._sweep_once([sys.executable, "-c", "import time; time.sleep(30)"]) is None
+    assert run_executor._children == set()
+
+
+def _wait_until_exited(pid: int) -> None:
+    deadline = time.monotonic() + 10
+    while os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+
+
+def test_the_reaper_leaves_the_workers_own_children_alone() -> None:
+    """The worker (PID 1) collects orphans, but never a status subprocess is waiting for:
+    a stolen one reads as 0, so a sweep's HOME_NOT_CLEAN passed for a clean home."""
+    own = run_executor._start([sys.executable, "-c", "import sys; sys.exit(3)"])
+    _wait_until_exited(own.pid)
+    worker_main.reap_once()
+    assert own.wait() == 3
+    run_executor._forget(own)
+
+    orphan = subprocess.Popen([sys.executable, "-c", "pass"])  # not registered
+    _wait_until_exited(orphan.pid)
+    worker_main.reap_once()
+    with pytest.raises(ChildProcessError):  # collected by the reaper
+        os.waitid(os.P_PID, orphan.pid, os.WEXITED | os.WNOHANG)
+    assert orphan.wait() == 0  # what subprocess makes of a status it lost
 
 
 # ------------------------------------------------------------------ worker

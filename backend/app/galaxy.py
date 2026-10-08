@@ -4,6 +4,11 @@ ansible-galaxy runs as a subprocess — never import ansible.cli here (it crashe
 with a blocking-IO error outside a real terminal). Installed content lives in a
 persistent shared dir, which workers mount read-only; the API process is its only writer.
 
+Dependencies are never installed automatically (--no-deps): ansible-galaxy would fetch them
+from wherever their metadata points, past the checks on the requirements. Declared dependencies
+that nothing provides are listed at the end of the install's log, to be added to the
+requirements (missing_dependencies()).
+
 Installs wait their turn like runs do: a new install is queued, no new run is claimed from then
 on, and the install starts once the running runs have finished (try_start_install()).
 """
@@ -217,13 +222,13 @@ def _install_commands(requirements: dict[str, list], requirements_file: Path, up
     binary = _galaxy_binary()
     commands = []
     if requirements["collections"]:
-        cmd = [binary, "collection", "install", "-r", str(requirements_file)]
+        cmd = [binary, "collection", "install", "-r", str(requirements_file), "--no-deps"]
         cmd += ["-p", str(galaxy_collections_dir()), "--timeout", "60"]
         if upgrade:
             cmd.append("--upgrade")
         commands.append(cmd)
     if requirements["roles"]:
-        cmd = [binary, "role", "install", "-r", str(requirements_file)]
+        cmd = [binary, "role", "install", "-r", str(requirements_file), "--no-deps"]
         cmd += ["-p", str(galaxy_roles_dir()), "--timeout", "60"]
         if upgrade:
             cmd.append("--force")
@@ -310,6 +315,14 @@ def run_install(install_id: int) -> None:
                             return_code = rc
                 finally:
                     scratch.unlink(missing_ok=True)
+                if missing := missing_dependencies():
+                    log.write(
+                        "\n[not installed: dependencies that installed content declares; "
+                        "add them to the requirements]\n"
+                    )
+                    log.writelines(
+                        f"  {name} (needed by {', '.join(by)})\n" for name, by in missing
+                    )
             except Exception as exc:  # noqa: BLE001 - surface any failure in the log
                 log.write(f"\n[install error: {exc}]\n")
                 return_code = return_code or 1
@@ -400,3 +413,59 @@ def list_installed_roles() -> list[dict[str, str | None]]:
             pass
         found.append({"name": role_dir.name, "version": version})
     return found
+
+
+def _bundled_collection(name: str) -> bool:
+    """Whether a collection ships with the ansible package (or is otherwise on the path)."""
+    namespace, _, collection = name.partition(".")
+    return any(
+        Path(entry, "ansible_collections", namespace, collection).is_dir()
+        for entry in sys.path
+        if entry
+    )
+
+
+def _role_dependency_name(entry: object) -> str | None:
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        name = entry.get("role") or entry.get("name") or entry.get("src")
+        return name if isinstance(name, str) else None
+    return None
+
+
+def missing_dependencies() -> list[tuple[str, list[str]]]:
+    """Dependencies that installed collections (MANIFEST.json) and roles (meta/main.yml)
+    declare but that are neither installed nor bundled with ansible: [(name, [needed by])].
+    Versions aren't compared, only presence."""
+    collections = {c["name"] for c in list_installed_collections()}
+    roles = {r["name"] for r in list_installed_roles()}
+
+    def has_collection(name: str) -> bool:
+        return name in collections or _bundled_collection(name)
+
+    needed: dict[str, list[str]] = {}
+    root = galaxy_collections_dir() / "ansible_collections"
+    for manifest in sorted(root.glob("*/*/MANIFEST.json")) if root.is_dir() else []:
+        owner = f"{manifest.parent.parent.name}.{manifest.parent.name}"
+        try:
+            deps = json.loads(manifest.read_text())["collection_info"]["dependencies"] or {}
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        for name in deps if isinstance(deps, dict) else []:
+            if isinstance(name, str) and _FQCN.match(name) and not has_collection(name):
+                needed.setdefault(name, []).append(owner)
+    for role in sorted(roles):
+        try:
+            meta = yaml.safe_load((galaxy_roles_dir() / role / "meta" / "main.yml").read_text())
+        except (OSError, yaml.YAMLError):
+            continue
+        deps = meta.get("dependencies") if isinstance(meta, dict) else None
+        for entry in deps if isinstance(deps, list) else []:
+            name = _role_dependency_name(entry)
+            if not name or name in roles:
+                continue
+            if name.count(".") == 2 and has_collection(name.rsplit(".", 1)[0]):
+                continue  # a role inside a collection
+            needed.setdefault(name, []).append(role)
+    return sorted(needed.items())
