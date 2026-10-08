@@ -315,9 +315,6 @@ class Worker:
         with self._lock:
             return [run_id for kind, run_id in self._tasks if kind == "run"]
 
-    def active_pids(self) -> set[int]:
-        return {pid for task in self._snapshot() if (pid := task.handle.pid)}
-
     def _snapshot(self) -> list[RunTask]:
         with self._lock:
             return list(self._tasks.values())
