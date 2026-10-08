@@ -37,6 +37,12 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   repository or a managed host could make any text a clickable link to anywhere. Colours no longer carry
   from one line into the next, so a colour left switched on (black on black, say) can't hide later
   output, such as a failed task.
+- Requests for something in a project you aren't a member of are now in the audit log
+  (`permission.denied`, reason `not_member`), as the security documentation said; they are still answered
+  like a missing id. A project admin can no longer add someone to their project by user id (which told
+  them who exists and their username): they add people by username, and changing a member's role by id
+  works for existing members only. Single sign-on no longer links an account through a look-alike address
+  (one with a character such as the Kelvin sign, which lower-cases to a plain `k`).
 - Edits to playbooks, inventories, groups and hosts, and requests to sync a git source, are now in the
   audit log (`playbook.*`, `inventory.*`, `git_source.sync_requested`), as the security documentation
   already said. Before, someone who can edit content could change a playbook or point a host somewhere
