@@ -21,7 +21,13 @@ from pathlib import Path
 import pytest
 
 from app.run_executor import ExecutionHandle, processes_of, run_in_worker
-from app.run_isolation import HOME_ROOT, check_available, identity_for_slot, prepare_homes
+from app.run_isolation import (
+    HOME_ROOT,
+    check_available,
+    identity_for_slot,
+    ipc_objects,
+    prepare_homes,
+)
 from app.subprocess_env import clean_env
 
 _reason = check_available(2)
@@ -179,6 +185,24 @@ def test_nothing_a_run_leaves_behind_survives_it() -> None:
     assert processes_of(20002) == []
     assert not Path("/tmp/left-behind").exists()
     assert not Path("/dev/shm/left-dir").exists()
+
+
+def test_ipc_objects_a_run_leaves_behind_do_not_survive_it() -> None:
+    """All slots share the container's IPC namespace: shared memory, message queues and
+    semaphores a run creates (readable by anyone, if it says so) would reach later runs."""
+    status, [made] = _run(
+        _play(
+            _shell(
+                "ipcmk -M 4096 -p 0666; ipcmk -Q -p 0666; ipcmk -S 1 -p 0666; "
+                "touch /dev/mqueue/left-queue; ipcs | grep -c 0x || true"
+            ),
+        ),
+        slot=2,
+    )
+    assert status == "successful"
+    assert "Shared memory id" in made and "Message queue id" in made  # the run made them
+    assert ipc_objects(20002) == []
+    assert not Path("/dev/mqueue/left-queue").exists()
 
 
 def test_a_cancelled_isolated_run_stops_and_leaves_nothing() -> None:
