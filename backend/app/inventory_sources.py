@@ -22,7 +22,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.env_credentials import resolve_env
+from app.env_credentials import env_problem, resolve_env
 from app.inventory_render import (
     group_problem,
     hostname_problem,
@@ -226,6 +226,8 @@ def build_refresh_job(db: Session, refresh: InventoryRefresh) -> dict:
         except SecretStoreError as exc:
             exc.subject = f"credential '{credential.name}'"
             raise
+        if problem := env_problem(values):  # a name denied since the credential was saved
+            raise SourceError(f"credential '{credential.name}': {problem}")
         for name, value in values.items():
             if env.get(name, value) != value:
                 raise SourceError(f"two credentials set {name} to different values")

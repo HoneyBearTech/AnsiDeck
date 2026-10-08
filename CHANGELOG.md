@@ -16,8 +16,9 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   `64:ff9b::/96`) are judged by that address, so they can't reach private or metadata addresses through a
   NAT64 gateway; and credentials can no longer set `AWS_CONTAINER_*` (a refresh would have used an ECS
   task's own role), AWS credential file paths or CA bundle, `GIT_*`, `KRB5*`, `OPENSSL_MODULES`,
-  `SSH_AUTH_SOCK`, `HOSTALIASES` or `NETRC`. Upgrading: a credential that uses one of these names must
-  be renamed or removed before it can be saved again.
+  `SSH_AUTH_SOCK`, `HOSTALIASES` or `NETRC`. Upgrading: names are now also checked for every refresh, so
+  a refresh that uses a credential holding one of these names fails, naming it, until the variable is
+  removed from the credential.
 - Galaxy installs no longer install dependencies: ansible-galaxy fetched a collection's or role's
   dependencies from wherever their metadata pointed (plain `http://`, local paths), past the rules for
   `requirements.yml`, into the content every run loads. List every collection and role you need in
