@@ -87,7 +87,8 @@ describe("playbook editor", () => {
     });
     expect(await screen.findByRole("heading", { name: "Playbook" })).toBeInTheDocument();
     expect(screen.getByText(/removed from the repository/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Content")).toHaveAttribute("aria-readonly", "true");
+    // The editor attaches its labelled control in an effect, just after the label renders.
+    expect(await screen.findByLabelText("Content")).toHaveAttribute("aria-readonly", "true");
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
 });
