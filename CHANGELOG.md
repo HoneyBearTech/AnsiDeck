@@ -7,6 +7,17 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+### Security
+
+- In production the API gives no work to a worker that doesn't isolate runs (one started without
+  `ENVIRONMENT=production`, or from before per-slot users); production workers already refused to start
+  that way. Such a worker stays listed and raises the "Worker not isolated" alert.
+- `CORS_ORIGINS` can't contain `*` any more: the API allows credentials, and a wildcard would let any site
+  read it as the signed-in user. List the exact origins.
+- The documentation now says what a trigger API key amounts to: its runs' extra vars are templated by
+  Ansible, so whoever holds it can run commands in a worker slot and on the project's hosts, like an
+  operator (never with become).
+
 ### Changed
 
 - The web UI is built with Node.js 26 (the LTS line from 28 October 2026), up from 24. Only the build
