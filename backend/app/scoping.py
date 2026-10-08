@@ -19,9 +19,14 @@ from app.permissions import (
 )
 
 
-def deny(
-    db: Session, user: User, request: Request | None, permission: Permission, project_id: int | None
-) -> HTTPException:
+def _record_denial(
+    db: Session,
+    user: User,
+    request: Request | None,
+    permission: Permission,
+    project_id: int | None,
+    **detail: str,
+) -> None:
     audit.record(
         db,
         "permission.denied",
@@ -31,9 +36,29 @@ def deny(
         target_name=f"{request.method} {request.url.path}" if request else None,
         ip=client_ip(request) if request else None,
         project_id=project_id,
-        detail={"required": permission.value},
+        detail={"required": permission.value, **detail},
     )
+
+
+def deny(
+    db: Session, user: User, request: Request | None, permission: Permission, project_id: int | None
+) -> HTTPException:
+    _record_denial(db, user, request, permission, project_id)
     return HTTPException(status.HTTP_403_FORBIDDEN, "You do not have permission to do that")
+
+
+def hidden(
+    db: Session,
+    user: User,
+    request: Request | None,
+    permission: Permission,
+    project_id: int,
+    not_found: str,
+) -> HTTPException:
+    """Something in a project the caller isn't a member of: audited like any denial, and
+    answered exactly like something that doesn't exist (a 403 would confirm it does)."""
+    _record_denial(db, user, request, permission, project_id, reason="not_member")
+    return HTTPException(status.HTTP_404_NOT_FOUND, not_found)
 
 
 def get_scoped(
@@ -52,7 +77,7 @@ def get_scoped(
         raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)
     perms = project_permissions(db, user, obj.project_id)
     if not perms:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)
+        raise hidden(db, user, request, permission, obj.project_id, not_found)
     if permission not in perms:
         raise deny(db, user, request, permission, obj.project_id)
     return obj
@@ -62,9 +87,11 @@ def require_project_permission(
     db: Session, user: User, request: Request | None, project_id: int, permission: Permission
 ) -> Project:
     project = db.get(Project, project_id)
-    perms = project_permissions(db, user, project_id) if project else set()
-    if project is None or not perms:
+    if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
+    perms = project_permissions(db, user, project_id)
+    if not perms:
+        raise hidden(db, user, request, permission, project_id, "Project not found")
     if permission not in perms:
         raise deny(db, user, request, permission, project_id)
     return project

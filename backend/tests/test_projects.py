@@ -5,7 +5,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.db import get_sessionmaker
 from app.main import app
-from app.models import LintJob, User
+from app.models import AuditEvent, LintJob, User
 from app.permissions import Permission, Scope
 from tests.conftest import make_user_client
 from tests.routes import iter_api_routes
@@ -563,6 +563,16 @@ def test_project_admin_manages_only_their_own_projects_members(world) -> None:
     newcomer = _user_id(admin, "newcomer")
     boss_id = _user_id(admin, "a-boss")
 
+    # PUT only changes an existing member: for anyone else (and a missing id) it is the same
+    # 404, so ids can't be probed for who exists; adding goes by username
+    outsider = boss.put(f"/api/projects/{a['project']}/members/{newcomer}", json={"role": "viewer"})
+    missing = boss.put(f"/api/projects/{a['project']}/members/99999", json={"role": "viewer"})
+    assert (outsider.status_code, outsider.json()) == (404, {"detail": "Membership not found"})
+    assert (missing.status_code, missing.json()) == (404, {"detail": "Membership not found"})
+    added = boss.post(
+        f"/api/projects/{a['project']}/members", json={"username": "newcomer", "role": "viewer"}
+    )
+    assert added.status_code == 201
     assert (
         boss.put(
             f"/api/projects/{a['project']}/members/{newcomer}", json={"role": "operator"}
@@ -730,3 +740,29 @@ def test_project_admin_adds_members_by_username(world) -> None:
         f"/api/projects/{a['project']}/members", json={"username": "by-name", "role": "viewer"}
     )
     assert denied.status_code == 403
+
+
+def test_reaching_into_a_project_one_isnt_a_member_of_is_audited(world) -> None:
+    """Answered like a missing id (404), but recorded like any other denial."""
+    admin, a, b = world["admin"], world["a"], world["b"]
+    boss = _member(admin, "a-boss2", {a["project"]: "admin"})
+
+    def denials() -> list[AuditEvent]:
+        with get_sessionmaker()() as db:
+            return (
+                db.query(AuditEvent)
+                .filter(
+                    AuditEvent.action == "permission.denied", AuditEvent.actor_username == "a-boss2"
+                )
+                .all()
+            )
+
+    assert boss.get(f"/api/projects/{b['project']}/members").status_code == 404
+    assert boss.get(f"/api/playbooks/{b['playbook']}").status_code == 404
+    assert boss.get("/api/projects/99999/members").status_code == 404  # missing: not audited
+    assert boss.get("/api/playbooks/99999").status_code == 404
+    found = denials()
+    assert [(e.project_id, e.detail["reason"]) for e in found] == [
+        (b["project"], "not_member"),
+        (b["project"], "not_member"),
+    ]

@@ -192,6 +192,20 @@ def test_later_sign_ins_match_the_bound_subject_not_the_email(sso) -> None:
     assert len(_audit(admin, "auth.sso_link")) == 1
 
 
+@pytest.mark.parametrize(
+    "email",
+    ["\u212aate@example.com", "kate@e\u212axample.com", "\uff4bate@example.com"],
+    ids=["kelvin-sign", "kelvin-in-domain", "fullwidth-k"],
+)
+def test_a_lookalike_address_never_links_someone_elses_account(sso, email: str) -> None:
+    """str.lower() turns KELVIN SIGN into "k": a provider that verified such an address must
+    not link it to kate@example.com."""
+    fake, admin = sso
+    _provision(admin, "kate", "kate@example.com")
+    assert _refused(_sign_in(fake, sub="idp-mallory", email=email)[1], "not_linked")
+    assert _audit(admin, "auth.sso_link") == []
+
+
 def test_unknown_identities_get_nothing_and_no_account_is_created(sso) -> None:
     fake, admin = sso
     before = len(admin.get("/api/users").json())

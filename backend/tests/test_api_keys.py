@@ -250,7 +250,8 @@ def test_a_key_may_cancel_only_the_runs_it_triggered(world) -> None:
     assert key.post(f"/api/runs/{b['run']}/cancel").status_code == 404
     audited = admin.get("/api/audit", params={"action": "permission.denied"}).json()["items"]
     reasons = [e["detail"].get("reason") for e in audited if e["actor_username"] == "apikey:ci"]
-    assert reasons == ["api keys may only cancel their own runs"]
+    # the 404 for another project's run is audited too (as not_member), newest first
+    assert reasons == ["not_member", "api keys may only cancel their own runs"]
 
     cancelled = key.post(f"/api/runs/{own}/cancel")
     assert cancelled.status_code == 200
