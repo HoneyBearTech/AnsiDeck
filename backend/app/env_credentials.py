@@ -21,19 +21,24 @@ _DENIED = frozenset(
         # the process and its shell
         "PATH", "HOME", "TMPDIR", "TMP", "TEMP", "SHELL", "USER", "LOGNAME", "LANG",
         "TZ", "BASH_ENV", "ENV", "IFS", "GCONV_PATH", "GLIBC_TUNABLES", "OPENSSL_CONF",
-        "NODE_OPTIONS",
+        "OPENSSL_MODULES", "NODE_OPTIONS", "SSH_AUTH_SOCK", "HOSTALIASES", "NETRC",
         # TLS and proxies
-        "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
-        "ALL_PROXY", "FTP_PROXY",
-        # cloud metadata: a refresh never falls back to the host's own identity
-        "AWS_EC2_METADATA_DISABLED",
+        "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "AWS_CA_BUNDLE", "HTTP_PROXY", "HTTPS_PROXY",
+        "NO_PROXY", "ALL_PROXY", "FTP_PROXY",
+        # cloud metadata and files: a refresh never falls back to the host's own identity
+        # (AWS_CONTAINER_*: an ECS task role) or reads credentials from the worker's files
+        "AWS_EC2_METADATA_DISABLED", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE",
+        "AWS_WEB_IDENTITY_TOKEN_FILE",
         # AnsiDeck's own secrets (FORBIDDEN_ENV in app.worker.__main__)
         "CREDENTIAL_ENCRYPTION_KEY", "DATABASE_URL", "AUTH_SECRET_KEY",
         "SECRETS_STORE_TOKEN_FILE", "SECRETS_STORE_SECRET_ID_FILE", "SECRETS_STORE_ROLE_ID",
         "VAULT_TOKEN", "BAO_TOKEN",
     }
 )  # fmt: skip
-_DENIED_PREFIXES = ("LC_", "LD_", "PYTHON", "ANSIBLE_", "SSL_", "WORKER_", "ANSIDECK_", "DYLD_")
+_DENIED_PREFIXES = (
+    "LC_", "LD_", "PYTHON", "ANSIBLE_", "SSL_", "WORKER_", "ANSIDECK_", "DYLD_",
+    "AWS_CONTAINER_", "GIT_", "KRB5",
+)  # fmt: skip
 
 
 def name_problem(name: str) -> str | None:

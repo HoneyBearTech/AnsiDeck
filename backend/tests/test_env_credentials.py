@@ -161,3 +161,21 @@ def test_the_deny_list_covers_the_workers_own_environment() -> None:
     for name in (*FORBIDDEN_ENV, *(n for n in PASSTHROUGH_ENV if n.isupper())):
         assert name_problem(name) is not None, name
     assert check_env({"NETBOX_TOKEN": "t", "AWS_ACCESS_KEY_ID": "a"})
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+     "AWS_CONTAINER_AUTHORIZATION_TOKEN", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE",
+     "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_CA_BUNDLE", "GIT_SSH_COMMAND", "GIT_CONFIG_COUNT",
+     "KRB5_CONFIG", "KRB5CCNAME", "OPENSSL_MODULES", "SSH_AUTH_SOCK", "HOSTALIASES", "NETRC"],
+)  # fmt: skip
+def test_names_that_change_where_credentials_or_trust_come_from_are_refused(name: str) -> None:
+    """The ECS task role (AWS_CONTAINER_*) is the host's own identity, which a refresh never
+    uses; the others point at the worker's files, or change TLS, git, Kerberos or ssh."""
+    assert name_problem(name) == f"{name} can't be set by a credential"
+
+
+def test_ordinary_plugin_variables_are_still_allowed() -> None:
+    for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_PROFILE", "NETBOX_TOKEN"):
+        assert name_problem(name) is None

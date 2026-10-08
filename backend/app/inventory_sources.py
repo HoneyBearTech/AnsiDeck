@@ -22,7 +22,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.env_credentials import resolve_env
+from app.env_credentials import env_problem, resolve_env
 from app.inventory_render import (
     group_problem,
     hostname_problem,
@@ -83,7 +83,8 @@ def check_config(config: str) -> str:
     plugin = data.get("plugin")
     if not isinstance(plugin, str) or not PLUGIN_NAME.fullmatch(plugin):
         raise SourceError("'plugin' must name an inventory plugin, e.g. netbox.netbox.nb_inventory")
-    if plugin in _DENIED or plugin.removeprefix("ansible.builtin.") in _DENIED:
+    short = plugin.removeprefix("ansible.builtin.").removeprefix("ansible.legacy.")
+    if plugin in _DENIED or short in _DENIED:
         raise SourceError(f"the {plugin} plugin can't be used as a source")
     if data.get("cache"):
         raise SourceError("'cache' must be off: AnsiDeck keeps each refresh as a snapshot")
@@ -225,6 +226,8 @@ def build_refresh_job(db: Session, refresh: InventoryRefresh) -> dict:
         except SecretStoreError as exc:
             exc.subject = f"credential '{credential.name}'"
             raise
+        if problem := env_problem(values):  # a name denied since the credential was saved
+            raise SourceError(f"credential '{credential.name}': {problem}")
         for name, value in values.items():
             if env.get(name, value) != value:
                 raise SourceError(f"two credentials set {name} to different values")
@@ -376,7 +379,7 @@ def normalise(raw: bytes, static_hosts: list[str]) -> tuple[dict, list[str]]:
             all_vars = _vars(group.get("vars") or {}, "group all", warnings)
             continue
         if name == "ungrouped":
-            for host in group.get("hosts") or ():
+            for host in _names(group.get("hosts")):
                 add_host(host)
             continue
         if problem := group_problem(name):
@@ -408,10 +411,11 @@ def normalise(raw: bytes, static_hosts: list[str]) -> tuple[dict, list[str]]:
     }, warnings
 
 
-def _names(value: Any) -> list:
+def _names(value: Any) -> list[str]:
+    """A group's host or child names: ansible-inventory only ever writes lists of strings."""
     if value is None:
         return []
-    if not isinstance(value, list):
+    if not isinstance(value, list) or not all(isinstance(name, str) for name in value):
         raise SourceError("unexpected output from ansible-inventory")
     return value
 

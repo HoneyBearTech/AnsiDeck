@@ -20,9 +20,18 @@ class DestinationError(ValueError):
         self.retryable = retryable
 
 
+# IPv6 forms that carry an IPv4 address in their last 32 bits and can reach it: NAT64's
+# well-known prefix (where a NAT64 gateway exists) and the old IPv4-compatible form.
+_EMBEDS_IPV4 = (ipaddress.IPv6Network("64:ff9b::/96"), ipaddress.IPv6Network("::/96"))
+
+
 def public(address: Address) -> bool:
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-        address = address.ipv4_mapped
+    """Judged by the IPv4 address an IPv6 one carries, if it carries one."""
+    if isinstance(address, ipaddress.IPv6Address):
+        if address.ipv4_mapped:
+            address = address.ipv4_mapped
+        elif any(address in network for network in _EMBEDS_IPV4):
+            address = ipaddress.IPv4Address(int(address) & 0xFFFFFFFF)
     return address.is_global and not address.is_multicast
 
 

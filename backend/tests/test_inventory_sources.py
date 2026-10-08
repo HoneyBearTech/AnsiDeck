@@ -9,8 +9,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, update
 
 from app.db import get_sessionmaker
+from app.env_credentials import encrypt_env
 from app.models import (
     AuditEvent,
+    Credential,
     Inventory,
     InventoryRefresh,
     InventorySnapshot,
@@ -123,6 +125,37 @@ def _env_credential(client, env: dict, name: str = "plugin-env") -> int:
     response = client.post("/api/credentials", json={"name": name, "kind": "env", "env": env})
     assert response.status_code == 201, response.text
     return response.json()["id"]
+
+
+def test_a_credential_saved_before_a_name_was_denied_no_longer_reaches_refreshes(
+    client: TestClient,
+) -> None:
+    """Names are checked when a credential is saved, and again for every refresh, so one
+    saved before a name was denied (AWS_CONTAINER_*: the host's own ECS role) stops working."""
+    _login(client)
+    inventory_id = _inventory(client)
+    _add_source(client, inventory_id, "gen", GENERATOR)
+    assert _wait_refresh(client, inventory_id)["status"] == "success"
+    credential = _env_credential(client, {"NETBOX_TOKEN": "nb-sentinel-token-123"}, name="old")
+    with get_sessionmaker()() as db:
+        db.execute(
+            update(Credential)
+            .where(Credential.id == credential)
+            .values(encrypted_env=encrypt_env({"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/v2/x"}))
+        )
+        db.commit()
+    _add_source(
+        client,
+        inventory_id,
+        "uses-old",
+        "plugin: ansible.builtin.constructed\nstrict: false\n",
+        credential_id=credential,
+    )
+    failed = _wait_refresh(client, inventory_id)
+    assert failed["status"] == "failed"
+    assert failed["error"] == (
+        "credential 'old': AWS_CONTAINER_CREDENTIALS_RELATIVE_URI can't be set by a credential"
+    )
 
 
 def test_a_broken_source_fails_the_refresh_and_alerts_once(client: TestClient) -> None:
