@@ -1,6 +1,6 @@
 # uv, pinned by version and digest (a stage of its own so Dependabot updates it; keep
 # .github/workflows/ci.yml and fuzz.yml on the same version).
-FROM ghcr.io/astral-sh/uv:0.12.17@sha256:10787c682e4184e4f290de1171fd4703dc63de99221f10fe1c99002ce7fa9acc AS uv
+FROM ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a AS uv
 
 FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 AS base
 COPY --from=uv /uv /uvx /bin/
