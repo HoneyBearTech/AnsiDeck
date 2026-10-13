@@ -18,6 +18,7 @@ RUN_RECOVERED = "run.recovered"
 INVENTORY_REFRESH_FAILED = "inventory.refresh_failed"
 WORKER_OFFLINE = "worker.offline"
 WORKER_UNISOLATED = "worker.unisolated"
+WORKER_UNFILTERED = "worker.unfiltered"
 QUEUE_STUCK = "queue.stuck"
 SECRETS_UNAVAILABLE = "secrets.unavailable"
 LOGIN_ATTACK = "security.login_attack"
@@ -63,6 +64,13 @@ EVENTS: dict[str, EventInfo] = {
     WORKER_UNISOLATED: EventInfo(
         "Worker not isolated",
         "A worker runs playbooks as its own user, so runs can read each other's files.",
+        project=False,
+        group="Operations",
+    ),
+    WORKER_UNFILTERED: EventInfo(
+        "Worker egress not filtered",
+        "A worker's runs can reach the API and cloud metadata (its egress filter is off or "
+        "couldn't be updated).",
         project=False,
         group="Operations",
     ),

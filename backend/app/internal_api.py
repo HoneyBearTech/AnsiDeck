@@ -129,6 +129,7 @@ class ClaimIn(BaseModel):
     worker_id: str = Field(min_length=1, max_length=255)
     slots: int = Field(1, ge=1, le=256)
     isolated: bool | None = None  # None: a worker from before Phase 4C
+    egress_filtered: bool | None = None  # None: a worker from before its egress filter
     wait_seconds: float = Field(MAX_CLAIM_WAIT_SECONDS, ge=0, le=MAX_CLAIM_WAIT_SECONDS)
     # What the worker can do; one from before 4G (no kinds) is only ever given runs.
     kinds: list[Literal["run", "refresh", "lint"]] = Field(["run"], min_length=1, max_length=3)
@@ -170,6 +171,7 @@ class HeartbeatIn(BaseModel):
     worker_id: str = Field(min_length=1, max_length=255)
     slots: int = Field(1, ge=1, le=256)
     isolated: bool | None = None
+    egress_filtered: bool | None = None
     runs: list[HeartbeatRun] = Field(max_length=256)
     refreshes: list[HeartbeatRefresh] = Field([], max_length=256)
     lints: list[HeartbeatLint] = Field([], max_length=256)
@@ -229,10 +231,10 @@ def _claim_once(worker_id: str, kinds: tuple[str, ...] = ("run",)) -> Claim | No
         db.close()
 
 
-def _seen(worker_id: str, slots: int, isolated: bool | None) -> None:
+def _seen(body: ClaimIn) -> None:
     db = get_sessionmaker()()
     try:
-        record_worker(db, worker_id, slots, isolated)
+        record_worker(db, body.worker_id, body.slots, body.isolated, body.egress_filtered)
         db.commit()
     finally:
         db.close()
@@ -241,7 +243,7 @@ def _seen(worker_id: str, slots: int, isolated: bool | None) -> None:
 @router.post("/claim", response_model=ClaimOut, responses={204: {"description": "Nothing to run"}})
 async def claim(body: ClaimIn) -> ClaimOut | Response:
     """Long poll: returns as soon as a run can be claimed, or 204 after wait_seconds."""
-    await asyncio.to_thread(_seen, body.worker_id, body.slots, body.isolated)
+    await asyncio.to_thread(_seen, body)
     # A production worker refuses to start without isolation; this covers one started without
     # ENVIRONMENT=production (or from before 4C): it stays visible, and alerts, but gets no work.
     if body.isolated is not True and get_settings().environment.lower() == "production":
@@ -398,7 +400,7 @@ def heartbeat(body: HeartbeatIn, db: Session = Depends(get_db)) -> dict[str, lis
     """Renews the lease of each run the worker still owns: "ok", "cancel" (stop it), or "gone"
     (the claim ended; stop without reporting)."""
     lease = get_settings().run_lease_seconds
-    record_worker(db, body.worker_id, body.slots, body.isolated)
+    record_worker(db, body.worker_id, body.slots, body.isolated, body.egress_filtered)
     answers: list[dict] = []
     for item in body.runs:
         row = db.execute(

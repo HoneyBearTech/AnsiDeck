@@ -170,15 +170,24 @@ def fail_run(run: Run, status: RunStatus, reason: str) -> None:
         metrics.run_finished(session, run.project_id, status.value, run.started_at)
 
 
-def record_worker(db: Session, worker_id: str, slots: int, isolated: bool | None = None) -> None:
+def record_worker(
+    db: Session,
+    worker_id: str,
+    slots: int,
+    isolated: bool | None = None,
+    egress_filtered: bool | None = None,
+) -> None:
     """Marks the worker as seen now (the caller commits)."""
-    stmt = insert(Worker).values(id=worker_id[:255], slots=slots, isolated=isolated)
+    stmt = insert(Worker).values(
+        id=worker_id[:255], slots=slots, isolated=isolated, egress_filtered=egress_filtered
+    )
     db.execute(
         stmt.on_conflict_do_update(
             index_elements=[Worker.id],
             set_={
                 "slots": stmt.excluded.slots,
                 "isolated": stmt.excluded.isolated,
+                "egress_filtered": stmt.excluded.egress_filtered,
                 "last_seen_at": func.now(),
             },
         )
@@ -186,7 +195,7 @@ def record_worker(db: Session, worker_id: str, slots: int, isolated: bool | None
     # In a savepoint: notifications must never fail a claim or heartbeat.
     try:
         with db.begin_nested():
-            worker_seen(db, worker_id, slots, isolated)
+            worker_seen(db, worker_id, slots, isolated, egress_filtered)
     except Exception:
         logger.exception("could not check worker %s for notifications", worker_id)
 

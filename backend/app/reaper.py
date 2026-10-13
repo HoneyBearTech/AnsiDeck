@@ -24,7 +24,7 @@ from app.lint import TIMEOUT_GRACE_SECONDS as LINT_TIMEOUT_GRACE_SECONDS
 from app.lint import end_lint, prune_lint_jobs
 from app.lint import wait_reason as lint_wait_reason
 from app.models import GalaxyInstall, InventoryRefresh, LintJob, Run, RunStatus, Worker
-from app.notifications import WORKER_OFFLINE, WORKER_UNISOLATED
+from app.notifications import WORKER_OFFLINE, WORKER_UNFILTERED, WORKER_UNISOLATED
 from app.notifications.alerts import clear_alerts
 from app.notifications.dispatch import prune as prune_deliveries
 from app.notifications.ops import check_queue, check_workers
@@ -223,7 +223,12 @@ def reap_once() -> list[int]:
             delete(Worker).where(Worker.last_seen_at < func.now() - retention).returning(Worker.id)
         ).all()
         clear_alerts(
-            db, [f"{event}:{w}" for w in gone for event in (WORKER_OFFLINE, WORKER_UNISOLATED)]
+            db,
+            [
+                f"{event}:{w}"
+                for w in gone
+                for event in (WORKER_OFFLINE, WORKER_UNISOLATED, WORKER_UNFILTERED)
+            ],
         )
         prune_deliveries(db)
         db.commit()

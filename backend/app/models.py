@@ -728,6 +728,8 @@ class Worker(Base):
     slots: Mapped[int] = mapped_column(Integer)
     # Whether its runs execute as per-slot users (app.run_isolation); None: not reported.
     isolated: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    # Whether its runs can't reach the API or cloud metadata (app.worker.egress); None: unknown.
+    egress_filtered: Mapped[bool | None] = mapped_column(Boolean, default=None)
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

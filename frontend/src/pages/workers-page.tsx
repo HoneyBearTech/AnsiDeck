@@ -77,6 +77,8 @@ export function WorkersPage() {
   const slots = online.reduce((sum, w) => sum + w.slots, 0);
   const busy = online.reduce((sum, w) => sum + w.running, 0);
   const unisolated = online.filter((w) => w.isolated === false);
+  // An unisolated worker's runs reach everything anyway: the banner above covers it.
+  const unfiltered = online.filter((w) => w.isolated === true && w.egress_filtered === false);
 
   return (
     <div className="flex flex-col gap-6">
@@ -117,6 +119,20 @@ export function WorkersPage() {
         </div>
       )}
 
+      {unfiltered.length > 0 && (
+        <div className="rounded-md bg-status-changed/10 p-4">
+          <p className="text-sm font-medium text-status-changed">
+            {unfiltered.length === 1 ? "A worker lets its runs" : `${unfiltered.length} workers let their runs`}{" "}
+            reach the API and cloud metadata
+          </p>
+          <p className="text-sm text-status-changed">
+            Its egress filter is off (<code>WORKER_EGRESS_FILTER=false</code>) or couldn't be updated (see the
+            worker's log). Give it the NET_ADMIN capability as docker-compose.yml does, or restrict the workers'
+            network some other way.
+          </p>
+        </div>
+      )}
+
       {store?.enabled && <SecretStoreCard status={store} />}
 
       <div className="flex flex-col gap-2">
@@ -135,6 +151,16 @@ export function WorkersPage() {
                 {worker.isolated === false && (
                   <Badge variant="changed" title="Playbooks run as the worker's own user">
                     not isolated
+                  </Badge>
+                )}
+                {worker.isolated === true && worker.egress_filtered === true && (
+                  <Badge variant="outline" title="Runs can't reach the API or cloud metadata">
+                    egress filtered
+                  </Badge>
+                )}
+                {worker.isolated === true && worker.egress_filtered === false && (
+                  <Badge variant="changed" title="Runs can reach the API and cloud metadata">
+                    egress open
                   </Badge>
                 )}
                 <span className="font-mono text-sm">{worker.id}</span>

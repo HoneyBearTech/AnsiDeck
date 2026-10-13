@@ -3,6 +3,17 @@
     "schemas": {
       "ClaimIn": {
         "properties": {
+          "egress_filtered": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Egress Filtered"
+          },
           "isolated": {
             "anyOf": [
               {
@@ -272,6 +283,17 @@
       },
       "HeartbeatIn": {
         "properties": {
+          "egress_filtered": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Egress Filtered"
+          },
           "isolated": {
             "anyOf": [
               {

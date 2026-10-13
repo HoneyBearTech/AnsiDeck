@@ -840,6 +840,7 @@ def test_deleting_a_channel_is_audited_without_its_url(client) -> None:
 GLOBAL_EVENTS = (
     "worker.offline",
     "worker.unisolated",
+    "worker.unfiltered",
     "queue.stuck",
     "security.login_attack",
     "security.admin_change",
@@ -850,10 +851,14 @@ def _events_queued() -> list[tuple[str, dict]]:
     return [(d.event, d.payload) for d in _deliveries()]
 
 
-def _heartbeat(worker_id: str, isolated: bool | None = True) -> None:
+def _heartbeat(
+    worker_id: str, isolated: bool | None = True, egress_filtered: bool | None = None
+) -> None:
     body = {"worker_id": worker_id, "slots": 2, "runs": []}
     if isolated is not None:
         body["isolated"] = isolated
+    if egress_filtered is not None:
+        body["egress_filtered"] = egress_filtered
     assert internal_client().post("/internal/heartbeat", json=body).status_code == 200
 
 
@@ -901,11 +906,33 @@ def test_a_worker_that_cannot_isolate_is_reported_once(client) -> None:
 
 
 @pytest.mark.no_worker
+def test_a_worker_whose_runs_can_reach_the_api_is_reported_once(client) -> None:
+    from app.models import NotificationAlert
+
+    _channel(None, name="ops", events=("worker.unfiltered",))
+    _heartbeat("open", egress_filtered=False)
+    _heartbeat("open", egress_filtered=False)
+    _heartbeat("dev", isolated=False, egress_filtered=False)  # the unisolated alert covers it
+    _heartbeat("old")  # a worker from before the egress filter doesn't say
+    _heartbeat("closed", egress_filtered=True)
+    assert [(e, p["worker"]) for e, p in _events_queued()] == [("worker.unfiltered", "open")]
+    _heartbeat("open", egress_filtered=True)  # fixed: the alert clears
+    db = get_sessionmaker()()
+    try:
+        keys = [a.key for a in db.query(NotificationAlert)]
+    finally:
+        db.close()
+    assert "worker.unfiltered:open" not in keys
+
+
+@pytest.mark.no_worker
 def test_forgotten_workers_take_their_alerts_with_them(client) -> None:
     from app.models import NotificationAlert
     from app.reaper import reap_once
 
     _heartbeat("gone", isolated=False)
+    _heartbeat("open", egress_filtered=False)
+    _set_worker_seen("open", 25 * 3600)
     _set_worker_seen("gone", 200)
     reap_once()
     _set_worker_seen("gone", 25 * 3600)
@@ -1079,6 +1106,7 @@ def test_ops_and_security_events_are_for_global_channels_only(client) -> None:
         "inventory.refresh_failed": "Inventories",
         "worker.offline": "Operations",
         "worker.unisolated": "Operations",
+        "worker.unfiltered": "Operations",
         "queue.stuck": "Operations",
         "secrets.unavailable": "Operations",
         "security.login_attack": "Security",
@@ -1107,6 +1135,13 @@ def test_ops_and_security_events_are_for_global_channels_only(client) -> None:
             "worker.unisolated",
             {"worker": "w1"},
             "Worker w1 runs playbooks without isolation",
+            0xE5484D,
+            "/workers",
+        ),
+        (
+            "worker.unfiltered",
+            {"worker": "w1"},
+            "Worker w1 lets runs reach the API and cloud metadata",
             0xE5484D,
             "/workers",
         ),

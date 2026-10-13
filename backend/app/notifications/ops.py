@@ -15,6 +15,7 @@ from app.notifications import (
     RESOLVED,
     SECRETS_UNAVAILABLE,
     WORKER_OFFLINE,
+    WORKER_UNFILTERED,
     WORKER_UNISOLATED,
 )
 from app.notifications.alerts import clear_alert, raise_alert
@@ -39,7 +40,13 @@ def _iso(value: datetime | None) -> str | None:
     return value.astimezone(UTC).isoformat() if value else None
 
 
-def worker_seen(db: Session, worker_id: str, slots: int, isolated: bool | None) -> None:
+def worker_seen(
+    db: Session,
+    worker_id: str,
+    slots: int,
+    isolated: bool | None,
+    egress_filtered: bool | None = None,
+) -> None:
     """On every claim and heartbeat (the caller commits)."""
     worker_id = worker_id[:255]
     if clear_alert(db, f"{WORKER_OFFLINE}:{worker_id}"):
@@ -55,6 +62,13 @@ def worker_seen(db: Session, worker_id: str, slots: int, isolated: bool | None) 
             emit(db, WORKER_UNISOLATED, project_id=None, data={"worker": worker_id})
     elif isolated is True:
         clear_alert(db, key)  # fixed: no all-clear needed, the Workers page shows it
+    # Only for isolated workers: an unisolated one has the alert above, and runs as itself.
+    key = f"{WORKER_UNFILTERED}:{worker_id}"
+    if isolated is True and egress_filtered is False:
+        if raise_alert(db, key):
+            emit(db, WORKER_UNFILTERED, project_id=None, data={"worker": worker_id})
+    elif egress_filtered is True or isolated is False:
+        clear_alert(db, key)
 
 
 def check_workers(db: Session, retention_seconds: int) -> None:
