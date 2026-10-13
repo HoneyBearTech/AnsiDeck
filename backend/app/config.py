@@ -1,6 +1,6 @@
 import os
 import re
-from functools import lru_cache
+import threading
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -441,7 +441,31 @@ class Settings(BaseSettings):
 DEFAULT_SECRETS_DIR = "/run/secrets"
 
 
-@lru_cache
-def get_settings() -> Settings:
-    secrets_dir = os.environ.get("SECRETS_DIR", DEFAULT_SECRETS_DIR)
-    return Settings(_secrets_dir=secrets_dir if os.path.isdir(secrets_dir) else None)
+class _SettingsCache:
+    """get_settings(): the settings, read once and shared. Only tests change the environment and
+    call cache_clear(). A read already under way then (in a worker thread, say) still returns, but
+    isn't kept: functools.lru_cache would keep it and bring back the settings from before."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._settings: Settings | None = None
+        self._generation = 0
+
+    def __call__(self) -> Settings:
+        settings, generation = self._settings, self._generation
+        if settings is not None:
+            return settings
+        secrets_dir = os.environ.get("SECRETS_DIR", DEFAULT_SECRETS_DIR)
+        settings = Settings(_secrets_dir=secrets_dir if os.path.isdir(secrets_dir) else None)
+        with self._lock:
+            if generation == self._generation:
+                self._settings = settings
+        return settings
+
+    def cache_clear(self) -> None:
+        with self._lock:
+            self._generation += 1
+            self._settings = None
+
+
+get_settings = _SettingsCache()

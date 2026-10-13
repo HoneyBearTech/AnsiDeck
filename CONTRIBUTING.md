@@ -85,7 +85,10 @@ names the failing test with its assertion; a coverage failure prints the uncover
 
 Run the same checks CI runs and make sure they pass. The backend tests need Postgres:
 `docker compose up -d postgres` is enough. They create and drop their own `ansideck_test` database there; set
-`TEST_DATABASE_URL` to use another server (its database name must end in `_test`).
+`TEST_DATABASE_URL` to use another server (its database name must end in `_test`). Nothing else from your
+machine reaches them: they ignore `.env`, drop credential-like environment variables (cloud, secret store,
+ssh-agent, `ANSIBLE_*`), and use a temporary home, data and secrets directory (`tests/test_suite_isolation.py`
+fails if that ever stops being true).
 
 Schema changes go through Alembic: edit `app/models.py`, then generate a migration with
 `uv run alembic revision --autogenerate -m "..."`, review it, and commit it with the model change. A test fails
