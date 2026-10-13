@@ -43,7 +43,7 @@ describe("galaxy", () => {
       });
       expect(await screen.findByText("community.general")).toBeInTheDocument();
       expect(screen.getByText("unknown version")).toBeInTheDocument();
-      const editor = screen.getByLabelText("requirements.yml");
+      const editor = await screen.findByLabelText("requirements.yml");
       await vi.waitFor(() => expect(editorText(editor)).toContain("community.general"));
       setEditorText(editor, `${editorText(editor)}  - name: ansible.posix\n`);
       expect(screen.getByText("Save your changes first.")).toBeInTheDocument();

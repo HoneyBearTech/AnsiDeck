@@ -231,7 +231,7 @@ describe("saving templates from the form", () => {
       routes: { ...FORM, "GET /runs/:id": run() },
     });
     await screen.findByText("Filled in from run #7.");
-    setEditorText(screen.getByLabelText("Extra vars (JSON)"), "nope");
+    setEditorText(await screen.findByLabelText("Extra vars (JSON)"), "nope");
     await user.click(await screen.findByRole("button", { name: "Save as template" }));
     await user.type(screen.getByLabelText("Name"), "x");
     await user.click(screen.getByRole("button", { name: "Save template" }));
