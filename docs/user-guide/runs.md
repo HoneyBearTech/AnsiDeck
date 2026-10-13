@@ -37,7 +37,8 @@ saves the form as a [run template](#run-templates) instead.
 ## Following a run
 
 The run's page shows the playbook, inventory and target, who started it and with which credential and
-options, the git commit for synced playbooks, and the output **live** as Ansible works, coloured as on the
+options, the git commit for synced playbooks, which refresh of the inventory's sources it used (when, and
+how many hosts they had), and the output **live** as Ansible works, coloured as on the
 command line (ok green, changed yellow, failed red, skipped blue; the recap per host by its outcome). If the
 connection drops, it reconnects and continues where it left off. When the run ends: its status, how many hosts were
 ok, changed, failed or unreachable, how long it waited and ran, and Ansible's exit code.

@@ -319,10 +319,11 @@ def test_every_project_scoped_route_with_an_id_is_covered_by_the_idor_matrix() -
         ("PUT", "/api/projects/{project_id}/members/{user_id}"),
         ("POST", "/api/projects/{project_id}/members"),
         ("DELETE", "/api/projects/{project_id}/members/{user_id}"),
-        # API keys: exercised in tests/test_api_keys.py (incl. cross-project revoke)
+        # API keys: exercised in tests/test_api_keys.py (incl. cross-project revoke and rotate)
         ("GET", "/api/projects/{project_id}/api-keys"),
         ("POST", "/api/projects/{project_id}/api-keys"),
         ("DELETE", "/api/projects/{project_id}/api-keys/{key_id}"),
+        ("POST", "/api/projects/{project_id}/api-keys/{key_id}/rotate"),
         # notification channels: tests/test_notifications.py (incl. another project's channel)
         ("GET", "/api/projects/{project_id}/notifications/channels"),
         ("POST", "/api/projects/{project_id}/notifications/channels"),

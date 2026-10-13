@@ -120,7 +120,16 @@ class ApiKey(Base):
     history (and audit trail) stays intact."""
 
     __tablename__ = "api_keys"
-    __table_args__ = (UniqueConstraint("project_id", "name"),)
+    # A revoked key's name can be used again (by its rotation, or a new key).
+    __table_args__ = (
+        Index(
+            "ux_api_keys_project_name",
+            "project_id",
+            "name",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(
@@ -555,6 +564,12 @@ class Run(Base):
     inventory_snapshot_id: Mapped[int | None] = mapped_column(
         ForeignKey("inventory_snapshots.id", ondelete="SET NULL"), default=None
     )
+    # What that snapshot was, kept with the run: old snapshots are pruned once no queued or
+    # running run pins them.
+    inventory_snapshot_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    inventory_snapshot_hosts: Mapped[int | None] = mapped_column(Integer, default=None)
     playbook_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
     timeout_seconds: Mapped[int] = mapped_column(
         Integer,

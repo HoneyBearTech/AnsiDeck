@@ -110,6 +110,8 @@ class Settings(BaseSettings):
 
     # Audit events older than this are pruned at startup; 0 keeps them forever.
     audit_retention_days: int = 365
+    # API keys revoked or expired longer ago than this are deleted; 0 keeps them forever.
+    api_key_retention_days: int = Field(90, ge=0)
 
     # Notifications (app.notifications). Webhooks to loopback, private, link-local and other
     # non-public addresses are refused unless their host name, address or CIDR is listed here

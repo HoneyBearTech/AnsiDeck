@@ -438,3 +438,58 @@ def test_0016_links_existing_keys_to_their_creator_by_username_and_downgrades() 
         with admin.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
         admin.dispose()
+
+
+def test_0018_keeps_the_snapshot_a_run_used_and_downgrades() -> None:
+    url = make_url(TEST_DATABASE_URL)
+    scratch = url.database.removesuffix("_test") + "_migration_test"
+    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{scratch}"'))
+    engine = create_engine(url.set(database=scratch))
+    config = alembic_config()
+
+    def migrate(step, revision: str) -> None:
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            step(config, revision)
+
+    try:
+        migrate(command.upgrade, "0017")
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO projects (name, description) VALUES ('P', '')"))
+            conn.execute(text("INSERT INTO inventories (project_id, name) VALUES (1, 'inv')"))
+            conn.execute(
+                text(
+                    "INSERT INTO inventory_snapshots (inventory_id, data, sha256, host_count, "
+                    "group_count, warnings, sources, created_at) VALUES (1, '{}', 'x', 12, 3, "
+                    "'[]', '[]', '2026-10-01T10:00:00Z')"
+                )
+            )
+            for snapshot in (1, None):
+                conn.execute(
+                    text(
+                        "INSERT INTO runs (project_id, playbook_name, inventory_name, "
+                        "credential_name, become, check_mode, diff_mode, status, triggered_by, "
+                        "inventory_snapshot_id) "
+                        "VALUES (1, 'pb', 'inv', 'c', false, false, false, 'success', 'a', :s)"
+                    ),
+                    {"s": snapshot},
+                )
+        migrate(command.upgrade, "0018")
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT to_char(inventory_snapshot_at AT TIME ZONE 'UTC', "
+                    "'YYYY-MM-DD HH24:MI'), inventory_snapshot_hosts FROM runs ORDER BY id"
+                )
+            ).all()
+        assert [tuple(r) for r in rows] == [("2026-10-01 10:00", 12), (None, None)]
+        migrate(command.downgrade, "0017")
+        migrate(command.upgrade, "0018")
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        admin.dispose()

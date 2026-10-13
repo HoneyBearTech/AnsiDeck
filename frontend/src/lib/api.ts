@@ -421,6 +421,9 @@ export interface Run {
   hosts_unreachable: number | null;
   // Why a queued run hasn't started (getRun only; null otherwise).
   waiting_reason: string | null;
+  // Runs on an inventory with sources: when the snapshot it used was refreshed, and its hosts.
+  inventory_snapshot_at: string | null;
+  inventory_snapshot_hosts: number | null;
   // Runs of playbooks synced from git: the commit they execute and a link to it.
   git_source_name: string | null;
   git_commit: string | null;
@@ -745,6 +748,11 @@ export const api = {
         expires_in_days: expiresInDays,
         ...(currentPassword ? { current_password: currentPassword } : {}),
       }),
+    }),
+  rotateApiKey: (projectId: number, keyId: number, currentPassword?: string) =>
+    request<ApiKeyCreated>(`/projects/${projectId}/api-keys/${keyId}/rotate`, {
+      method: "POST",
+      body: JSON.stringify(currentPassword ? { current_password: currentPassword } : {}),
     }),
   revokeApiKey: (projectId: number, keyId: number) =>
     request<void>(`/projects/${projectId}/api-keys/${keyId}`, { method: "DELETE" }),

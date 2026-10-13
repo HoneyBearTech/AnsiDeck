@@ -123,6 +123,8 @@ def test_a_project_admin_cannot_revoke_or_see_another_projects_keys(world) -> No
         admin_of_b.delete(f"/api/projects/{b['project']}/api-keys/{victim['id']}").status_code
         == 404
     )
+    for project in (a["project"], b["project"]):  # nor rotate it, either way
+        assert _rotate(admin_of_b, project, victim["id"], password=TEST_PASSWORD).status_code == 404
     assert admin_of_b.get(f"/api/projects/{b['project']}/api-keys").json() == []
     assert key.get("/api/runs").status_code == 200  # the key is untouched
 
@@ -574,3 +576,127 @@ def test_a_recent_sso_sign_in_counts_as_re_authentication(world, monkeypatch) ->
         ).status_code
         == 201
     )
+
+
+# ------------------------------------------------------------------ rotation and pruning
+
+
+def _rotate(admin: TestClient, project_id: int, key_id: int, password="admin"):
+    return admin.post(
+        f"/api/projects/{project_id}/api-keys/{key_id}/rotate",
+        json={"current_password": password},
+    )
+
+
+def test_rotating_replaces_the_key_and_revokes_the_old_one_at_once(world) -> None:
+    admin, a = world["admin"], world["a"]
+    old = _create_key(admin, a["project"], name="deploy", preset="read-only", expires_in_days=30)
+    old_key = _key_client(old["token"])
+    assert old_key.get("/api/runs").status_code == 200
+
+    response = _rotate(admin, a["project"], old["id"])
+    assert response.status_code == 201, response.text
+    new = response.json()
+    assert (new["name"], new["preset"], new["status"]) == ("deploy", "read-only", "active")
+    assert new["token"] != old["token"] and new["prefix"] != old["prefix"]
+    lifetime = datetime.fromisoformat(new["expires_at"]) - datetime.fromisoformat(new["created_at"])
+    assert round(lifetime.total_seconds() / 86400) == 30  # the old key's lifetime
+    assert old_key.get("/api/runs").status_code == 401
+    assert _key_client(new["token"]).get("/api/runs").status_code == 200
+
+    keys = {k["id"]: k for k in admin.get(f"/api/projects/{a['project']}/api-keys").json()}
+    assert keys[old["id"]]["status"] == "revoked" and keys[old["id"]]["revoked_at"]
+    rotated = admin.get("/api/audit", params={"action": "apikey.rotate"}).json()["items"]
+    assert rotated[0]["target_id"] == new["id"]
+    assert rotated[0]["detail"]["replaces"] == old["prefix"]
+    assert old["token"] not in json.dumps(rotated) and new["token"] not in json.dumps(rotated)
+
+
+def test_rotating_needs_the_password_and_a_key_that_isnt_revoked(world) -> None:
+    admin, a, b = world["admin"], world["a"], world["b"]
+    created = _create_key(admin, a["project"])
+    assert _rotate(admin, a["project"], created["id"], password="wrong").status_code == 401
+    assert _rotate(admin, b["project"], created["id"]).status_code == 404  # another project's
+    assert _rotate(admin, a["project"], 999999).status_code == 404
+    assert admin.delete(f"/api/projects/{a['project']}/api-keys/{created['id']}").status_code == 204
+    revoked = _rotate(admin, a["project"], created["id"])
+    assert revoked.status_code == 409 and "Create a new one" in revoked.json()["detail"]
+
+
+def test_an_expired_key_can_be_rotated_into_a_working_one(world) -> None:
+    admin, a = world["admin"], world["a"]
+    created = _create_key(admin, a["project"])
+    _set(created["id"], expires_at=datetime.now(UTC) - timedelta(days=1))
+    new = _rotate(admin, a["project"], created["id"]).json()
+    assert _key_client(new["token"]).get("/api/runs").status_code == 200
+
+
+def test_only_project_admins_rotate_keys_and_never_with_a_key(world) -> None:
+    admin, a = world["admin"], world["a"]
+    created = _create_key(admin, a["project"])
+    operator = _member(admin, "rot-op", {a["project"]: "operator"})
+    assert _rotate(operator, a["project"], created["id"], password=TEST_PASSWORD).status_code in (
+        403,
+        404,
+    )
+    path = f"/api/projects/{a['project']}/api-keys/{created['id']}/rotate"
+    assert _key_client(created["token"]).post(path, json={}).status_code == 403  # sessions only
+    assert _key_client(created["token"]).get("/api/runs").status_code == 200  # untouched
+
+
+def test_a_revoked_keys_name_can_be_used_again(world) -> None:
+    admin, a = world["admin"], world["a"]
+    first = _create_key(admin, a["project"], name="ci")
+    assert admin.delete(f"/api/projects/{a['project']}/api-keys/{first['id']}").status_code == 204
+    second = _create_key(admin, a["project"], name="ci")
+    assert second["id"] != first["id"]
+    dup = {"name": "ci", "preset": "trigger", "current_password": "admin"}
+    assert admin.post(f"/api/projects/{a['project']}/api-keys", json=dup).status_code == 409
+
+
+def test_old_revoked_and_expired_keys_are_pruned(world, monkeypatch) -> None:
+    from app.reaper import reap_once
+
+    admin, a = world["admin"], world["a"]
+    now = datetime.now(UTC)
+    keys = {name: _create_key(admin, a["project"], name=name)["id"] for name in "abcde"}
+    _set(keys["a"], revoked_at=now - timedelta(days=91))  # pruned
+    _set(keys["b"], revoked_at=now - timedelta(days=89))  # kept: recently revoked
+    _set(keys["c"], expires_at=now - timedelta(days=91))  # pruned
+    _set(keys["d"], expires_at=now - timedelta(days=1))  # kept: recently expired
+    run = admin.post("/api/runs", json=_run_body(a))  # a run whose key goes away keeps its history
+    assert run.status_code == 201
+    reap_once()
+    left = {k["name"] for k in admin.get(f"/api/projects/{a['project']}/api-keys").json()}
+    assert left == {"b", "d", "e"}
+
+    monkeypatch.setenv("API_KEY_RETENTION_DAYS", "0")  # keep forever
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    _set(keys["b"], revoked_at=now - timedelta(days=1000))
+    reap_once()
+    get_settings.cache_clear()
+    left = {k["name"] for k in admin.get(f"/api/projects/{a['project']}/api-keys").json()}
+    assert left == {"b", "d", "e"}
+
+
+def test_a_run_started_by_a_pruned_key_keeps_its_history(world) -> None:
+    from app.api_keys import prune_keys
+    from app.models import Run
+
+    admin, a = world["admin"], world["a"]
+    created = _create_key(admin, a["project"])
+    run = _key_client(created["token"]).post("/api/runs", json=_run_body(a)).json()
+    _wait_for_completion(admin, run["id"])
+    _set(created["id"], revoked_at=datetime.now(UTC) - timedelta(days=100))
+    db = get_sessionmaker()()
+    try:
+        assert prune_keys(db, 90) == 1
+        db.commit()
+        kept = db.get(Run, run["id"])
+        assert kept.triggered_by_api_key_id is None
+        assert kept.triggered_by == run["triggered_by"]
+    finally:
+        db.close()
+    assert admin.get(f"/api/runs/{run['id']}").status_code == 200

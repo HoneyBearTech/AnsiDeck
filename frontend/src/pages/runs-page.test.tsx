@@ -188,10 +188,15 @@ describe("run detail", () => {
           git_commit: "0123456789abcdef",
           playbook_path: "site.yml",
           commit_url: "https://git.example/infra/commit/0123456789abcdef",
+          inventory_snapshot_at: "2026-10-05T11:58:00Z",
+          inventory_snapshot_hosts: 12,
         }),
       },
     });
     expect(await screen.findByText(/vault: prod-vault · become · check · diff · limit: web1/)).toBeInTheDocument();
+    expect(
+      screen.getByText(`Inventory sources as of ${new Date("2026-10-05T11:58:00Z").toLocaleString()} · 12 hosts from them`),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "01234567" })).toHaveAttribute("href", "https://git.example/infra/commit/0123456789abcdef");
     expect(screen.getByText("3 hosts")).toBeInTheDocument();
     expect(screen.getByText("1 changed")).toBeInTheDocument();
