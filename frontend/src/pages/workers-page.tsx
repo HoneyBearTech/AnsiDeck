@@ -112,7 +112,7 @@ export function WorkersPage() {
           <p className="text-sm text-status-changed">
             Its playbooks run as the worker's own user and can read other runs' files. Fine for development
             only; in production a worker refuses to start this way. Run it as docker-compose.yml does (as root
-            with only the SETUID, SETGID, CHOWN and KILL capabilities).
+            with only the SETUID, SETGID, CHOWN, KILL and NET_ADMIN capabilities).
           </p>
         </div>
       )}

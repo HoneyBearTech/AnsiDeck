@@ -1,9 +1,9 @@
 """Per-slot run users for real: playbooks run through run_executor as ansideck-run<n>, from a
-process with the worker's privileges (root with only SETUID, SETGID and KILL). Skipped
-elsewhere; CI runs it in the backend image with the worker's compose settings:
+process with the worker's privileges (root with only SETUID, SETGID, CHOWN, KILL and
+NET_ADMIN). Skipped elsewhere; CI runs it in the backend image with the worker's compose settings:
 
     docker run --rm --user 0 --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add CHOWN \\
-      --cap-add KILL \\
+      --cap-add KILL --cap-add NET_ADMIN \\
       --security-opt no-new-privileges:true --read-only --tmpfs /tmp \\
       -e PYTHONDONTWRITEBYTECODE=1 -e ANSIDECK_REQUIRE_ISOLATION=1 \\
       -e PATH=/app/.venv/bin:/usr/local/bin:/usr/bin:/bin <backend dev image> \\

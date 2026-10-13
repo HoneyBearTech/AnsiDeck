@@ -5,6 +5,8 @@ Usage: python3 smoke_run.py <api url> <admin password> <path to an OpenSSH priva
 
 With --store-path the credential is a reference into the secret store (created once, then
 reused); --expect-reason expects the run to fail with a status reason containing that text.
+--check-egress <API host> also has the playbook try the API's ports (as the worker reaches the
+API) and cloud metadata: the worker's egress filter must refuse all of them.
 Standard library only (it runs on the CI host, not in the image).
 """
 
@@ -34,6 +36,28 @@ PLAYBOOK = """\
       ansible.builtin.assert:
         that: uid.stdout | int >= 20000
 """
+EGRESS_TASKS = """\
+    - name: try the API and cloud metadata
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -c
+          - |
+            import errno, socket
+            for target in [("API_HOST", 8000), ("API_HOST", 8001), ("API_HOST", 8002),
+                           ("169.254.169.254", 80)]:
+                try:
+                    socket.create_connection(target, 3).close()
+                    print(*target, "connected")
+                except OSError as exc:
+                    print(*target, errno.errorcode.get(exc.errno, exc))
+      register: egress
+      changed_when: false
+    - name: refused, every one
+      ansible.builtin.assert:
+        that: egress.stdout_lines | select('search', ' ECONNREFUSED$') | list | length == 4
+        fail_msg: "{{ egress.stdout_lines }}"
+"""
 
 
 def main() -> None:
@@ -43,6 +67,7 @@ def main() -> None:
     parser.add_argument("key_path", nargs="?")
     parser.add_argument("--store-path")
     parser.add_argument("--expect-reason")
+    parser.add_argument("--check-egress", metavar="API_HOST")
     args = parser.parse_args()
     if bool(args.key_path) == bool(args.store_path):
         parser.error("give a private key file or --store-path")
@@ -66,7 +91,10 @@ def main() -> None:
 
     call("POST", "/auth/login", {"username": "admin", "password": args.password})
     tag = time.time_ns()  # names are unique, and this script runs more than once
-    playbook = call("POST", "/playbooks", {"name": f"smoke-{tag}.yml", "content": PLAYBOOK})
+    content = PLAYBOOK
+    if args.check_egress:
+        content += EGRESS_TASKS.replace("API_HOST", args.check_egress)
+    playbook = call("POST", "/playbooks", {"name": f"smoke-{tag}.yml", "content": content})
     inventory = call("POST", "/inventories", {"name": f"smoke-{tag}"})
     call("POST", f"/inventories/{inventory['id']}/hosts", {"hostname": "localhost", "vars": {}})
     if args.store_path:

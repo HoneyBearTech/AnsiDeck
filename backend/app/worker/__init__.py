@@ -4,5 +4,6 @@ job's secrets once, and it scrubs output with them before sending it back.
 
 Only app.worker.*, app.run_executor, app.run_isolation, app.scrub (with app.vault),
 app.subprocess_env and app.process_hardening may be imported here (a test enforces it): in
-particular never app.config, which would load the API's settings and secrets.
+particular never app.config, which would load the API's settings and secrets. The egress
+filter (app.worker.egress) keeps runs away from the API and cloud metadata.
 """

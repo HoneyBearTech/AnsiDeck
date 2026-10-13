@@ -79,6 +79,10 @@ running, and `postgres` and `backend` healthy. The web UI now answers on `127.0.
 Add workers or slots when runs queue up: `docker compose up -d --scale worker=3`, or a higher
 `WORKER_SLOTS` (runs per worker at once).
 
+Runs can't reach the API or cloud metadata services: the worker installs firewall rules for them (that's
+what its `NET_ADMIN` capability is for). If playbooks use the host's cloud identity, set
+`WORKER_ALLOW_CLOUD_METADATA=true` in `.env`; see `.env.example` for the other settings.
+
 ## 5. Put HTTPS in front
 
 Point your reverse proxy at `127.0.0.1:8080`. It must pass WebSocket upgrades (live run output uses

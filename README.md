@@ -78,10 +78,14 @@ The backend image runs both halves of the backend:
   to start if it sees `DATABASE_URL`, `CREDENTIAL_ENCRYPTION_KEY` or `AUTH_SECRET_KEY`. Put workers on a
   network that reaches the API but not the database, and run it as the container's PID 1 (no `--init` or
   wrapper: it reaps processes itself, and hides its environment from playbooks only when nothing else holds
-  it). Run it the way `docker-compose.yml` does: as root with only the `SETUID`, `SETGID`, `CHOWN` and
-  `KILL` capabilities, `no-new-privileges`, a read-only root filesystem and a tmpfs at `/tmp`. It then runs
-  each slot's playbooks as a user of its own (`ansideck-run0` to `ansideck-run63`, uid 20000 and up), and
-  with `ENVIRONMENT=production` it refuses to start without those settings. On `docker stop` a worker lets
+  it). Run it the way `docker-compose.yml` does: as root with only the `SETUID`, `SETGID`, `CHOWN`, `KILL`
+  and `NET_ADMIN` capabilities, `no-new-privileges`, a read-only root filesystem and a tmpfs at `/tmp`. It
+  then runs each slot's playbooks as a user of its own (`ansideck-run0` to `ansideck-run63`, uid 20000 and
+  up), keeps them away from the API and cloud metadata services with firewall rules in its own network
+  namespace, and with `ENVIRONMENT=production` it refuses to start without those settings.
+  `WORKER_ALLOW_CLOUD_METADATA=true` lets runs use the host's cloud identity, `WORKER_BLOCKED_NETWORKS`
+  blocks more addresses (for example the API's pod network on Kubernetes), and `WORKER_EGRESS_FILTER=false`
+  turns the rules off, for networks restricted some other way. On `docker stop` a worker lets
   its runs finish for
   `WORKER_DRAIN_SECONDS` (30 by default; give the container a longer stop timeout), then stops them.
 
@@ -161,8 +165,8 @@ they are.
   network: the compose file only publishes it on `127.0.0.1` (for running the tests).
 - Give people the least role they need. Anyone who can run a playbook can run commands on the targets.
   Runs execute in worker containers that have no database access and no keys, each slot as a Linux user of
-  its own, so a run can't reach the worker's token or other runs' files and processes. Runs still share the
-  worker's network and resources. Details, and what isn't isolated, are in [docs/security.md](docs/security.md).
+  its own, so a run can't reach the worker's token or other runs' files and processes. Runs can't reach the
+  API or cloud metadata, but otherwise share the worker's network and resources. Details, and what isn't isolated, are in [docs/security.md](docs/security.md).
 - With `ENVIRONMENT=production` the backend and the workers refuse the default `WORKER_TOKEN`. Anyone holding
   it can claim runs and receive their secrets, so treat it like `CREDENTIAL_ENCRYPTION_KEY`.
 - Global admins cannot use single sign-on unless you set `SSO_ALLOW_ADMIN=true`, so password login stays your

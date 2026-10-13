@@ -16,7 +16,8 @@ from pydantic import ValidationError
 
 from app.process_hardening import disable_process_inspection
 from app.run_executor import CHILDREN_LOCK, is_own_child
-from app.run_isolation import check_available, prepare_homes
+from app.run_isolation import check_available, identity_for_slot, prepare_homes
+from app.worker import egress
 from app.worker.client import ApiClient, ApiUnavailable
 from app.worker.settings import WorkerSettings
 
@@ -67,8 +68,8 @@ def check_isolation(settings: WorkerSettings) -> bool:
     if settings.environment.lower() == "production":
         sys.exit(
             f"Refusing to start: playbook runs can't be isolated ({reason}). Run the worker "
-            "as root with only the SETUID, SETGID, CHOWN and KILL capabilities, as "
-            "docker-compose.yml does."
+            "as root with only the SETUID, SETGID, CHOWN, KILL and NET_ADMIN capabilities, "
+            "as docker-compose.yml does."
         )
     logger.warning(
         "runs are NOT isolated (%s): every playbook runs as the worker's own user and can "
@@ -76,6 +77,65 @@ def check_isolation(settings: WorkerSettings) -> bool:
         reason,
     )
     return False
+
+
+def _without_egress_filter(settings: WorkerSettings, reason: str) -> None:
+    if settings.environment.lower() == "production":
+        sys.exit(
+            f"Refusing to start: runs could reach the API and cloud metadata ({reason}). Give "
+            "the worker the NET_ADMIN capability as docker-compose.yml does, or set "
+            "WORKER_EGRESS_FILTER=false if its network is restricted some other way."
+        )
+    logger.warning(
+        "runs can reach the API and cloud metadata (%s). Acceptable in development only.", reason
+    )
+
+
+def check_egress(settings: WorkerSettings, isolated: bool) -> egress.EgressFilter | None:
+    """Installs the egress filter (app.worker.egress), before the worker waits for the API.
+    In production a worker that can't refuses to start, unless it was turned off."""
+    if not settings.worker_egress_filter:
+        logger.warning(
+            "runs can reach the API and cloud metadata: the egress filter is off "
+            "(WORKER_EGRESS_FILTER=false)"
+        )
+        return None
+    if not isolated:  # runs as the worker itself: a uid filter can't tell them apart
+        logger.warning("runs are not isolated, so they can reach the API and cloud metadata")
+        return None
+    reason = egress.check_available()
+    if reason is None:
+        egress_filter = egress.EgressFilter(
+            settings.ansideck_api_url,
+            block_metadata=not settings.worker_allow_cloud_metadata,
+            extra=settings.blocked_networks,
+        )
+        try:
+            egress_filter.start()
+            return egress_filter
+        except egress.EgressError as exc:
+            reason = f"nft failed: {exc}"
+    _without_egress_filter(settings, reason)
+    return None
+
+
+def verify_egress(
+    settings: WorkerSettings, egress_filter: egress.EgressFilter | None
+) -> egress.EgressFilter | None:
+    """Once the API answers: its current addresses in the table, and proof that slot users
+    are refused (self_test). Before any run starts."""
+    if egress_filter is None:
+        return None
+    slots = sorted({0, settings.worker_slots - 1})
+    try:
+        egress_filter.refresh()
+        reason = egress_filter.self_test(identity_for_slot(slot) for slot in slots)
+    except egress.EgressError as exc:
+        reason = f"nft failed: {exc}"
+    if reason is None:
+        return egress_filter
+    _without_egress_filter(settings, reason)
+    return None
 
 
 def wait_for_api(client: ApiClient, timeout: float = _API_WAIT_SECONDS) -> None:
@@ -125,6 +185,7 @@ def main() -> None:
     disable_process_inspection()
     settings = load_settings()
     isolated = check_isolation(settings)
+    egress_filter = check_egress(settings, isolated)
 
     http = httpx.Client(
         base_url=settings.ansideck_api_url,
@@ -132,6 +193,10 @@ def main() -> None:
     )
     client = ApiClient(http)
     wait_for_api(client)
+    egress_filter = verify_egress(settings, egress_filter)
+    stop = threading.Event()
+    if egress_filter is not None:
+        threading.Thread(target=egress_filter.watch, args=(stop,), daemon=True).start()
 
     # Importing ansible (app.scrub reads vault values with it) creates its local temp dir in
     # $HOME, which in the worker container is on the read-only root filesystem.
@@ -149,15 +214,15 @@ def main() -> None:
     if os.getpid() == 1:
         threading.Thread(target=reap_orphans, daemon=True).start()
 
-    stop = threading.Event()
     for signum in (signal.SIGTERM, signal.SIGINT):
         signal.signal(signum, lambda *_: stop.set())
     worker.start()
     logger.info(
-        "worker %s ready: %s slot(s), runs %s, API %s",
+        "worker %s ready: %s slot(s), runs %s, %s, API %s",
         settings.worker_id,
         settings.worker_slots,
         "isolated" if isolated else "NOT isolated",
+        egress_filter.describe() if egress_filter else "egress NOT filtered",
         settings.ansideck_api_url,
     )
     while not stop.wait(1):

@@ -47,10 +47,12 @@ services:
   worker:
     image: ghcr.io/honeybeartech/ansideck-backend:${ANSIDECK_VERSION:-0.5.0}
     command: ["python", "-m", "app.worker"]
-    # Root with only these capabilities, so it can run each slot's playbooks as a user of its own.
+    # Root with only these capabilities, so it can run each slot's playbooks as a user of its
+    # own, and keep them away from the backend and cloud metadata (NET_ADMIN: firewall rules in
+    # the worker's own network namespace; playbooks never hold it).
     user: "0"
     cap_drop: [ALL]
-    cap_add: [SETUID, SETGID, CHOWN, KILL]
+    cap_add: [SETUID, SETGID, CHOWN, KILL, NET_ADMIN]
     security_opt: ["no-new-privileges:true"]
     read_only: true
     tmpfs: [/tmp]
@@ -61,6 +63,9 @@ services:
       WORKER_TOKEN: ${WORKER_TOKEN:?set WORKER_TOKEN in .env}
       WORKER_SLOTS: ${WORKER_SLOTS:-2}
       GALAXY_DIR: /galaxy
+      WORKER_EGRESS_FILTER: ${WORKER_EGRESS_FILTER:-true}
+      WORKER_ALLOW_CLOUD_METADATA: ${WORKER_ALLOW_CLOUD_METADATA:-false}
+      WORKER_BLOCKED_NETWORKS: ${WORKER_BLOCKED_NETWORKS:-}
     volumes:
       - type: volume
         source: backend-data
@@ -109,7 +114,8 @@ networks:
   # Nothing on the database network needs the outside world.
   db:
     internal: true
-  # Not internal: playbooks and inventory refreshes reach your hosts and APIs from here.
+  # Not internal: playbooks and inventory refreshes reach your hosts and APIs from here (but
+  # not the backend or cloud metadata: the worker's egress filter).
   workers:
 
 volumes:

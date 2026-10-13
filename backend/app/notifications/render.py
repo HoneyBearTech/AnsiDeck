@@ -137,7 +137,7 @@ def _ops(event: str, payload: dict, public_url: str) -> Message:
         return Message(
             f"Worker {worker} runs playbooks without isolation",
             "Its playbooks run as the worker's own user and can read other runs' files. Run it "
-            "as root with only the SETUID, SETGID, CHOWN and KILL capabilities "
+            "as root with only the SETUID, SETGID, CHOWN, KILL and NET_ADMIN capabilities "
             "(docker-compose.yml).",
             _RED,
             url=_link(public_url, "/workers"),
