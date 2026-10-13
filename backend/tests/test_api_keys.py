@@ -123,6 +123,8 @@ def test_a_project_admin_cannot_revoke_or_see_another_projects_keys(world) -> No
         admin_of_b.delete(f"/api/projects/{b['project']}/api-keys/{victim['id']}").status_code
         == 404
     )
+    for project in (a["project"], b["project"]):  # nor rotate it, either way
+        assert _rotate(admin_of_b, project, victim["id"], password=TEST_PASSWORD).status_code == 404
     assert admin_of_b.get(f"/api/projects/{b['project']}/api-keys").json() == []
     assert key.get("/api/runs").status_code == 200  # the key is untouched
 
