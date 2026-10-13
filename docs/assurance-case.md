@@ -136,7 +136,7 @@ Mapped to the [OWASP Top 10 (2021)](https://owasp.org/Top10/) and the
 
 ## 5. Verification evidence
 
-- **Automated tests** on every pull request: over 900 backend tests on Postgres with a CI-enforced
+- **Automated tests** on every pull request and nightly on `main`: over 900 backend tests on Postgres with a CI-enforced
   branch-coverage floor of 80% (`backend/scripts/check_branch_coverage.py`), including authorization
   matrices, cross-project tests, real `ansible-playbook` and `ansible-inventory` runs, and isolation
   tests run as root in the worker image; and frontend tests (Vitest and Testing Library) that drive every
