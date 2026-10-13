@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Nightly on main as well: Dependabot PRs merged by auto-merge (GITHUB_TOKEN) don't trigger
+  # the push run, and PRs needn't be up to date with main, so this tests main as it stands.
+  schedule:
+    - cron: "23 6 * * *" # daily 06:23 UTC
+  workflow_dispatch:
 
 permissions:
   contents: read
