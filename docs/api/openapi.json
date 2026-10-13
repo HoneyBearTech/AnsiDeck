@@ -3665,6 +3665,29 @@
             "title": "Inventory Name",
             "type": "string"
           },
+          "inventory_snapshot_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inventory Snapshot At"
+          },
+          "inventory_snapshot_hosts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inventory Snapshot Hosts"
+          },
           "limit": {
             "anyOf": [
               {

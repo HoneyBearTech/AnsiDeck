@@ -421,6 +421,9 @@ export interface Run {
   hosts_unreachable: number | null;
   // Why a queued run hasn't started (getRun only; null otherwise).
   waiting_reason: string | null;
+  // Runs on an inventory with sources: when the snapshot it used was refreshed, and its hosts.
+  inventory_snapshot_at: string | null;
+  inventory_snapshot_hosts: number | null;
   // Runs of playbooks synced from git: the commit they execute and a link to it.
   git_source_name: string | null;
   git_commit: string | null;

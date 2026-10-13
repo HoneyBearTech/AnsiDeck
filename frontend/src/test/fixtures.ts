@@ -240,6 +240,8 @@ export function run(overrides: Partial<Run> = {}): Run {
     hosts_failed: 0,
     hosts_unreachable: 0,
     waiting_reason: null,
+    inventory_snapshot_at: null,
+    inventory_snapshot_hosts: null,
     git_source_name: null,
     git_commit: null,
     playbook_path: null,

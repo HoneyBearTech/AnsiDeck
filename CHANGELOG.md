@@ -9,7 +9,7 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Upgrading
 
-- The API applies database migration 0017 when it starts.
+- The API applies database migrations 0017 and 0018 when it starts.
 - **Workers need the `NET_ADMIN` capability.** Replace `compose.yaml` with this release's (it adds
   `NET_ADMIN` to the worker and passes the new `WORKER_*` settings on); a production worker without it
   refuses to start. If the workers' network is restricted some other way, `WORKER_EGRESS_FILTER=false`
@@ -19,6 +19,11 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   credentials: give them a credential of their own, or set `WORKER_ALLOW_CLOUD_METADATA=true`.
 - **Runs can't reach the API's container.** A playbook that called AnsiDeck's API at `backend:8000` must
   use its public URL (through your reverse proxy) instead.
+
+### Added
+
+- A run's page shows which refresh of its inventory's sources it used: when it was taken and how many hosts
+  the sources had then, kept with the run after the snapshot itself is pruned.
 
 ### Security
 

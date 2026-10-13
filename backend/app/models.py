@@ -555,6 +555,12 @@ class Run(Base):
     inventory_snapshot_id: Mapped[int | None] = mapped_column(
         ForeignKey("inventory_snapshots.id", ondelete="SET NULL"), default=None
     )
+    # What that snapshot was, kept with the run: old snapshots are pruned once no queued or
+    # running run pins them.
+    inventory_snapshot_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    inventory_snapshot_hosts: Mapped[int | None] = mapped_column(Integer, default=None)
     playbook_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
     timeout_seconds: Mapped[int] = mapped_column(
         Integer,
