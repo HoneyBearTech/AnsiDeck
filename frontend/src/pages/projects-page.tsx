@@ -186,7 +186,11 @@ function MembersPanel({ project }: { project: ProjectSummary }) {
                   variant="destructive-outline"
                   size="sm"
                   onClick={() => {
-                    if (window.confirm(`Remove ${member.username} from ${project.name}? They lose access to it at once.`)) {
+                    if (
+                      window.confirm(
+                        `Remove ${member.username} from ${project.name}? They lose access to it at once.`,
+                      )
+                    ) {
                       run(() => api.removeProjectMember(project.id, member.user_id));
                     }
                   }}
@@ -244,7 +248,12 @@ const KEY_EXPIRY_OPTIONS = [
   { days: "365", label: "1 year" },
 ];
 
-const KEY_STATUS_VARIANT = { active: "ok", suspended: "changed", expired: "skipped", revoked: "failed" } as const;
+const KEY_STATUS_VARIANT = {
+  active: "ok",
+  suspended: "changed",
+  expired: "skipped",
+  revoked: "failed",
+} as const;
 
 // Mirrors the server's rule; it stays the real check.
 const KEY_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
@@ -268,6 +277,12 @@ function ApiKeysPanel({ project }: { project: ProjectSummary }) {
   // The plaintext token lives only here, only until the dialog is closed.
   const [created, setCreated] = React.useState<ApiKeyCreated | null>(null);
   const [copied, setCopied] = React.useState(false);
+  // The key being rotated (its dialog is open), and whether `created` replaced one.
+  const [rotating, setRotating] = React.useState<ApiKey | null>(null);
+  const [rotatePassword, setRotatePassword] = React.useState("");
+  const [rotateError, setRotateError] = React.useState<string | null>(null);
+  const [rotateBusy, setRotateBusy] = React.useState(false);
+  const [rotated, setRotated] = React.useState(false);
 
   const refresh = React.useCallback(() => {
     api
@@ -295,12 +310,38 @@ function ApiKeysPanel({ project }: { project: ProjectSummary }) {
       setName("");
       setPassword("");
       setCopied(false);
+      setRotated(false);
       setCreated(key);
       refresh();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setCreating(false);
+    }
+  }
+
+  function openRotate(key: ApiKey) {
+    setRotatePassword("");
+    setRotateError(null);
+    setRotating(key);
+  }
+
+  async function handleRotate() {
+    if (!rotating) return;
+    setRotateError(null);
+    setRotateBusy(true);
+    try {
+      const key = await api.rotateApiKey(project.id, rotating.id, rotatePassword || undefined);
+      setRotating(null);
+      setRotatePassword("");
+      setCopied(false);
+      setRotated(true);
+      setCreated(key);
+      refresh();
+    } catch (err) {
+      setRotateError(errorMessage(err));
+    } finally {
+      setRotateBusy(false);
     }
   }
 
@@ -354,9 +395,14 @@ function ApiKeysPanel({ project }: { project: ProjectSummary }) {
             )}
           </div>
           {(key.status === "active" || key.status === "suspended") && (
-            <Button variant="destructive-outline" size="sm" onClick={() => handleRevoke(key)}>
-              Revoke
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => openRotate(key)}>
+                Rotate
+              </Button>
+              <Button variant="destructive-outline" size="sm" onClick={() => handleRevoke(key)}>
+                Revoke
+              </Button>
+            </div>
           )}
         </div>
       ))}
@@ -420,11 +466,46 @@ function ApiKeysPanel({ project }: { project: ProjectSummary }) {
           : "A key outlives your session, so creating one asks for your password."}
       </p>
 
+      <Dialog open={rotating !== null} onOpenChange={(open) => !open && setRotating(null)}>
+        {rotating && (
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Rotate &ldquo;{rotating.name}&rdquo;?</DialogTitle>
+              <DialogDescription>
+                You get a new key with the same name, permissions and lifetime, created by you. The current
+                key (ansd_{rotating.prefix}_…) stops working at once, so put the new one wherever the old one
+                is used.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor={`rotate-password-${project.id}`}>Current password</Label>
+              <Input
+                id={`rotate-password-${project.id}`}
+                type="password"
+                autoComplete="current-password"
+                placeholder={ssoSession ? "not needed after SSO" : undefined}
+                value={rotatePassword}
+                onChange={(e) => setRotatePassword(e.target.value)}
+              />
+            </div>
+            {rotateError && <p className="text-sm text-destructive">{rotateError}</p>}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setRotating(null)}>
+                Cancel
+              </Button>
+              <Button onClick={handleRotate} disabled={rotateBusy || (!ssoSession && !rotatePassword)}>
+                Rotate key
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        )}
+      </Dialog>
+
       <Dialog open={created !== null} onOpenChange={(open) => !open && setCreated(null)}>
         {created && (
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>API key created</DialogTitle>
+              <DialogTitle>{rotated ? "API key rotated" : "API key created"}</DialogTitle>
               <DialogDescription>
                 Copy this key now. It won&apos;t be shown again. Anyone who has it can{" "}
                 {created.preset === "trigger" ? "start and read runs" : "read runs"} in {project.name} until

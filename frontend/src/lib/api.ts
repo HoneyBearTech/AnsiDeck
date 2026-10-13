@@ -749,6 +749,11 @@ export const api = {
         ...(currentPassword ? { current_password: currentPassword } : {}),
       }),
     }),
+  rotateApiKey: (projectId: number, keyId: number, currentPassword?: string) =>
+    request<ApiKeyCreated>(`/projects/${projectId}/api-keys/${keyId}/rotate`, {
+      method: "POST",
+      body: JSON.stringify(currentPassword ? { current_password: currentPassword } : {}),
+    }),
   revokeApiKey: (projectId: number, keyId: number) =>
     request<void>(`/projects/${projectId}/api-keys/${keyId}`, { method: "DELETE" }),
 

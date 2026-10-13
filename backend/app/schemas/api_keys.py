@@ -15,6 +15,10 @@ class ApiKeyCreate(BaseModel):
     current_password: str | None = Field(default=None, max_length=128)
 
 
+class ApiKeyRotate(BaseModel):
+    current_password: str | None = Field(default=None, max_length=128)
+
+
 class ApiKeyOut(BaseModel):
     id: int
     name: str

@@ -89,6 +89,13 @@ without a user account.
 2. Copy the key from the dialog: it's shown **once**. Send it as `Authorization: Bearer <key>`, over HTTPS.
 3. The list shows each key's status, when it was last used, and when it expires. **Revoke** (after a
    confirmation) stops a key at once.
+4. **Rotate** replaces a key with a new one of the same name, preset and lifetime, created by you (it asks
+   for your password, like creating one). The old key stops working at once, so update the pipeline that
+   uses it straight away.
+
+A revoked key's name can be used again. Keys revoked or expired more than `API_KEY_RETENTION_DAYS` ago
+(90 by default; 0 keeps them) are deleted from the list; runs they started still show who started them, and
+the audit log keeps each key's creation, rotation and revocation.
 
 A key works only while the person who created it could create it again: it is **suspended** while they are
 deactivated, no longer an admin of the project, or removed from it, and works again if that changes.
