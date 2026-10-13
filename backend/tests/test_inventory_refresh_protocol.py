@@ -4,6 +4,7 @@ reaper, the schedule and the galaxy gate."""
 
 import hashlib
 import json
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -382,6 +383,45 @@ def test_a_run_pins_the_snapshot_and_pruning_keeps_it(client: TestClient) -> Non
     kept = set(db.scalars(select(InventorySnapshot.id)))
     db.close()
     assert pinned in kept and len(kept) == 6  # the current one, 4 more, and the pinned one
+
+
+def test_a_run_keeps_what_its_snapshot_was_after_it_is_pruned(client: TestClient) -> None:
+    inventory_id = _setup(client)
+    body = {
+        "playbook_id": _create_playbook(client, SUCCESS_PLAYBOOK),
+        "inventory_id": inventory_id,
+        "credential_id": _create_credential(client),
+    }
+    claimed = ClaimedRefresh()
+    claimed.job()
+    claimed.finish(_output({"a": {}, "b": {}, "c": {}}))
+    created = client.post("/api/runs", json=body).json()
+    db = get_sessionmaker()()
+    snapshot = db.get(InventorySnapshot, db.get(Run, created["id"]).inventory_snapshot_id)
+    assert created["inventory_snapshot_hosts"] == snapshot.host_count == 3
+    assert datetime.fromisoformat(created["inventory_snapshot_at"]) == snapshot.created_at
+    db.delete(snapshot)  # as pruning does, once nothing queued or running pins it
+    db.commit()
+    db.close()
+    run = client.get(f"/api/runs/{created['id']}").json()
+    assert (run["inventory_snapshot_at"], run["inventory_snapshot_hosts"]) == (
+        created["inventory_snapshot_at"],
+        3,
+    )
+
+
+def test_a_run_on_an_inventory_without_sources_has_no_snapshot(client: TestClient) -> None:
+    _login(client)
+    inventory_id = client.post("/api/inventories", json={"name": "plain"}).json()["id"]
+    run = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": _create_playbook(client, SUCCESS_PLAYBOOK),
+            "inventory_id": inventory_id,
+            "credential_id": _create_credential(client),
+        },
+    ).json()
+    assert (run["inventory_snapshot_at"], run["inventory_snapshot_hosts"]) == (None, None)
 
 
 def test_source_configs_and_credentials_are_checked(client: TestClient) -> None:

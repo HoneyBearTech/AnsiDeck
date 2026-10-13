@@ -71,6 +71,10 @@ class RunOut(BaseModel):
     hosts_changed: int | None
     hosts_failed: int | None
     hosts_unreachable: int | None
+    # Runs on an inventory with sources: when the snapshot it used was refreshed, and how
+    # many hosts the sources found then.
+    inventory_snapshot_at: datetime | None = None
+    inventory_snapshot_hosts: int | None = None
     # Runs of playbooks synced from git: where and at which commit they execute.
     git_source_name: str | None = None
     git_commit: str | None = None

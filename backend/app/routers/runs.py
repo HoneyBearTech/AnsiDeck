@@ -328,6 +328,8 @@ def queue_run(
         group_name=group_name,
         inventory_static=inventory_static,
         inventory_snapshot_id=snapshot.id if snapshot is not None else None,
+        inventory_snapshot_at=snapshot.created_at if snapshot is not None else None,
+        inventory_snapshot_hosts=snapshot.host_count if snapshot is not None else None,
         credential_id=credential.id,
         credential_name=credential.name,
         vault_password_id=vault_password.id if vault_password else None,

@@ -219,6 +219,13 @@ export function RunDetailPage() {
             {run.diff_mode && " · diff"}
             {run.limit && ` · limit: ${run.limit}`}
           </p>
+          {run.inventory_snapshot_at && (
+            <p className="text-sm text-muted-foreground">
+              Inventory sources as of {new Date(run.inventory_snapshot_at).toLocaleString()}
+              {run.inventory_snapshot_hosts !== null &&
+                ` · ${run.inventory_snapshot_hosts} host${run.inventory_snapshot_hosts === 1 ? "" : "s"} from them`}
+            </p>
+          )}
           {run.git_commit && (
             <p className="text-sm text-muted-foreground">
               From git source {run.git_source_name} · <span className="font-mono">{run.playbook_path}</span>{" "}
