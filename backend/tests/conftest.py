@@ -1,11 +1,33 @@
 import os
+import re
+import shutil
+import tempfile
 from collections.abc import Generator
 
 from cryptography.fernet import Fernet
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
-os.environ.setdefault("CREDENTIAL_ENCRYPTION_KEY", Fernet.generate_key().decode())
+# Nothing real reaches the tests (tests/test_suite_isolation.py checks it): no credentials from
+# the shell (cloud, secret store, ssh-agent, ansible settings), no real home (~/.ansible.cfg,
+# ~/.ssh), no /data, no secrets directory. Only TEST_* variables (the database, OpenBao) are
+# taken from outside, on purpose.
+SECRET_LIKE = re.compile(
+    r"TOKEN|SECRET|PASSW|_KEY$|_KEY_|CREDENTIAL|AUTH_SOCK|^AWS_|^AZURE_|^GOOGLE_|^VAULT_|^BAO_|"
+    r"^ANSIBLE_|^KUBECONFIG$|^SECRETS_STORE_|^OIDC_|^GITHUB_CLIENT|^SMTP_"
+)
+for _name in [n for n in os.environ if SECRET_LIKE.search(n.upper()) and not n.startswith("TEST_")]:
+    del os.environ[_name]
+# Under /tmp, not macOS's long $TMPDIR: ssh-agent's socket in ~/.ssh/agent/ must fit a Unix
+# socket path (104 bytes).
+SANDBOX = tempfile.mkdtemp(prefix="ansideck-tests-", dir="/tmp" if os.path.isdir("/tmp") else None)
+for _name in ("home", "data", "secrets"):
+    os.mkdir(os.path.join(SANDBOX, _name))
+os.environ["HOME"] = os.path.join(SANDBOX, "home")
+os.environ["DATA_DIR"] = os.path.join(SANDBOX, "data")  # the client fixture uses its own
+os.environ["SECRETS_DIR"] = os.path.join(SANDBOX, "secrets")  # empty: never /run/secrets
+os.environ["CREDENTIAL_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+ENV_AT_START = dict(os.environ)  # what the suite starts with (tests change it as they go)
 
 # Tests get their own database, dropped and recreated per session. The name must end in
 # "_test" so a mistyped URL can never wipe a real database.
@@ -20,6 +42,10 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL  # wins over any .env
 # Tests drive the internal worker API in-process (internal_client()), not on a port.
 os.environ["INTERNAL_API_ENABLED"] = "false"
 os.environ["ALLOWED_HOSTS"] = '["testserver"]'  # TestClient's host
+
+from app.config import Settings  # noqa: E402
+
+Settings.model_config["env_file"] = None  # a .env where the tests run must not count
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -70,6 +96,7 @@ def _test_database() -> Generator[None, None, None]:
     init_db()  # the migrations themselves are part of every test run
     yield
     reset_engine()
+    shutil.rmtree(SANDBOX, ignore_errors=True)
 
 
 def truncate_all() -> None:
