@@ -70,12 +70,14 @@ services:
     command: ["/app/.venv/bin/python", "-m", "app.worker"]
     # Playbooks run as a user of their own per slot (ansideck-run<n>, no capabilities), so
     # they can't read the worker's token, signal it, or touch other runs' files and
-    # processes. Switching to those users takes root, with nothing more than these four
+    # processes. Switching to those users takes root, with nothing more than these
     # capabilities (SETUID/SETGID: switch, CHOWN: create their homes, KILL: stop and clean
-    # up runs). Without them a production worker refuses to start.
+    # up runs, NET_ADMIN: firewall rules in the worker's own network namespace that keep
+    # runs away from the backend and cloud metadata; runs never hold it). Without them a
+    # production worker refuses to start.
     user: "0"
     cap_drop: [ALL]
-    cap_add: [SETUID, SETGID, CHOWN, KILL]
+    cap_add: [SETUID, SETGID, CHOWN, KILL, NET_ADMIN]
     security_opt: ["no-new-privileges:true"]
     # Runs can write only to /tmp (their private data dirs) and /dev/shm, which the worker
     # sweeps after every run; nothing they leave can reach the next one.
@@ -90,6 +92,9 @@ services:
       - WORKER_TOKEN=${WORKER_TOKEN:-change-me-dev-only-worker-token}
       - WORKER_SLOTS=${WORKER_SLOTS:-2}
       - GALAXY_DIR=/galaxy
+      - WORKER_EGRESS_FILTER=${WORKER_EGRESS_FILTER:-true}
+      - WORKER_ALLOW_CLOUD_METADATA=${WORKER_ALLOW_CLOUD_METADATA:-false}
+      - WORKER_BLOCKED_NETWORKS=${WORKER_BLOCKED_NETWORKS:-}
     volumes:
       - ./backend:/app:ro
       - backend-venv:/app/.venv:ro

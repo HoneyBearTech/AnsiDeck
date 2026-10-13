@@ -9,7 +9,8 @@ Each project shows your role in it, and admins of a project can open its **Membe
 - Deleting a project asks first, and only works when it's empty (no playbooks, inventories, credentials
   and so on); its run history is deleted with it.
 - Runs of different projects are kept apart on the workers (each run executes as a separate Linux user
-  and can't read other runs' files), but they share the workers' network. Only give operator access to
+  and can't read other runs' files), but they share the workers' network (apart from the API and cloud
+  metadata, which runs can't reach). Only give operator access to
   people you'd trust with your hosts.
 
 ### Members

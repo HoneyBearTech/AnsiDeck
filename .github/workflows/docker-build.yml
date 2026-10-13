@@ -50,17 +50,20 @@ jobs:
 
       - name: Run isolation tests as the worker runs them
         if: matrix.service == 'backend' && matrix.target == 'dev'
-        # Real playbooks as per-slot users, in the image with the worker's compose settings
-        # (root with only four capabilities, read-only root filesystem). Fails instead of
-        # skipping if the image or these flags no longer allow isolation.
+        # Real playbooks as per-slot users, and the egress filter's real nftables rules, in the
+        # image with the worker's compose settings (root with only five capabilities, read-only
+        # root filesystem). Fails instead of skipping if the image or these flags no longer
+        # allow isolation or the filter.
         run: |
           docker run --rm --user 0 --cap-drop ALL \
-            --cap-add SETUID --cap-add SETGID --cap-add CHOWN --cap-add KILL \
+            --cap-add SETUID --cap-add SETGID --cap-add CHOWN --cap-add KILL --cap-add NET_ADMIN \
             --security-opt no-new-privileges:true --read-only --tmpfs /tmp \
             -e PYTHONDONTWRITEBYTECODE=1 -e ANSIDECK_REQUIRE_ISOLATION=1 \
+            -e ANSIDECK_REQUIRE_EGRESS=1 \
             -e PATH=/app/.venv/bin:/usr/local/bin:/usr/bin:/bin \
             ansideck-backend:dev \
-            python -m pytest --noconftest -p no:cacheprovider tests/test_isolation_root.py
+            python -m pytest --noconftest -p no:cacheprovider \
+              tests/test_isolation_root.py tests/test_egress_root.py
 
       - name: Smoke test backend runtime image
         if: matrix.service == 'backend' && matrix.target == 'runtime'
@@ -116,17 +119,26 @@ jobs:
       - name: Smoke test a worker from the backend runtime image
         if: matrix.service == 'backend' && matrix.target == 'runtime'
         # A worker reaches only the API's internal port, gets no database URL or keys, is
-        # non-dumpable, runs playbooks as per-slot users (with docker-compose.yml's settings;
-        # in production it refuses to start without them), and runs a real playbook.
+        # non-dumpable, runs playbooks as per-slot users, keeps them away from the API and
+        # cloud metadata (with docker-compose.yml's settings; in production it refuses to start
+        # without them), and runs a real playbook.
         run: |
           out=$(docker run --rm -e ENVIRONMENT=production -e ANSIDECK_API_URL=http://smoke:8001 \
             -e WORKER_TOKEN=ci-test-worker-token-0123456789abcdef \
             ansideck-backend:runtime python -m app.worker 2>&1) && { echo "$out"; exit 1; }
           echo "$out" | grep -q "Refusing to start: playbook runs can't be isolated" \
             || { echo "$out"; exit 1; }
+          out=$(docker run --rm --user 0 --cap-drop ALL \
+            --cap-add SETUID --cap-add SETGID --cap-add CHOWN --cap-add KILL \
+            --security-opt no-new-privileges:true --read-only --tmpfs /tmp \
+            -e ENVIRONMENT=production -e ANSIDECK_API_URL=http://smoke:8001 \
+            -e WORKER_TOKEN=ci-test-worker-token-0123456789abcdef \
+            ansideck-backend:runtime python -m app.worker 2>&1) && { echo "$out"; exit 1; }
+          echo "$out" | grep -q "Refusing to start: runs could reach the API and cloud metadata (the worker lacks the NET_ADMIN" \
+            || { echo "$out"; exit 1; }
           docker run -d --name smoke-worker --network smoke-workers \
             --user 0 --cap-drop ALL \
-            --cap-add SETUID --cap-add SETGID --cap-add CHOWN --cap-add KILL \
+            --cap-add SETUID --cap-add SETGID --cap-add CHOWN --cap-add KILL --cap-add NET_ADMIN \
             --security-opt no-new-privileges:true --read-only --tmpfs /tmp \
             -e ENVIRONMENT=production -e PYTHONDONTWRITEBYTECODE=1 \
             -e ANSIDECK_API_URL=http://smoke:8001 \
@@ -136,8 +148,26 @@ jobs:
             docker logs smoke-worker 2>&1 | grep -q " ready: " && break
             sleep 2
           done
-          docker logs smoke-worker 2>&1 | grep -q " ready: .* runs isolated" \
+          docker logs smoke-worker 2>&1 | grep -q " ready: .* runs isolated, egress filtered" \
             || { docker logs smoke-worker; exit 1; }
+          # As a run's user: the API (every port) and cloud metadata are refused, names resolve.
+          refused=$(docker exec -u 20000 smoke-worker python -I -S -c '
+          import errno, socket
+          for target in [("smoke", 8000), ("smoke", 8001), ("smoke", 8002), ("169.254.169.254", 80)]:
+              try:
+                  socket.create_connection(target, 3).close()
+                  print(*target, "connected")
+              except OSError as exc:
+                  print(*target, errno.errorcode.get(exc.errno, exc))
+          ')
+          echo "$refused"
+          [ "$(echo "$refused" | grep -c ' ECONNREFUSED$')" = 4 ] || exit 1
+          docker exec -u 20000 smoke-worker getent hosts smoke
+          # The worker itself still reaches the internal API; runs can't touch the rules.
+          docker exec smoke-worker python -I -S -c 'import socket; socket.create_connection(("smoke", 8001), 3)'
+          if docker exec -u 20000 smoke-worker nft list ruleset; then
+            echo "a run's user can read the firewall rules"; exit 1
+          fi
           for user in 0 20000; do
             if docker exec -u "$user" smoke-worker cat /proc/1/environ > /dev/null; then
               echo "the worker's environment is readable by uid $user"; exit 1
@@ -151,7 +181,7 @@ jobs:
           fi
           ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/smoke_key"
           python3 backend/scripts/smoke_run.py http://localhost:8000 ci-test "$RUNNER_TEMP/smoke_key" \
-            || { docker logs smoke-worker; docker logs smoke; exit 1; }
+            --check-egress smoke || { docker logs smoke-worker; docker logs smoke; exit 1; }
           docker logs smoke-worker
 
       - name: Smoke test metrics in backend runtime image
@@ -283,6 +313,10 @@ jobs:
           SECRETS_STORE_PROJECT_POLICY=ansideck-project-{project_id}
           ENV
           docker rm -f smoke
+          # Something else takes the API's old address, so the new API gets another one: the
+          # worker's egress filter must follow it.
+          docker run -d --name smoke-squatter --network smoke-workers --entrypoint sleep \
+            ansideck-backend:runtime 600
           docker run -d --name smoke --network smoke-net -p 8000:8000 -p 127.0.0.1:8002:8002 \
             --env-file "$RUNNER_TEMP/smoke.env" --env-file "$RUNNER_TEMP/store.env" \
             -v smoke-data:/data ansideck-backend:runtime
@@ -291,8 +325,14 @@ jobs:
             curl -sf http://localhost:8000/api/health > /dev/null && break
             sleep 2
           done
+          for i in $(seq 1 15); do
+            docker logs smoke-worker 2>&1 | grep -q "the API's address changed" && break
+            sleep 2
+          done
+          docker logs smoke-worker 2>&1 | grep "the API's address changed" \
+            || { docker logs smoke-worker; exit 1; }
           python3 backend/scripts/smoke_run.py http://localhost:8000 ci-test --store-path smoke/ssh \
-            || { docker logs smoke-worker; docker logs smoke; exit 1; }
+            --check-egress smoke || { docker logs smoke-worker; docker logs smoke; exit 1; }
           marker=$(sed -n 2p "$RUNNER_TEMP/smoke_key")
           if { docker exec smoke-db pg_dump -U ansideck ansideck; docker logs smoke 2>&1;
                docker logs smoke-worker 2>&1; } | grep -qF -- "$marker"; then

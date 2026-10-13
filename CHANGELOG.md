@@ -7,8 +7,26 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+### Upgrading
+
+- **Workers need the `NET_ADMIN` capability.** Replace `compose.yaml` with this release's (it adds
+  `NET_ADMIN` to the worker and passes the new `WORKER_*` settings on); a production worker without it
+  refuses to start. If the workers' network is restricted some other way, `WORKER_EGRESS_FILTER=false`
+  keeps the old behaviour. Development setup: rebuild the images (`docker compose build`).
+- **Runs can't reach cloud metadata any more.** Playbooks that used the host's cloud identity through the
+  metadata service (an EC2 instance profile, an ECS task role, a managed identity) now fail to get
+  credentials: give them a credential of their own, or set `WORKER_ALLOW_CLOUD_METADATA=true`.
+- **Runs can't reach the API's container.** A playbook that called AnsiDeck's API at `backend:8000` must
+  use its public URL (through your reverse proxy) instead.
+
 ### Security
 
+- Runs, inventory refreshes and playbook checks can no longer reach the API's container (any port: the
+  public API, the internal worker API, metrics) or cloud metadata services (`169.254.0.0/16`,
+  `100.100.100.200`, their IPv6 and NAT64 forms). The worker installs nftables rules for its slot users,
+  follows the API to a new address, and checks before its first run that a slot user is refused where it
+  gets through itself. A production worker that can't install them refuses to start.
+  `WORKER_BLOCKED_NETWORKS` blocks more addresses.
 - In production the API gives no work to a worker that doesn't isolate runs (one started without
   `ENVIRONMENT=production`, or from before per-slot users); production workers already refused to start
   that way. Such a worker stays listed and raises the "Worker not isolated" alert.

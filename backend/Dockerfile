@@ -8,9 +8,10 @@ WORKDIR /app
 RUN mkdir -p /data
 # Ansible's default connection plugin shells out to the system `ssh` binary —
 # not present in the slim base image, and not something this app should rely
-# on the host to provide. git is for ansible-galaxy installs from git sources.
+# on the host to provide. git is for ansible-galaxy installs from git sources. nftables is
+# for the worker's egress filter (app.worker.egress).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openssh-client git \
+    && apt-get install -y --no-install-recommends openssh-client git nftables \
     && rm -rf /var/lib/apt/lists/*
 # One user per worker slot (app.run_isolation): the worker runs each slot's playbooks as
 # ansideck-run<n>, uid/gid 20000+n, with no capabilities. ssh and ansible refuse to run as a
@@ -39,7 +40,7 @@ FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b
 # fixable HIGH or CRITICAL vulnerability).
 RUN apt-get update \
     && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends openssh-client git \
+    && apt-get install -y --no-install-recommends openssh-client git nftables \
     && rm -rf /var/lib/apt/lists/*
 # One user per worker slot (app.run_isolation): the worker runs each slot's playbooks as
 # ansideck-run<n>, uid/gid 20000+n, with no capabilities. ssh and ansible refuse to run as a
@@ -68,8 +69,9 @@ USER appuser
 # 8000: the API. 8001: the internal worker API (workers only; never publish it).
 # 8002: Prometheus metrics, only when METRICS_TOKEN is set (scrapers only; never publish it).
 # The same image runs a worker with the command: python -m app.worker, as root with only
-# the SETUID, SETGID, CHOWN and KILL capabilities (see docker-compose.yml): it runs
-# each slot's playbooks as that slot's own user, and refuses to start in production without.
+# the SETUID, SETGID, CHOWN, KILL and NET_ADMIN capabilities (see docker-compose.yml): it
+# runs each slot's playbooks as that slot's own user, keeps them away from the API and cloud
+# metadata, and refuses to start in production without.
 EXPOSE 8000 8001 8002
 HEALTHCHECK --interval=30s --timeout=3s CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
 CMD ["fastapi", "run", "app/main.py", "--host", "0.0.0.0", "--port", "8000"]

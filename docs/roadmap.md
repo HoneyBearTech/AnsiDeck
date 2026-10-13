@@ -38,7 +38,7 @@ on long runs. The most recent release is the supported version.
 - Denser tables for large lists on wide screens (the inventory group graph shipped in v0.3.0).
 
 **Security and operations**
-- Limiting what runs can reach on the network (for example cloud metadata and the API's own ports).
+- Running the worker's firewall updates in a small helper of their own, so the worker can drop `NET_ADMIN`.
 - Short-lived SSH certificates from the secret store, and more of the secret store's features.
 - API key hardening: per-key playbook and inventory allowlists, address allowlists, and rotation.
 - Single sign-on checked against more real providers, group-to-role mapping, and passkeys (WebAuthn) as a

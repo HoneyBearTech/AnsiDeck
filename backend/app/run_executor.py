@@ -61,6 +61,37 @@ def is_own_child(pid: int) -> bool:
     return pid in _children
 
 
+def run_child(
+    command: list[str],
+    *,
+    timeout: float,
+    env: dict[str, str],
+    input_text: str | None = None,
+    cwd: str = "/",
+) -> subprocess.CompletedProcess[str]:
+    """subprocess.run for the worker's own short commands (app.worker.egress), registered so the
+    reaper leaves their status to us. Kills the command and raises subprocess.TimeoutExpired if
+    it takes longer than `timeout`."""
+    proc = _start(
+        command,
+        stdin=subprocess.DEVNULL if input_text is None else subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        cwd=cwd,
+    )
+    try:
+        stdout, stderr = proc.communicate(input_text, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        raise
+    finally:
+        _forget(proc)
+    return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
+
+
 def format_duration(seconds: int) -> str:
     """ "45 s", "3 min", "2 h", "1 h 30 min": for status reasons."""
     if seconds < 120:
