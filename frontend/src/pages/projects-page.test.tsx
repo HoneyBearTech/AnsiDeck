@@ -242,4 +242,43 @@ describe("projects", () => {
     await user.click(screen.getByRole("button", { name: "Revoke" }));
     expect(api.requests("DELETE /projects/1/api-keys/1")).toHaveLength(1);
   });
+
+  it("rotates a key after asking for the password, and shows the new one once", async () => {
+    const { api, user, screen } = renderApp("/projects", {
+      routes: {
+        "GET /projects": [summary()],
+        "GET /projects/:id/api-keys": [apiKey({ name: "deploy" })],
+        "POST /projects/:id/api-keys/:kid/rotate": reply(409, { detail: "This key is revoked." }),
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "API keys" }));
+    await user.click(await screen.findByRole("button", { name: "Rotate" }));
+    let dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByText(/\(ansd_1a2b3c4d_…\) stops working at once/)).toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Rotate key" })).toBeDisabled(); // no password yet
+    await user.type(dialog.getByLabelText("Current password"), "my-password");
+    await user.click(dialog.getByRole("button", { name: "Rotate key" }));
+    expect(await dialog.findByText("This key is revoked.")).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    api.set({
+      "POST /projects/:id/api-keys/:kid/rotate": {
+        ...apiKey({ id: 2, name: "deploy" }),
+        token: "ansd_9f8e7d6c_secret",
+      },
+    });
+    await user.click(screen.getByRole("button", { name: "Rotate" }));
+    dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByLabelText("Current password")).toHaveValue(""); // not kept from before
+    expect(dialog.queryByText("This key is revoked.")).not.toBeInTheDocument();
+    await user.type(dialog.getByLabelText("Current password"), "my-password");
+    await user.click(dialog.getByRole("button", { name: "Rotate key" }));
+    const shown = within(await screen.findByRole("dialog", { name: "API key rotated" }));
+    expect(shown.getByTestId("new-api-key")).toHaveTextContent("ansd_9f8e7d6c_secret");
+    expect(api.requests("POST /projects/1/api-keys/1/rotate").map((r) => r.body)).toEqual([
+      { current_password: "my-password" },
+      { current_password: "my-password" },
+    ]);
+  });
 });

@@ -9,7 +9,7 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Upgrading
 
-- The API applies database migrations 0017 and 0018 when it starts.
+- The API applies database migrations 0017, 0018 and 0019 when it starts.
 - **Workers need the `NET_ADMIN` capability.** Replace `compose.yaml` with this release's (it adds
   `NET_ADMIN` to the worker and passes the new `WORKER_*` settings on); a production worker without it
   refuses to start. If the workers' network is restricted some other way, `WORKER_EGRESS_FILTER=false`
@@ -24,6 +24,10 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 - A run's page shows which refresh of its inventory's sources it used: when it was taken and how many hosts
   the sources had then, kept with the run after the snapshot itself is pruned.
+- **Rotate** for API keys: a new key with the same name, preset and lifetime replaces the old one, which
+  stops working at once (it asks for the current password, like creating a key).
+- API keys revoked or expired more than `API_KEY_RETENTION_DAYS` ago (90 by default, 0 keeps them) are
+  deleted, and a revoked key's name can be used again.
 
 ### Security
 

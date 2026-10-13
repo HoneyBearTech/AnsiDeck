@@ -604,7 +604,7 @@ def test_rotating_replaces_the_key_and_revokes_the_old_one_at_once(world) -> Non
 
     keys = {k["id"]: k for k in admin.get(f"/api/projects/{a['project']}/api-keys").json()}
     assert keys[old["id"]]["status"] == "revoked" and keys[old["id"]]["revoked_at"]
-    rotated = admin.get("/api/audit", params={"action": "apikey.rotate"}).json()
+    rotated = admin.get("/api/audit", params={"action": "apikey.rotate"}).json()["items"]
     assert rotated[0]["target_id"] == new["id"]
     assert rotated[0]["detail"]["replaces"] == old["prefix"]
     assert old["token"] not in json.dumps(rotated) and new["token"] not in json.dumps(rotated)
