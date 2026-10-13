@@ -160,14 +160,15 @@ describe("checking a playbook", () => {
     const { screen } = renderApp("/playbooks/1", { user: viewerUser(), routes: { "GET /playbooks/:id": playbook() } });
     await screen.findByRole("heading", { name: "Playbook" });
     expect(screen.queryByRole("button", { name: "Check" })).not.toBeInTheDocument();
-    expect(editorText(screen.getByRole("textbox", { name: "Content" }))).toContain("hosts: all");
+    // The editor attaches its labelled control in an effect, just after the label renders.
+    expect(editorText(await screen.findByRole("textbox", { name: "Content" }))).toContain("hosts: all");
   });
 
   it("checks a new playbook's text in the active project, once there is some", async () => {
     const { api, user, screen } = renderApp("/playbooks/new", { routes: { "POST /playbooks/lint": lintJob() } });
     await screen.findByRole("heading", { name: "New playbook" });
     expect(screen.getByRole("button", { name: "Check" })).toBeDisabled();
-    setEditorText(screen.getByRole("textbox", { name: "Content" }), CONTENT);
+    setEditorText(await screen.findByRole("textbox", { name: "Content" }), CONTENT);
     await user.click(screen.getByRole("button", { name: "Check" }));
     expect(await screen.findByText("No problems found.")).toBeInTheDocument();
     expect(api.requests("POST /playbooks/lint")[0]?.body).toEqual({ content: CONTENT, project_id: 1 });
