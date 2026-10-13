@@ -68,7 +68,9 @@ jobs:
         # migrations at startup, so this also checks the image ships alembic.ini + migrations/
         # (the database must end at the image's own head revision).
         run: |
+          # As in docker-compose.yml: the API is on both networks, the worker only on smoke-workers.
           docker network create smoke-net
+          docker network create smoke-workers
           docker run -d --name smoke-db --network smoke-net \
             -e POSTGRES_USER=ansideck -e POSTGRES_PASSWORD=ci-test -e POSTGRES_DB=ansideck \
             --health-cmd "pg_isready -U ansideck -d ansideck" --health-interval 2s \
@@ -90,6 +92,7 @@ jobs:
           ENV
           docker run -d --name smoke --network smoke-net -p 8000:8000 -p 127.0.0.1:8002:8002 \
             --env-file "$RUNNER_TEMP/smoke.env" -v smoke-data:/data ansideck-backend:runtime
+          docker network connect smoke-workers smoke
           for i in $(seq 1 15); do
             curl -sf http://localhost:8000/api/health && break
             sleep 2
@@ -121,7 +124,7 @@ jobs:
             ansideck-backend:runtime python -m app.worker 2>&1) && { echo "$out"; exit 1; }
           echo "$out" | grep -q "Refusing to start: playbook runs can't be isolated" \
             || { echo "$out"; exit 1; }
-          docker run -d --name smoke-worker --network smoke-net \
+          docker run -d --name smoke-worker --network smoke-workers \
             --user 0 --cap-drop ALL \
             --cap-add SETUID --cap-add SETGID --cap-add CHOWN --cap-add KILL \
             --security-opt no-new-privileges:true --read-only --tmpfs /tmp \
@@ -142,6 +145,9 @@ jobs:
           done
           if docker exec smoke-worker env | grep -E 'DATABASE_URL|CREDENTIAL_ENCRYPTION_KEY|AUTH_SECRET_KEY'; then
             echo "the worker has the API's secrets"; exit 1
+          fi
+          if docker exec smoke-worker getent hosts smoke-db; then
+            echo "the worker can reach the database"; exit 1
           fi
           ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/smoke_key"
           python3 backend/scripts/smoke_run.py http://localhost:8000 ci-test "$RUNNER_TEMP/smoke_key" \
@@ -280,6 +286,7 @@ jobs:
           docker run -d --name smoke --network smoke-net -p 8000:8000 -p 127.0.0.1:8002:8002 \
             --env-file "$RUNNER_TEMP/smoke.env" --env-file "$RUNNER_TEMP/store.env" \
             -v smoke-data:/data ansideck-backend:runtime
+          docker network connect smoke-workers smoke
           for i in $(seq 1 15); do
             curl -sf http://localhost:8000/api/health > /dev/null && break
             sleep 2
