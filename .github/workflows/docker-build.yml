@@ -204,8 +204,12 @@ jobs:
             -v "$RUNNER_TEMP/prom/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
             -v "$RUNNER_TEMP/prom/token:/etc/prometheus/token:ro" \
             prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+          # Without PREINSTALL_DISABLED, Grafana replaces its bundled Prometheus plugin (and others)
+          # with the latest from grafana.com in the background, ~20 s after start: unpinned code,
+          # and queries fail with "Plugin not registered" while it swaps.
           docker run -d --name smoke-grafana --network smoke-net -p 127.0.0.1:3000:3000 \
             -e GF_SECURITY_ADMIN_PASSWORD=ci-test-grafana-admin \
+            -e GF_PLUGINS_PREINSTALL_DISABLED=true \
             grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
           for i in $(seq 1 30); do
             curl -sf http://localhost:3000/api/health > /dev/null && break
