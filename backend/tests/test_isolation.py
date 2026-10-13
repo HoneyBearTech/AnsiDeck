@@ -532,6 +532,32 @@ def test_an_isolated_slot_sweeps_its_user_before_claiming(monkeypatch, tmp_path)
     worker.stop()
     assert {identity.name for identity in sweeps} == {"ansideck-run0", "ansideck-run1"}
     assert client.claims[0]["isolated"] is True
+    assert client.claims[0]["egress_filtered"] is False  # no filter given
+
+
+def test_a_worker_reports_its_egress_filter_as_it_is_now(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(runner, "sweep", lambda identity: True)
+    filtered = [True]
+    client = _IdleClient()
+    worker = runner.Worker(
+        client,
+        worker_id="w",
+        galaxy_dir=tmp_path,
+        isolated=True,
+        egress_filtered=lambda: filtered[-1],
+        claim_wait_seconds=0,
+    )
+    worker.start()
+    deadline = time.monotonic() + 5
+    while not client.claims and time.monotonic() < deadline:
+        time.sleep(0.01)
+    filtered.append(False)
+    claims = len(client.claims)
+    while len(client.claims) <= claims and time.monotonic() < deadline:
+        time.sleep(0.01)
+    worker.stop()
+    assert client.claims[0]["egress_filtered"] is True
+    assert client.claims[-1]["egress_filtered"] is False
 
 
 def test_a_slot_whose_user_cannot_be_emptied_claims_nothing(monkeypatch, tmp_path) -> None:

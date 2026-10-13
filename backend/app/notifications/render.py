@@ -18,6 +18,7 @@ from app.notifications import (
     RUN_RECOVERED,
     SECRETS_UNAVAILABLE,
     WORKER_OFFLINE,
+    WORKER_UNFILTERED,
     WORKER_UNISOLATED,
 )
 
@@ -142,6 +143,15 @@ def _ops(event: str, payload: dict, public_url: str) -> Message:
             _RED,
             url=_link(public_url, "/workers"),
         )
+    if event == WORKER_UNFILTERED:
+        return Message(
+            f"Worker {worker} lets runs reach the API and cloud metadata",
+            "Its egress filter is off (WORKER_EGRESS_FILTER=false) or couldn't be updated (see the "
+            "worker's log). Give it the NET_ADMIN capability (docker-compose.yml), or restrict "
+            "the workers' network some other way.",
+            _RED,
+            url=_link(public_url, "/workers"),
+        )
     if resolved:
         return Message(
             "Queue moving again",
@@ -213,7 +223,13 @@ def build(event: str, payload: dict, public_url: str = "") -> Message:
             summary=f"This channel works (sent by {_clip(payload.get('sent_by', '?'), 150)}).",
             color=_BLUE,
         )
-    if event in (WORKER_OFFLINE, WORKER_UNISOLATED, QUEUE_STUCK, SECRETS_UNAVAILABLE):
+    if event in (
+        WORKER_OFFLINE,
+        WORKER_UNISOLATED,
+        WORKER_UNFILTERED,
+        QUEUE_STUCK,
+        SECRETS_UNAVAILABLE,
+    ):
         return _ops(event, payload, public_url)
     if event in (LOGIN_ATTACK, ADMIN_CHANGE):
         return _security(event, payload, public_url)

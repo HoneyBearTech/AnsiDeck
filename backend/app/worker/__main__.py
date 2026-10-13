@@ -210,6 +210,7 @@ def main() -> None:
         slots=settings.worker_slots,
         galaxy_dir=settings.galaxy_dir,
         isolated=isolated,
+        egress_filtered=lambda: egress_filter is not None and egress_filter.healthy,
     )
     if os.getpid() == 1:
         threading.Thread(target=reap_orphans, daemon=True).start()

@@ -578,6 +578,8 @@ export interface WorkerInfo {
   slots: number;
   // Whether its playbooks run as per-slot users; null: a worker too old to say.
   isolated: boolean | null;
+  // Whether its runs can't reach the API or cloud metadata; null: a worker too old to say.
+  egress_filtered: boolean | null;
   running: number;
   online: boolean;
   first_seen_at: string;

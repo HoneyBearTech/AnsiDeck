@@ -211,6 +211,16 @@ def test_workers_report_whether_their_runs_are_isolated(client) -> None:
     assert {w["id"]: w["isolated"] for w in client.get("/api/workers").json()}["iso"] is False
 
 
+def test_workers_report_whether_their_runs_can_reach_the_api(client) -> None:
+    _login(client)
+    for worker_id, filtered in (("closed", True), ("open", False)):
+        body = {"worker_id": worker_id, "isolated": True, "egress_filtered": filtered, "runs": []}
+        assert internal_client().post("/internal/heartbeat", json=body).status_code == 200
+    _heartbeat_as("old", isolated=True)  # a worker from before the egress filter doesn't say
+    workers = {w["id"]: w["egress_filtered"] for w in client.get("/api/workers").json()}
+    assert workers == {"closed": True, "open": False, "old": None}
+
+
 def _heartbeat_as(worker_id: str, isolated: bool) -> None:
     response = internal_client().post(
         "/internal/heartbeat", json={"worker_id": worker_id, "isolated": isolated, "runs": []}

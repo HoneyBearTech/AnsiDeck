@@ -5364,6 +5364,17 @@
       },
       "WorkerOut": {
         "properties": {
+          "egress_filtered": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Egress Filtered"
+          },
           "first_seen_at": {
             "format": "date-time",
             "title": "First Seen At",
@@ -5406,6 +5417,7 @@
           "id",
           "slots",
           "isolated",
+          "egress_filtered",
           "running",
           "online",
           "first_seen_at",

@@ -9,6 +9,7 @@ import re
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
 
 from app.json_limits import loads_bounded
@@ -261,6 +262,7 @@ class Worker:
         slots: int = 1,
         galaxy_dir: str | Path = "/data/galaxy",
         isolated: bool = False,
+        egress_filtered: Callable[[], bool] = lambda: False,
         claim_wait_seconds: float = 25.0,
         heartbeat_seconds: float = 5.0,
         fence_seconds: float = 45.0,
@@ -271,6 +273,8 @@ class Worker:
         self.galaxy_dir = Path(galaxy_dir)
         # Each slot runs its playbooks as a user of its own (app.run_isolation).
         self.isolated = isolated
+        # Whether its egress filter (app.worker.egress) is in place and up to date, now.
+        self.egress_filtered = egress_filtered
         self.claim_wait_seconds = claim_wait_seconds
         self.heartbeat_seconds = heartbeat_seconds
         self.fence_seconds = fence_seconds
@@ -351,6 +355,7 @@ class Worker:
                         "worker_id": self.worker_id,
                         "slots": self.slots,
                         "isolated": self.isolated,
+                        "egress_filtered": self.egress_filtered(),
                         "wait_seconds": self.claim_wait_seconds,
                         "kinds": ["run", "refresh", "lint"],
                     },
@@ -811,6 +816,7 @@ class Worker:
                     "worker_id": self.worker_id,
                     "slots": self.slots,
                     "isolated": self.isolated,
+                    "egress_filtered": self.egress_filtered(),
                     "runs": [
                         {"run_id": t.run_id, "claim_token": t.claim_token}
                         for t in tasks

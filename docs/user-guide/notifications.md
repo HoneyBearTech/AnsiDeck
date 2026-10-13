@@ -29,6 +29,7 @@ delivery's result is shown on the card. Failed deliveries are retried for up to 
 | Inventory refresh failed | A dynamic inventory's refresh failed (once per failing streak), and when it works again | project, global |
 | Worker offline | A worker stopped reporting in, and when it is back | global |
 | Worker not isolated | A worker runs playbooks without per-slot users | global |
+| Worker egress not filtered | A worker's runs can reach the API and cloud metadata (its egress filter is off or couldn't be updated) | global |
 | Queue stuck | A run has waited too long for a worker or a Galaxy install, and when the queue moves | global |
 | Secret store unavailable | AnsiDeck can't reach or read the secret store, and when it is back | global |
 | Login attack | Failed sign-ins locked out an address or user, or something used a wrong worker token | global |

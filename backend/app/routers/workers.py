@@ -32,6 +32,7 @@ def list_workers(db: Session = Depends(get_db)) -> list[WorkerOut]:
             id=worker.id,
             slots=worker.slots,
             isolated=worker.isolated,
+            egress_filtered=worker.egress_filtered,
             running=busy,
             online=online,
             first_seen_at=worker.first_seen_at,

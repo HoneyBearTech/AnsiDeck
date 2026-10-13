@@ -180,6 +180,8 @@ def test_runs_show_up_in_the_metrics(admin_client, scrape, tmp_path) -> None:
     assert (("ansideck_runs", frozenset({project, ("status", "queued")}))) in after
     assert value(after, "ansideck_worker_slots", worker="test-worker") == 4
     assert value(after, "ansideck_worker_online", worker="test-worker") == 1
+    assert value(after, "ansideck_worker_isolated", worker="test-worker") == 0
+    assert value(after, "ansideck_worker_egress_filtered", worker="test-worker") == 0
     assert value(after, "ansideck_workers", state="online") == 1
     assert value(after, "ansideck_slots", state="total") == 4
     assert value(after, "ansideck_queue_oldest_age_seconds") == 0
@@ -351,6 +353,7 @@ def test_raised_ops_alerts_and_the_outbox_are_gauged(client, scrape) -> None:
     assert value(samples, "ansideck_ops_alerts", kind="queue.stuck") == 1
     # Always present, so dashboards sum over zeros rather than missing series.
     assert ("ansideck_ops_alerts", frozenset({("kind", "worker.unisolated")})) in samples
+    assert ("ansideck_ops_alerts", frozenset({("kind", "worker.unfiltered")})) in samples
     assert value(samples, "ansideck_notification_outbox", status="pending") == 0
 
 

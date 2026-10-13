@@ -7,6 +7,7 @@ class WorkerOut(BaseModel):
     id: str
     slots: int
     isolated: bool | None
+    egress_filtered: bool | None
     running: int
     online: bool
     first_seen_at: datetime

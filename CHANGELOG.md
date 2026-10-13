@@ -9,6 +9,7 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Upgrading
 
+- The API applies database migration 0017 when it starts.
 - **Workers need the `NET_ADMIN` capability.** Replace `compose.yaml` with this release's (it adds
   `NET_ADMIN` to the worker and passes the new `WORKER_*` settings on); a production worker without it
   refuses to start. If the workers' network is restricted some other way, `WORKER_EGRESS_FILTER=false`
@@ -26,7 +27,9 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   `100.100.100.200`, their IPv6 and NAT64 forms). The worker installs nftables rules for its slot users,
   follows the API to a new address, and checks before its first run that a slot user is refused where it
   gets through itself. A production worker that can't install them refuses to start.
-  `WORKER_BLOCKED_NETWORKS` blocks more addresses.
+  `WORKER_BLOCKED_NETWORKS` blocks more addresses. A worker whose filter is off or couldn't be updated
+  raises the new "Worker egress not filtered" alert, shows "egress open" on the Workers page, and reports
+  `ansideck_worker_egress_filtered` 0.
 - In production the API gives no work to a worker that doesn't isolate runs (one started without
   `ENVIRONMENT=production`, or from before per-slot users); production workers already refused to start
   that way. Such a worker stays listed and raises the "Worker not isolated" alert.

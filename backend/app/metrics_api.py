@@ -34,6 +34,7 @@ from app.notifications import (
     QUEUE_STUCK,
     SECRETS_UNAVAILABLE,
     WORKER_OFFLINE,
+    WORKER_UNFILTERED,
     WORKER_UNISOLATED,
 )
 from app.queue import WORKER_ONLINE_SECONDS
@@ -48,6 +49,7 @@ _WARN_EVERY_SECONDS = 60.0
 _ALERT_KINDS = (
     WORKER_OFFLINE,
     WORKER_UNISOLATED,
+    WORKER_UNFILTERED,
     QUEUE_STUCK,
     SECRETS_UNAVAILABLE,
     INVENTORY_REFRESH_FAILED,
@@ -113,7 +115,7 @@ def _read(db: Session) -> list[GaugeMetricFamily]:
 
     workers = rows(
         """
-        SELECT w.id, w.slots, w.isolated, extract(epoch FROM w.last_seen_at),
+        SELECT w.id, w.slots, w.isolated, w.egress_filtered, extract(epoch FROM w.last_seen_at),
                w.last_seen_at > now() - make_interval(secs => :online),
                (SELECT count(*) FROM runs r WHERE r.status = 'running' AND r.worker_id = w.id)
         FROM workers w ORDER BY w.last_seen_at DESC, w.id
@@ -123,7 +125,7 @@ def _read(db: Session) -> list[GaugeMetricFamily]:
     by_state = _gauge(
         "ansideck_workers", "Workers seen in the last day, online or offline", ("state",)
     )
-    online_count = sum(1 for w in workers if w[4])
+    online_count = sum(1 for w in workers if w[5])
     by_state.add_metric(["online"], online_count)
     by_state.add_metric(["offline"], len(workers) - online_count)
     per_worker = {
@@ -139,21 +141,29 @@ def _read(db: Session) -> list[GaugeMetricFamily]:
             "1 if its runs execute as per-slot users, 0 if not, -1 if not reported",
             ("worker",),
         ),
+        "egress_filtered": _gauge(
+            "ansideck_worker_egress_filtered",
+            "1 if its runs can't reach the API or cloud metadata, 0 if they can, -1 if unknown",
+            ("worker",),
+        ),
         "seen": _gauge(
             "ansideck_worker_last_seen_timestamp_seconds",
             "When the worker last reported in",
             ("worker",),
         ),
     }
-    for worker_id, slots, isolated, seen, online, busy in workers[:MAX_WORKER_SERIES]:
+    for worker_id, slots, isolated, filtered, seen, online, busy in workers[:MAX_WORKER_SERIES]:
         per_worker["slots"].add_metric([worker_id], slots)
         per_worker["busy"].add_metric([worker_id], busy)
         per_worker["online"].add_metric([worker_id], 1 if online else 0)
         per_worker["isolated"].add_metric([worker_id], -1 if isolated is None else int(isolated))
+        per_worker["egress_filtered"].add_metric(
+            [worker_id], -1 if filtered is None else int(filtered)
+        )
         per_worker["seen"].add_metric([worker_id], float(seen))
     slots = _gauge("ansideck_slots", "Run slots of the online workers", ("state",))
-    slots.add_metric(["total"], sum(w[1] for w in workers if w[4]))
-    slots.add_metric(["busy"], sum(w[5] for w in workers if w[4]))
+    slots.add_metric(["total"], sum(w[1] for w in workers if w[5]))
+    slots.add_metric(["busy"], sum(w[6] for w in workers if w[5]))
 
     galaxy = dict(
         rows(

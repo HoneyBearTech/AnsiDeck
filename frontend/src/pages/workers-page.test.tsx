@@ -8,6 +8,7 @@ function worker(overrides = {}) {
     id: "worker-a",
     slots: 2,
     isolated: true,
+    egress_filtered: true,
     running: 1,
     online: true,
     first_seen_at: "2026-10-05T10:00:00Z",
@@ -47,6 +48,24 @@ describe("workers", () => {
     expect(screen.getByText("sealed")).toBeInTheDocument();
     expect(screen.getByText(/Connection refused. Runs that use a secret kept there fail/)).toBeInTheDocument();
     expect(screen.getByText(/last reachable never · AnsiDeck's token has 30 min left/)).toBeInTheDocument();
+  });
+
+  it("shows which workers keep their runs away from the API and cloud metadata", async () => {
+    const { screen } = renderApp("/workers", {
+      routes: {
+        "GET /workers": [
+          worker(),
+          worker({ id: "worker-open", egress_filtered: false }),
+          worker({ id: "worker-dev", isolated: false, egress_filtered: false }),
+          worker({ id: "worker-old", egress_filtered: null }),
+        ],
+        "GET /secret-store/status": { enabled: false },
+      },
+    });
+    expect(await screen.findByText(/A worker lets its runs reach the API and cloud metadata/)).toBeInTheDocument();
+    expect(screen.getAllByText("egress filtered")).toHaveLength(1);
+    expect(screen.getAllByText("egress open")).toHaveLength(1); // not for the unisolated one
+    expect(screen.getByText("worker-open").parentElement).toHaveTextContent("egress open");
   });
 
   it("warns when no worker is online and keeps polling", async () => {

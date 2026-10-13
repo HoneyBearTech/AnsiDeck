@@ -308,6 +308,8 @@ Global channels can also take operations and security events:
 - **Worker offline**: a worker sent no heartbeat for `NOTIFY_WORKER_OFFLINE_SECONDS` (120 by
   default), and again when it is back online.
 - **Worker not isolated**: a worker runs playbooks without per-slot users (once per worker).
+- **Worker egress not filtered**: a worker's runs can reach the API and cloud metadata, because its egress
+  filter is off or couldn't be updated (once per worker).
 - **Queue stuck**: a run has waited `NOTIFY_QUEUE_STUCK_MINUTES` (10 by default) for a worker or
   a Galaxy install, and again when the queue moves. Waiting behind another run on the same
   inventory never counts.
