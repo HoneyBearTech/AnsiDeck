@@ -734,7 +734,13 @@ async def run_ws(
     finally:
         for task in (streaming, disconnected):
             task.cancel()
-        await asyncio.gather(streaming, disconnected, return_exceptions=True)
+        # asyncio.wait, not gather: if this handler is cancelled meanwhile, gather raises a
+        # CancelledError of its own (from the cancelled task), which the server's cancel scope
+        # doesn't recognise as its own, so the cancellation escapes the request.
+        await asyncio.wait({streaming, disconnected})
+        for task in (streaming, disconnected):
+            if not task.cancelled():
+                task.exception()  # retrieved, so asyncio doesn't log it as never retrieved
     if not client_gone:
         # The viewer may leave just as the stream ends (e.g. a replay racing a page reload).
         with contextlib.suppress(WebSocketDisconnect, RuntimeError):
