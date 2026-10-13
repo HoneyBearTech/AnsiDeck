@@ -11,6 +11,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.api_keys import prune_keys
+from app.config import get_settings
 from app.db import get_sessionmaker
 from app.galaxy import try_start_install
 from app.git_sync import prune_snapshots
@@ -232,6 +234,12 @@ def reap_once() -> list[int]:
         )
         prune_deliveries(db)
         db.commit()
+        try:
+            prune_keys(db, get_settings().api_key_retention_days)
+            db.commit()
+        except Exception:  # the next pass tries again
+            db.rollback()
+            logger.exception("could not prune API keys")
         try:
             prune_snapshots(db)
         except Exception:  # the next pass tries again

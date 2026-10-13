@@ -4,13 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.api_keys import creator_problem, hash_token, key_status, new_token
+from app.api_keys import creator_problem, hash_token, key_status, lifetime_days, new_token
 from app.db import get_db
 from app.hardening import client_ip
 from app.models import ApiKey, User
 from app.permissions import Permission, Scope, guard
 from app.routers.auth import check_reauthentication
-from app.schemas.api_keys import ApiKeyCreate, ApiKeyCreated, ApiKeyOut
+from app.schemas.api_keys import ApiKeyCreate, ApiKeyCreated, ApiKeyOut, ApiKeyRotate
 from app.scoping import require_project_permission
 
 router = APIRouter()
@@ -68,7 +68,7 @@ def create_api_key(
     now = datetime.now(UTC)
 
     existing = db.query(ApiKey).filter(ApiKey.project_id == project_id).all()
-    if any(key.name == payload.name for key in existing):
+    if any(key.name == payload.name and key.revoked_at is None for key in existing):
         raise HTTPException(
             status.HTTP_409_CONFLICT, "This project already has an API key with that name"
         )
@@ -78,20 +78,9 @@ def create_api_key(
             f"A project can have at most {MAX_KEYS_PER_PROJECT} active API keys. Revoke one first.",
         )
 
-    token, prefix = new_token()
-    while db.query(ApiKey).filter(ApiKey.prefix == prefix).first() is not None:
-        token, prefix = new_token()  # 32-bit prefix collision: vanishingly rare
-    key = ApiKey(
-        project_id=project_id,
-        name=payload.name,
-        preset=payload.preset,
-        prefix=prefix,
-        token_hash=hash_token(token),
-        created_by=user.username,
-        created_by_id=user.id,
-        expires_at=now + timedelta(days=payload.expires_in_days),
+    key, token = _new_key(
+        db, project_id, payload.name, payload.preset, user, payload.expires_in_days
     )
-    db.add(key)
     db.commit()
     db.refresh(key)
     audit.record(
@@ -106,6 +95,72 @@ def create_api_key(
         detail={
             "preset": key.preset,
             "prefix": key.prefix,
+            "expires_at": key.expires_at.isoformat(),
+        },
+    )
+    return _out(db, key, token=token)
+
+
+def _new_key(
+    db: Session, project_id: int, name: str, preset: str, user: User, days: int
+) -> tuple[ApiKey, str]:
+    token, prefix = new_token()
+    while db.query(ApiKey).filter(ApiKey.prefix == prefix).first() is not None:
+        token, prefix = new_token()  # 32-bit prefix collision: vanishingly rare
+    key = ApiKey(
+        project_id=project_id,
+        name=name,
+        preset=preset,
+        prefix=prefix,
+        token_hash=hash_token(token),
+        created_by=user.username,
+        created_by_id=user.id,
+        expires_at=datetime.now(UTC) + timedelta(days=days),
+    )
+    db.add(key)
+    db.flush()
+    return key, token
+
+
+@router.post("/{key_id}/rotate", response_model=ApiKeyCreated, status_code=status.HTTP_201_CREATED)
+def rotate_api_key(
+    project_id: int,
+    key_id: int,
+    payload: ApiKeyRotate,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Replaces the key with a new one of the same name, preset and lifetime, created by the
+    caller; the old one stops working at once."""
+    require_project_permission(db, user, request, project_id, Permission.API_KEYS_MANAGE)
+    check_reauthentication(db, request, user, payload.current_password, "apikey.rotate")
+    old = db.get(ApiKey, key_id, with_for_update=True)
+    if old is None or old.project_id != project_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found")
+    if old.revoked_at is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "This key is revoked. Create a new one instead."
+        )
+    old.revoked_at = datetime.now(UTC)
+    old.revoked_by = user.username
+    db.flush()  # frees the name for the replacement
+    key, token = _new_key(db, project_id, old.name, old.preset, user, lifetime_days(old))
+    db.commit()
+    db.refresh(key)
+    audit.record(
+        db,
+        "apikey.rotate",
+        actor=user,
+        target_type="api_key",
+        target_id=key.id,
+        target_name=key.name,
+        ip=client_ip(request),
+        project_id=project_id,
+        detail={
+            "preset": key.preset,
+            "prefix": key.prefix,
+            "replaces": old.prefix,
             "expires_at": key.expires_at.isoformat(),
         },
     )

@@ -120,7 +120,16 @@ class ApiKey(Base):
     history (and audit trail) stays intact."""
 
     __tablename__ = "api_keys"
-    __table_args__ = (UniqueConstraint("project_id", "name"),)
+    # A revoked key's name can be used again (by its rotation, or a new key).
+    __table_args__ = (
+        Index(
+            "ux_api_keys_project_name",
+            "project_id",
+            "name",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(

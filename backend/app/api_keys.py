@@ -13,6 +13,7 @@ import hmac
 import secrets
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import and_, delete, func, or_
 from sqlalchemy.orm import Session
 
 from app.models import ApiKey, User
@@ -115,3 +116,27 @@ def authenticate_api_key(
         key.last_used_ip = ip
         db.commit()
     return principal, None, prefix
+
+
+def lifetime_days(key: ApiKey) -> int:
+    """The lifetime a key was created with, in whole days (for its rotation)."""
+    seconds = (key.expires_at - key.created_at).total_seconds()
+    return max(1, min(365, round(seconds / 86400)))
+
+
+def prune_keys(db: Session, retention_days: int) -> int:
+    """Deletes keys that were revoked, or expired, more than `retention_days` ago (0 keeps
+    them). Runs they started keep their history (triggered_by), and the audit log keeps their
+    creation, rotation and revocation. The caller commits."""
+    if retention_days <= 0:
+        return 0
+    cutoff = func.now() - func.make_interval(0, 0, 0, retention_days)
+    gone = db.execute(
+        delete(ApiKey).where(
+            or_(
+                ApiKey.revoked_at < cutoff,
+                and_(ApiKey.revoked_at.is_(None), ApiKey.expires_at < cutoff),
+            )
+        )
+    )
+    return gone.rowcount
