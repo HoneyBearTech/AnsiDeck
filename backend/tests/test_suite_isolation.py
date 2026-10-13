@@ -4,10 +4,12 @@ fails, a test could read a developer's .env or credentials, or write to real dat
 import os
 import pwd
 import tempfile
+import threading
 from pathlib import Path
 
 import pytest
 
+from app import config
 from app.config import Settings, get_settings
 from app.subprocess_env import clean_env
 from tests.conftest import ENV_AT_START, SANDBOX, SECRET_LIKE, TEST_DATABASE_URL
@@ -42,6 +44,34 @@ def test_there_is_no_real_home(tmp_path) -> None:
     assert os.environ["HOME"] != real
     assert _in_sandbox(os.environ["HOME"]) and _in_sandbox(str(Path.home()))
     assert clean_env()["HOME"] == os.environ["HOME"]  # what runs get
+
+
+def test_a_settings_read_under_way_when_a_test_changes_them_is_not_kept(monkeypatch) -> None:
+    """The in-process worker reads settings in its own thread all the time. One read that began
+    before a test changed the environment must not be cached after the test's cache_clear()."""
+    read, release = threading.Event(), threading.Event()
+
+    def slow_settings(**kwargs) -> Settings:
+        settings = Settings(**kwargs)
+        if threading.current_thread() is not threading.main_thread():
+            read.set()  # read the old environment; finishes after the test's change
+            release.wait(5)
+        return settings
+
+    get_settings.cache_clear()
+    monkeypatch.setattr(config, "Settings", slow_settings)
+    try:
+        worker = threading.Thread(target=get_settings)
+        worker.start()
+        assert read.wait(5)
+        monkeypatch.setenv("SECRETS_STORE_PATH_PREFIX", "changed-by-the-test")
+        get_settings.cache_clear()
+        release.set()
+        worker.join(5)
+        assert get_settings().secrets_store_path_prefix == "changed-by-the-test"
+    finally:
+        release.set()
+        get_settings.cache_clear()
 
 
 def test_data_and_secrets_stay_in_the_sandbox() -> None:
