@@ -51,6 +51,7 @@ from app.permissions import (
     guard,
     holds_somewhere,
     project_permissions,
+    two_factor_setup_required,
 )
 from app.queue import QUEUE_TOPIC, fail_run, wait_reason
 from app.schemas.runs import ArtifactsOut, RunCreate, RunOut
@@ -882,7 +883,9 @@ async def run_ws(
         )
     except RateLimited:
         user = None
-    if user is None:
+    if user is None or two_factor_setup_required(
+        db, user, websocket.cookies.get(SESSION_COOKIE_NAME)
+    ):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 

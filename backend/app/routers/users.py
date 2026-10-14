@@ -200,34 +200,52 @@ def unlink_sso(
     )
 
 
-@router.delete("/{user_id}/totp", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{user_id}/two-factor", status_code=status.HTTP_204_NO_CONTENT)
+def reset_two_factor(
+    user_id: int,
+    request: Request,
+    actor: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> None:
+    """Turn off someone's two-factor login (lost authenticator, passkeys and recovery codes):
+    TOTP, every passkey and the recovery codes go. Their sessions end; they sign in with the
+    password alone and can set it up again."""
+    target = _load(db, user_id)
+    if target.id == actor.id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Turn off your own two-factor login on the Account page"
+        )
+    had = totp.clear_all(target)
+    if had is None:
+        return
+    target.session_version += 1
+    db.commit()
+    audit.record(
+        db,
+        "user.two_factor_reset",
+        actor=actor,
+        target_type="user",
+        target_id=target.id,
+        target_name=target.username,
+        ip=client_ip(request),
+        detail=had,
+    )
+
+
+@router.delete(
+    "/{user_id}/totp",
+    status_code=status.HTTP_204_NO_CONTENT,
+    deprecated=True,
+    summary="Reset Two Factor (old path)",
+)
 def reset_totp(
     user_id: int,
     request: Request,
     actor: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> None:
-    """Turn off someone's two-factor login (lost authenticator and recovery codes).
-    Their sessions end; they sign in with the password alone and can set it up again."""
-    target = _load(db, user_id)
-    if target.id == actor.id:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Turn off your own two-factor login on the Account page"
-        )
-    if not target.totp_enabled and target.totp_pending_secret is None:
-        return
-    totp.clear(target)
-    target.session_version += 1
-    db.commit()
-    audit.record(
-        db,
-        "user.totp_reset",
-        actor=actor,
-        target_type="user",
-        target_id=target.id,
-        target_name=target.username,
-        ip=client_ip(request),
-    )
+    """The old path of DELETE /api/users/{user_id}/two-factor (it now removes passkeys too)."""
+    reset_two_factor(user_id, request, actor, db)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

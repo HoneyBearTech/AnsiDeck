@@ -1,4 +1,5 @@
-"""TOTP (RFC 6238) second factor for password logins, plus single-use recovery codes."""
+"""TOTP (RFC 6238) second factor for password logins, plus the single-use recovery codes that
+stand in for any second factor (TOTP or a passkey, app.passkeys; see app.second_factor)."""
 
 import hashlib
 import hmac
@@ -84,11 +85,12 @@ def new_recovery_codes() -> tuple[list[str], list[str]]:
 
 
 def use_second_factor(user: User, *, code: str | None, recovery_code: str | None) -> str | None:
-    """Checks a TOTP code or a recovery code against an enrolled user and records its use
-    (the caller commits). Returns "totp" or "recovery_code", or None if it doesn't match."""
-    if user.totp_secret is None:
-        return None
+    """Checks a TOTP code (for a user with TOTP) or a recovery code (for any user with a second
+    factor) and records its use (the caller commits). Returns "totp" or "recovery_code", or None
+    if it doesn't match."""
     if code is not None:
+        if user.totp_secret is None:
+            return None
         counter = match_counter(decrypt(user.totp_secret), code, user.totp_last_counter)
         if counter is None:
             return None
@@ -99,28 +101,52 @@ def use_second_factor(user: User, *, code: str | None, recovery_code: str | None
         if len(normalized) != _RECOVERY_LENGTH or not normalized.isascii():
             return None
         wanted = _hash(normalized)
-        hashes = user.totp_recovery_hashes or []
-        if not any(hmac.compare_digest(h, wanted) for h in hashes):
+        hashes = user.recovery_code_hashes or []
+        if not user.two_factor_enabled or not any(hmac.compare_digest(h, wanted) for h in hashes):
             return None
-        user.totp_recovery_hashes = [h for h in hashes if h != wanted]
+        user.recovery_code_hashes = [h for h in hashes if h != wanted]
         return "recovery_code"
     return None
 
 
-def enable(user: User, counter: int) -> list[str]:
-    """Promotes the pending secret; returns the recovery codes to show once."""
+def enable(user: User, counter: int) -> list[str] | None:
+    """Promotes the pending secret; returns the recovery codes to show once, when this is the
+    user's first second factor (a user with passkeys keeps the codes they have)."""
     if user.totp_pending_secret is None:
         raise ValueError("there is no pending two-factor secret to enable")
-    codes, hashes = new_recovery_codes()
+    first = not user.two_factor_enabled
     user.totp_secret = user.totp_pending_secret
     user.totp_pending_secret = None
     user.totp_last_counter = counter
-    user.totp_recovery_hashes = hashes
+    if not first:
+        return None
+    codes, user.recovery_code_hashes = new_recovery_codes()
     return codes
 
 
 def clear(user: User) -> None:
+    """Turns TOTP off; the recovery codes go too when no passkey is left."""
     user.totp_secret = None
     user.totp_pending_secret = None
     user.totp_last_counter = None
-    user.totp_recovery_hashes = None
+    if not user.passkeys:
+        user.recovery_code_hashes = None
+
+
+def clear_all(user: User) -> dict[str, int | bool] | None:
+    """Removes every second factor (TOTP, passkeys, recovery codes and anything half set up);
+    returns what was there for the audit log, or None when there was nothing (the caller
+    commits and ends the user's sessions)."""
+    had = {"totp": user.totp_enabled, "passkeys": len(user.passkeys)}
+    if not (
+        had["totp"]
+        or had["passkeys"]
+        or user.totp_pending_secret is not None
+        or user.recovery_code_hashes
+        or user.webauthn_pending is not None
+    ):
+        return None
+    user.passkeys.clear()
+    user.webauthn_pending = None
+    clear(user)
+    return had

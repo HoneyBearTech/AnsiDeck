@@ -90,6 +90,7 @@ def test_sso_is_off_by_default(client: TestClient) -> None:
     assert client.get("/api/auth/providers").json() == {
         "oidc": {"enabled": False, "label": "SSO"},
         "github": {"enabled": False, "label": "GitHub"},
+        "passkeys": {"enabled": False, "origin": None},  # http://testserver isn't localhost
     }
     assert client.get("/api/auth/oidc/login", follow_redirects=False).status_code == 404
     assert client.get("/api/auth/oidc/callback", follow_redirects=False).status_code == 404
@@ -100,6 +101,7 @@ def test_providers_reports_the_button_label(sso) -> None:
     assert browser.get("/api/auth/providers").json() == {
         "oidc": {"enabled": True, "label": "Acme SSO"},
         "github": {"enabled": False, "label": "GitHub"},
+        "passkeys": {"enabled": False, "origin": None},  # http://testserver isn't localhost
     }
 
 
@@ -174,7 +176,7 @@ def test_sso_sign_in_skips_the_totp_step(sso) -> None:
     password_only = TestClient(app).post(
         "/api/auth/login", json={"username": "alice", "password": PASSWORD}
     )
-    assert password_only.json() == {"mfa_required": True}
+    assert password_only.json()["mfa_required"] is True
 
     browser, response = _sign_in(fake, sub="idp-alice", email="alice@example.com")
     assert _ok(response)

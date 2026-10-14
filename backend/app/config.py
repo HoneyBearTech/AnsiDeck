@@ -56,8 +56,12 @@ class Settings(BaseSettings):
     )
 
     # PUBLIC_URL is the browser-visible base URL of this app; the SSO redirect URIs are
-    # built from it, never from the request's Host.
+    # built from it, never from the request's Host. Passkeys need it too (https://, or
+    # http://localhost): its host is their relying party ID.
     public_url: str = ""
+    # Global admins and project admins must set up a second factor (TOTP or a passkey) at
+    # their next password sign-in before they can do anything else.
+    require_admin_2fa: bool = False
 
     # Optional OpenID Connect sign-in. Enabled only when issuer, client id and secret are
     # all set (a partial config refuses to start).
@@ -223,6 +227,26 @@ class Settings(BaseSettings):
     @classmethod
     def _strip_trailing_slash(cls, v: str) -> str:
         return v.strip().rstrip("/")
+
+    @property
+    def passkey_rp(self) -> tuple[str, str] | None:
+        """Passkeys' (relying party ID, expected origin), from PUBLIC_URL: https with a host
+        name, or http on localhost; None (no passkeys) otherwise."""
+        import ipaddress
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(self.public_url)
+        host = (parts.hostname or "").lower()
+        if not host or (parts.scheme, host) not in {("https", host), ("http", "localhost")}:
+            return None
+        try:
+            ipaddress.ip_address(host)
+            return None  # browsers refuse an IP address as the relying party
+        except ValueError:
+            pass
+        default = {"https": 443, "http": 80}[parts.scheme]
+        port = f":{parts.port}" if parts.port not in (None, default) else ""
+        return host, f"{parts.scheme}://{host}{port}"
 
     @property
     def git_allowlist(self) -> list[str]:

@@ -50,9 +50,15 @@ def _failure(provider: Provider, code: str) -> RedirectResponse:
 @router.get("/providers")
 def providers() -> dict:
     settings = get_settings()
+    rp = settings.passkey_rp
     return {
         "oidc": {"enabled": settings.oidc_enabled, "label": settings.oidc_button_label},
         "github": {"enabled": settings.github_enabled, "label": settings.github_button_label},
+        # Passkeys work only at this origin (PUBLIC_URL), the browser's address must match it.
+        "passkeys": {
+            "enabled": rp is not None,
+            "origin": rp[1] if rp is not None else None,
+        },
     }
 
 

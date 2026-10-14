@@ -6,15 +6,16 @@
     migrate                          bring the database schema to the latest revision
                                      (the app also does this at startup)
     import-sqlite <path> [--check]   one-time import of a pre-Postgres ansideck.db
-    reset-totp <username>            turn off a user's two-factor login
+    reset-2fa <username>             turn off a user's two-factor login (TOTP, passkeys
+                                     and recovery codes; reset-totp is the old name)
     reencrypt-secrets                re-encrypt stored secrets under the first
                                      CREDENTIAL_ENCRYPTION_KEY (a key rotation)
     analytics-grant <role>           let a (Grafana) database role read the analytics views
     analytics-check <role>           check such a role can read nothing else
     analytics-revoke <role>          take that access away again
 
-reset-totp is the break-glass for a user who lost both their authenticator and their
-recovery codes when no other admin can reset it from the Users page.
+reset-2fa is the break-glass for a user who lost their authenticator, passkeys and recovery
+codes when no other admin can reset it from the Users page.
 """
 
 import argparse
@@ -29,7 +30,7 @@ from app.models import User
 from app.sqlite_import import ImportFailed, import_sqlite
 
 
-def reset_totp(username: str) -> int:
+def reset_two_factor(username: str) -> int:
     init_db()
     db = get_sessionmaker()()
     try:
@@ -37,19 +38,20 @@ def reset_totp(username: str) -> int:
         if user is None:
             print(f"No user named {username!r}.", file=sys.stderr)
             return 1
-        if not user.totp_enabled and user.totp_pending_secret is None:
+        had = totp.clear_all(user)
+        if had is None:
             print(f"{username} has no two-factor login; nothing to do.")
             return 0
-        totp.clear(user)
         user.session_version += 1
         db.commit()
         audit.record(
             db,
-            "user.totp_reset",
+            "user.two_factor_reset",
             actor_username="(server cli)",
             target_type="user",
             target_id=user.id,
             target_name=user.username,
+            detail=had,
         )
         print(f"Two-factor login turned off for {username}; their sessions were signed out.")
         return 0
@@ -151,7 +153,9 @@ def main(argv: list[str] | None = None) -> int:
     importer.add_argument(
         "--check", action="store_true", help="run the whole import, then roll it back"
     )
-    reset = commands.add_parser("reset-totp", help="turn off a user's two-factor login")
+    reset = commands.add_parser(
+        "reset-2fa", aliases=["reset-totp"], help="turn off a user's two-factor login"
+    )
     reset.add_argument("username")
     commands.add_parser(
         "reencrypt-secrets",
@@ -172,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
         return import_legacy(args.path, args.check)
     if args.command == "reencrypt-secrets":
         return reencrypt_secrets()
-    return reset_totp(args.username)
+    return reset_two_factor(args.username)
 
 
 if __name__ == "__main__":

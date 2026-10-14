@@ -46,6 +46,8 @@ class UserAdminOut(BaseModel):
     email: str | None
     sso_linked: bool
     totp_enabled: bool
+    passkey_count: int
+    two_factor_enabled: bool
     # Only used to name the provider below; the issuer itself isn't sent to the browser.
     sso_issuer: str | None = Field(default=None, exclude=True)
 

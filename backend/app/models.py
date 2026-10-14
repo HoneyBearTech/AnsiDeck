@@ -73,8 +73,21 @@ class User(Base):
     totp_pending_secret: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
     # Highest time step already accepted, so a code can't be used twice.
     totp_last_counter: Mapped[int | None] = mapped_column(Integer, default=None)
-    # SHA-256 hex of each unused recovery code.
-    totp_recovery_hashes: Mapped[list[str] | None] = mapped_column(JSON, default=None)
+    # SHA-256 hex of each unused recovery code. They stand in for any second factor (TOTP or a
+    # passkey); the column keeps its pre-passkey name.
+    recovery_code_hashes: Mapped[list[str] | None] = mapped_column(
+        "totp_recovery_hashes", JSON, default=None
+    )
+    # Passkeys (app.passkeys): the user's stable WebAuthn handle, made at the first registration,
+    # and the one challenge being answered ({"challenge", "purpose", "expires"}; single use).
+    webauthn_user_handle: Mapped[str | None] = mapped_column(String(64), default=None)
+    webauthn_pending: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
+    passkeys: Mapped[list["WebAuthnCredential"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="WebAuthnCredential.created_at",
+    )
 
     @property
     def sso_linked(self) -> bool:
@@ -83,6 +96,38 @@ class User(Base):
     @property
     def totp_enabled(self) -> bool:
         return self.totp_secret is not None
+
+    @property
+    def passkey_count(self) -> int:
+        return len(self.passkeys)
+
+    @property
+    def two_factor_enabled(self) -> bool:
+        return self.totp_enabled or bool(self.passkeys)
+
+
+class WebAuthnCredential(Base):
+    """A passkey: a WebAuthn public key a user signs in with as a second factor. The ids and the
+    key aren't secret (base64url text, not encrypted)."""
+
+    __tablename__ = "webauthn_credentials"
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_webauthn_credential_user_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    credential_id: Mapped[str] = mapped_column(String(1400), unique=True)
+    public_key: Mapped[str] = mapped_column(Text)
+    # The authenticator's signature counter (a uint32; 0 for synced passkeys, which don't count).
+    sign_count: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    transports: Mapped[list | None] = mapped_column(JSON(none_as_null=True), default=None)
+    name: Mapped[str] = mapped_column(String(64))
+    aaguid: Mapped[str | None] = mapped_column(String(36), default=None)
+    backup_eligible: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    backed_up: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+    user: Mapped["User"] = relationship(back_populates="passkeys")
 
 
 # Unique; NULLs are distinct, so any number of users may have no email / no SSO identity.
