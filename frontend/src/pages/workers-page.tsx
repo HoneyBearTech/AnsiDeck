@@ -193,6 +193,14 @@ export function WorkersPage() {
                     no network allowlists
                   </Badge>
                 )}
+                {worker.online && worker.host_keys === true && worker.ssh_certificates === false && (
+                  <Badge
+                    variant="outline"
+                    title="An older worker: runs with an SSH certificate credential wait for another worker"
+                  >
+                    no SSH certificates
+                  </Badge>
+                )}
                 <span className="font-mono text-sm">{worker.id}</span>
               </div>
               <span className="text-sm text-muted-foreground">

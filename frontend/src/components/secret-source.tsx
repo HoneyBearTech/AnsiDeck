@@ -107,7 +107,14 @@ export function SecretLocation({ row, label }: { row: SecretRef; label: string |
 }
 
 /** "Test": can AnsiDeck read the stored secret right now (never shows it). */
-export function SecretCheckButton({ check }: { check: () => Promise<SecretCheck> }) {
+export function SecretCheckButton({
+  check,
+  describe,
+}: {
+  check: () => Promise<SecretCheck>;
+  /** What a successful check says (default: "Readable", with the secret's version). */
+  describe?: ((outcome: SecretCheck) => string) | undefined;
+}) {
   const [result, setResult] = React.useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = React.useState(false);
 
@@ -118,7 +125,14 @@ export function SecretCheckButton({ check }: { check: () => Promise<SecretCheck>
       const outcome = await check();
       setResult(
         outcome.ok
-          ? { ok: true, text: outcome.version ? `Readable (version ${outcome.version})` : "Readable" }
+          ? {
+              ok: true,
+              text: describe
+                ? describe(outcome)
+                : outcome.version
+                  ? `Readable (version ${outcome.version})`
+                  : "Readable",
+            }
           : { ok: false, text: outcome.error ?? "Can't be read" },
       );
     } catch (err) {

@@ -5,7 +5,7 @@ Operators can pick a project's credentials for runs; only project admins create 
 
 ## Credentials
 
-**Credentials → New credential** stores one of two kinds:
+**Credentials → New credential** stores one of these kinds:
 
 - **SSH key**: the private key a run connects to its hosts with (and the deploy key a git source can
   use). Paste it, or upload the key file. Passphrase-protected keys aren't supported yet: use an
@@ -17,8 +17,17 @@ Operators can pick a project's credentials for runs; only project admins create 
   Names that change how ansible, Python, ssh, sudo or the worker behave (`ANSIBLE_*`, `PYTHON*`, `SSH_*`,
   `SUDO_*`, `PATH`, proxies, CA bundles and the like) are refused. Their values are removed from refresh
   and run output; a playbook can still read them, like any secret it is given.
+- **SSH certificate (from OpenBao)**: offered only when the server's secret store has an SSH engine set
+  up for it (see the README's [SSH certificates](../../README.md#ssh-certificates-optional)). It stores no
+  key: each run gets a new key and a certificate the store signs for the run's timeout plus 5 minutes.
+  Enter the **role** (its name in the store starts with the prefix shown, so a project only signs with its
+  own roles) and the **principals**, the users the certificate may log in as; the inventory's
+  `ansible_user` must be one of them. AnsiDeck signs a throwaway key once to check the role, and **Test**
+  does it again (it shows the test certificate's serial and the CA's fingerprint). Runs can use it; git
+  sources can't (a deploy key stays a key). Targets log one refused attempt with the bare key before they
+  accept the certificate, and connections through paramiko can't use it.
 
-Each credential is stored encrypted, or as a reference into a secret store (below). Deleting asks first;
+Each SSH key or environment credential is stored encrypted, or as a reference into a secret store (below). Deleting asks first;
 the secret is then gone from AnsiDeck for good. A credential that a git source or an inventory source
 uses can't be deleted (the page says which); runs still queued with a deleted credential fail with that
 reason.

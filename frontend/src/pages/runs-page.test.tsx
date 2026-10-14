@@ -4,7 +4,20 @@ import { describe, expect, it, vi } from "vitest";
 import { setEditorText } from "@/test/editor";
 import { reply } from "@/test/fake-api";
 import { FakeWebSocket } from "@/test/fake-websocket";
-import { adminUser, credential, inventory, playbook, project, refresh, run, targets, vaultPassword, viewerUser } from "@/test/fixtures";
+import {
+  adminUser,
+  credential,
+  inventory,
+  playbook,
+  project,
+  refresh,
+  run,
+  sshCertCredential,
+  sshCertificate,
+  targets,
+  vaultPassword,
+  viewerUser,
+} from "@/test/fixtures";
 import { choose, renderApp } from "@/test/render";
 
 describe("runs list", () => {
@@ -301,6 +314,47 @@ describe("run detail", () => {
     expect(await screen.findByText("ssh refused a host's key")).toBeInTheDocument();
     expect(screen.getByText(/Ask a project admin to review the inventory's host keys/)).toBeInTheDocument();
     expect(screen.getByText("SSH host keys checked, confirmed keys only")).toBeInTheDocument();
+  });
+
+  it("offers certificate credentials for new runs, but no environment credentials", async () => {
+    const { api, user, screen } = renderApp("/runs/new", {
+      routes: {
+        ...TRIGGER,
+        "GET /credentials": [
+          credential(),
+          sshCertCredential(),
+          credential({ id: 3, name: "aws", kind: "env", env_names: ["AWS_ACCESS_KEY_ID"] }),
+        ],
+        "POST /runs": run({ id: 42 }),
+        "GET /runs/:id": run({ id: 42 }),
+      },
+    });
+    await screen.findByRole("heading", { name: "New run" });
+    await choose(user, screen.getByLabelText("Playbook"), "site.yml");
+    await user.click(screen.getByLabelText("Credential"));
+    expect(screen.queryByRole("option", { name: "aws" })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("option", { name: "web-cert (certificate)" }));
+    await user.click(screen.getByRole("button", { name: "Start run" }));
+    await screen.findByText(/^(Live )?[Oo]utput$/);
+    expect(api.requests("POST /runs")[0]?.body).toMatchObject({ credential_id: 5 });
+  });
+
+  it("shows the run's SSH certificate, and warns when the role capped it", async () => {
+    const { screen } = renderApp("/runs/7", {
+      routes: {
+        "GET /runs/:id": run({
+          credential_name: "web-cert",
+          ssh_certificate: sshCertificate({ principals: ["deploy", "ansible"], capped: true }),
+        }),
+      },
+    });
+    expect(await screen.findByText("6109869050348158858")).toBeInTheDocument();
+    expect(screen.getByText(/deploy, ansible\) valid until/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "download" })).toHaveAttribute(
+      "href",
+      "/api/runs/7/ssh-certificate",
+    );
+    expect(screen.getByText(/allows shorter certificates than this run's timeout/)).toBeInTheDocument();
   });
 
   it("shows what a restricted run could reach and what it was refused", async () => {

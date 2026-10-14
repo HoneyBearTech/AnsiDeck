@@ -58,7 +58,7 @@ flowchart TB
 | **Postgres** | `app/models.py`, `backend/migrations/` | The single source of truth for state and the job queue. Jobs are rows claimed with `UPDATE … FOR UPDATE SKIP LOCKED` (`app/queue.py`); partial unique indexes enforce one running run per inventory. Schema changes go through Alembic migrations. An optional `analytics` schema holds read-only views for Grafana. |
 | **Data volume** | `app/run_log.py`, `app/storage.py`, `app/galaxy.py` | Playbook files, run output (append-only JSONL, its length committed with the run's row), git mirrors and the snapshots runs pin, and Galaxy roles/collections (mounted read-only into workers). |
 | **Workers** | `backend/app/worker/`, `app/run_worker.py`, `app/run_isolation.py` | Claim playbook runs, inventory refreshes and playbook checks over the internal API, then execute each in a slot: a child process running as that slot's own Linux user (`ansideck-run<n>`), with no capabilities, a private home, and its files and processes cleared after every job. Workers have no database access and no encryption key, and their slots can't reach the API or cloud metadata (nftables rules, `app/worker/egress.py`). A heartbeat thread renews leases and applies cancels and timeouts. |
-| **Secret store** (optional) | `app/secret_store.py` | OpenBao or HashiCorp Vault (KV v2). Credentials and vault passwords can be references into a per-project subtree, read by the API when a job starts and handed only to the worker that claimed it. |
+| **Secret store** (optional) | `app/secret_store.py`, `app/ssh_certificates.py` | OpenBao or HashiCorp Vault (KV v2). Credentials and vault passwords can be references into a per-project subtree, read by the API when a job starts and handed only to the worker that claimed it. Its SSH engine can sign a key pair made for each run (SSH certificate credentials). |
 | **Metrics** (optional) | `app/metrics.py`, `app/metrics_api.py`, `grafana/` | Prometheus metrics on port 8002 (bearer token), plus provisioned Grafana dashboards reading the analytics views. |
 
 ## How a run flows
@@ -67,9 +67,12 @@ flowchart TB
    inventory (static hosts plus the latest dynamic-inventory snapshot) and, for a synced playbook, the git
    commit, then inserts a `queued` run.
 2. A worker slot claims the oldest claimable run (one whose inventory checks SSH host keys only goes to a
-   worker that does, and one whose inventory restricts network egress to a worker whose allowlists passed
-   their self-test; both settings are fixed on the run). The API returns a job
-   description with exactly that run's secrets: the SSH key, vault password and the inventory rendered for
+   worker that does, one whose inventory restricts network egress to a worker whose allowlists passed
+   their self-test, and one with an SSH certificate credential to a worker that loads certificates; the
+   first two settings are fixed on the run). The API returns a job
+   description with exactly that run's secrets: the SSH key (or, for an SSH certificate credential, a key
+   pair made for this run and the certificate the secret store's SSH engine signed for it, valid for the
+   run's timeout plus 5 minutes: `app/ssh_certificates.py`), vault password and the inventory rendered for
    the run, with strings from inventory sources marked `!unsafe`, plus the host keys the run trusts
    (`app/host_keys.py`, `app/host_key_store.py`), and on a restricted inventory where each host connects,
    its jump hosts and extra entries (`app/egress_allowlist.py`). The worker resolves those names and
@@ -77,7 +80,9 @@ flowchart TB
    reports what it resolved.
 3. The slot's child process (as the slot user) writes the job into its private directory, unpacks a git
    snapshot if there is one, writes the run's known_hosts and puts its host key options first on ssh's
-   command line (the `ansible_ssh_args` extra var), and runs `ansible-playbook` through ansible-runner.
+   command line (the `ansible_ssh_args` extra var), puts an SSH certificate next to the key for
+   ansible-runner's `ssh-add` to load into the run's ssh-agent, and runs `ansible-playbook` through
+   ansible-runner.
 4. Events stream back to the internal API. The API scrubs known secret values, appends them to the run's
    log, and wakes WebSocket listeners (`app/notify.py`), which re-read the log and send new lines to
    browsers.

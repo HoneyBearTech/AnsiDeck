@@ -156,7 +156,9 @@ export function RunTriggerPage() {
   React.useEffect(() => {
     api.listPlaybooks().then(setPlaybooks);
     api.listInventories().then(setInventories);
-    api.listCredentials("ssh").then(setCredentials);
+    api
+      .listCredentials(["ssh", "ssh_cert"])
+      .then((list) => setCredentials(list.filter((c) => c.kind === "ssh" || c.kind === "ssh_cert")));
     api.listCredentials("env").then((list) => setEnvCredentials(list.filter((c) => c.kind === "env")));
     api.listVaultPasswords().then(setVaultPasswords);
   }, []);
@@ -470,7 +472,7 @@ export function RunTriggerPage() {
           <SelectContent>
             {inProject(credentials).map((credential) => (
               <SelectItem key={credential.id} value={String(credential.id)}>
-                {credential.name}
+                {credential.kind === "ssh_cert" ? `${credential.name} (certificate)` : credential.name}
               </SelectItem>
             ))}
           </SelectContent>

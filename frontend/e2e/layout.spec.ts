@@ -13,6 +13,8 @@ import {
   playbook,
   run,
   runTemplate,
+  sshCertCredential,
+  sshCertificate,
   targets,
   vaultPassword,
 } from "../src/test/fixtures";
@@ -52,10 +54,11 @@ const LONG_ROUTES: Routes = {
   "GET /credentials": [
     credential({ name: `${LONG}-deploy-key` }),
     credential({ id: 2, name: `${LONG}-cloud`, kind: "env", env_names: [`AWS_SECRET_ACCESS_KEY_FOR_${LONG.toUpperCase().replaceAll("-", "_")}`] }),
+    sshCertCredential({ name: `${LONG}-cert`, store_location: `ssh/sign/ansideck-1-${LONG}-webservers`, ssh_principals: [`deploy-${LONG}`, "ansible"] }),
   ],
   "GET /vault-passwords": [vaultPassword({ name: `${LONG}-vault` })],
   "GET /runs": [run({ playbook_name: `${LONG}-site.yml`, inventory_name: `${LONG}-inventory`, group_name: `${LONG}-webservers`, limit: `web1.${LONG}.example.com` })],
-  "GET /runs/:id": run({ playbook_name: `${LONG}-site.yml`, inventory_name: `${LONG}-inventory`, group_name: `${LONG}-webservers`, credential_name: `${LONG}-deploy-key` }),
+  "GET /runs/:id": run({ playbook_name: `${LONG}-site.yml`, inventory_name: `${LONG}-inventory`, group_name: `${LONG}-webservers`, credential_name: `${LONG}-deploy-key`, ssh_certificate: sshCertificate({ principals: [`deploy-${LONG}`, "ansible"], capped: true }) }),
   "GET /run-templates": [runTemplate({ name: `Nightly baseline for ${LONG}` })],
   "GET /users": [adminUserRow({ username: "a-very-long-username-for-layout", email: `someone.with.a.long.address@${LONG}.example.com`, sso_linked: true, totp_enabled: true })],
   "GET /notifications/channels": [channel({ name: "Webhook", kind: "webhook", target: `https://hooks.${LONG}.example.com/services/T000/B000/XXXXXXXXXXXXXXXXXXXXXXXX` })],

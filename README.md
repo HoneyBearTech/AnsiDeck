@@ -238,7 +238,56 @@ docker compose exec -T openbao bao kv put -mount=secret ansideck/1/web/ssh priva
 ```
 
 The script sets up the AppRole and policies above (one per existing project) and keeps the secret id on the
-backend's data volume. Run it again after OpenBao restarts or after you add projects.
+backend's data volume. Run it again after OpenBao restarts or after you add projects. It also sets up an SSH
+engine for SSH certificates (below): a CA, a role `ansideck-<id>-dev` per project for the users `ansible` and
+`deploy`, and the CA's public key in `/data/openbao/ssh_ca.pub` (a restarted dev server makes a new CA).
+
+### SSH certificates (optional)
+
+Instead of a long-lived key, a credential of kind **SSH certificate** holds no secret at all: when a run's job
+is prepared, AnsiDeck makes a new ed25519 key pair, has the store's [SSH secrets
+engine](https://openbao.org/docs/secrets/ssh/signed-ssh-certificates/) sign it for the run's timeout plus 5
+minutes, and gives both to the run's ssh-agent. The key pair is never stored; the run keeps the certificate,
+whose serial the targets' sshd logs show (`Accepted publickey ... ID ... (serial N)`). The credential names the
+engine's mount, a **role** and the **principals** (the users the certificate may log in as; the inventory's
+`ansible_user` must be one of them). A project signs only with its own roles: AnsiDeck always uses the role
+`<SECRETS_STORE_PATH_PREFIX>-<project id>-<role>`, so a credential of project 7 with the role `web` signs with
+`ansideck-7-web`.
+
+```sh
+bao secrets enable ssh
+bao write -field=public_key ssh/config/ca generate_signing_key=true key_type=ed25519   # once: again = a new CA
+bao write ssh/roles/ansideck-7-web - <<'JSON'
+{"key_type": "ca", "allow_user_certificates": true, "allowed_users": "deploy",
+ "default_extensions": {"permit-pty": ""}, "allowed_extensions": "permit-pty",
+ "allowed_user_key_lengths": {"ed25519": [0]}, "ttl": "30m", "max_ttl": "25h",
+ "default_critical_options": {"source-address": "<your workers' addresses>"}}
+JSON
+```
+
+Add `path "ssh/sign/ansideck-*" { capabilities = ["update"] }` to AnsiDeck's policy (with
+`SECRETS_STORE_PROJECT_POLICY`, also `path "ssh/sign/ansideck-7-*" { capabilities = ["update"] }` to project 7's
+policy, so the store itself keeps projects' roles apart), and set `SECRETS_STORE_SSH_MOUNTS=ssh`. Role settings
+take JSON on standard input: the CLI's `key=value` form can't set `default_extensions`. Then make each target
+trust the CA and reload sshd:
+
+```sh
+curl -s https://openbao.lan:8200/v1/ssh/public_key > /etc/ssh/trusted_user_ca_keys.pub
+echo "TrustedUserCAKeys /etc/ssh/trusted_user_ca_keys.pub" >> /etc/ssh/sshd_config
+```
+
+- **Timeouts**: a role whose `max_ttl` is shorter than a run's timeout plus 5 minutes still signs (AnsiDeck asks
+  again for the role's maximum), and the run's page warns that connections it opens after that time fail.
+- **Revocation**: the store can't revoke user certificates. Keep run timeouts short; to cut one off early, add
+  its certificate (**download** on the run's page) to a key revocation list on the targets:
+  `ssh-keygen -k -f /etc/ssh/revoked_keys cert.pub` (with `-u` to add to an existing list) and
+  `RevokedKeys /etc/ssh/revoked_keys` in `sshd_config`.
+- **CA rotation**: OpenBao keeps old issuers. Trust the new CA's line next to the old one on every target, make
+  it the default issuer, then remove the old line.
+- **Clocks**: certificates are valid from 30 seconds before they are signed; targets need the right time (NTP).
+- Targets log one refused attempt with the bare key before the certificate is accepted (it counts toward
+  `MaxAuthTries`). Connections through paramiko don't use certificates, and an inventory's
+  `ansible_ssh_private_key_file` with `IdentitiesOnly=yes` hides them.
 
 ## Playbooks from git (optional)
 
