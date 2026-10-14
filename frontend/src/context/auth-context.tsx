@@ -1,6 +1,13 @@
 import * as React from "react";
 
-import { api, setApiActiveProject, type ProjectAccess, type User } from "@/lib/api";
+import {
+  api,
+  setApiActiveProject,
+  type MfaMethod,
+  type PasskeyResponseJSON,
+  type ProjectAccess,
+  type User,
+} from "@/lib/api";
 
 // Permissions that never depend on a project (mirrors the backend's GLOBAL_ONLY).
 const GLOBAL_PERMISSIONS = new Set([
@@ -16,9 +23,12 @@ const STORAGE_KEY = "ansideck.activeProject";
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
-  // Resolves to "mfa" when the account needs a second factor (then call completeMfa).
-  login: (username: string, password: string) => Promise<"ok" | "mfa">;
-  completeMfa: (second: { code: string } | { recovery_code: string }) => Promise<void>;
+  // Resolves to the second factors the account can finish with (then call completeMfa), or null once
+  // signed in.
+  login: (username: string, password: string) => Promise<MfaMethod[] | null>;
+  completeMfa: (
+    second: { code: string } | { recovery_code: string } | { passkey: PasskeyResponseJSON },
+  ) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   // Permission in the active project (or globally for global-only permissions).
@@ -72,14 +82,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = React.useCallback(async (username: string, password: string) => {
     const result = await api.login(username, password);
-    if ("mfa_required" in result) return "mfa";
+    if ("mfa_required" in result) {
+      // (A server from before passkeys sends no methods.)
+      return result.methods ?? (["totp", "recovery_code"] satisfies MfaMethod[]);
+    }
     setUser(result);
-    return "ok";
+    return null;
   }, []);
 
-  const completeMfa = React.useCallback(async (second: { code: string } | { recovery_code: string }) => {
-    setUser(await api.loginMfa(second));
-  }, []);
+  const completeMfa = React.useCallback(
+    async (second: { code: string } | { recovery_code: string } | { passkey: PasskeyResponseJSON }) => {
+      setUser("passkey" in second ? await api.loginPasskey(second.passkey) : await api.loginMfa(second));
+    },
+    [],
+  );
 
   const logout = React.useCallback(async () => {
     await api.logout();

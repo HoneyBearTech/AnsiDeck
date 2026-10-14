@@ -2,8 +2,9 @@ import { within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { reply } from "@/test/fake-api";
-import { adminUser, playbook, run, viewerUser } from "@/test/fixtures";
+import { adminUser, passkey, playbook, run, viewerUser } from "@/test/fixtures";
 import { renderApp } from "@/test/render";
+import { ASSERTED, CREATION_OPTIONS, fakeCredentials, REQUEST_OPTIONS } from "@/test/webauthn";
 
 const DASHBOARD = {
   "GET /playbooks": [playbook()],
@@ -68,6 +69,81 @@ describe("sign-in", () => {
     expect(await screen.findByRole("button", { name: "Sign in with Keycloak" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sign in with GitHub" })).toBeInTheDocument();
     expect(screen.getByText(/No AnsiDeck account is linked/)).toBeInTheDocument();
+  });
+
+  it("finishes with a passkey, offering only the account's other methods", async () => {
+    const { get } = fakeCredentials();
+    get.mockRejectedValueOnce(new DOMException("cancelled", "NotAllowedError"));
+    const { api, user, screen } = renderApp("/login", {
+      user: null,
+      routes: {
+        "POST /auth/login": { mfa_required: true, methods: ["passkey", "recovery_code"] },
+        "POST /auth/login/mfa/passkey/options": { options: REQUEST_OPTIONS },
+        ...DASHBOARD,
+      },
+    });
+    await user.type(await screen.findByLabelText("Username"), "admin");
+    await user.type(screen.getByLabelText("Password"), "s3cret");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    const usePasskey = await screen.findByRole("button", { name: "Use a passkey" });
+    expect(screen.queryByRole("button", { name: "Use an authenticator code" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use a recovery code instead" })).toBeInTheDocument();
+    await user.click(usePasskey);
+    expect(await screen.findByText(/prompt was closed or timed out/)).toBeInTheDocument();
+
+    api.set({ "POST /auth/login/mfa/passkey": adminUser(), "GET /auth/me": adminUser() });
+    await user.click(screen.getByRole("button", { name: "Use a passkey" }));
+    await screen.findByRole("heading", { level: 1, name: "Dashboard" });
+    expect(api.requests("POST /auth/login/mfa/passkey/options")).toHaveLength(2);
+    expect(api.requests("POST /auth/login/mfa/passkey")[0]?.body).toEqual({ credential: ASSERTED });
+  });
+
+  it("falls back to codes where the browser has no passkeys", async () => {
+    const { user, screen } = renderApp("/login", {
+      user: null,
+      routes: { "POST /auth/login": { mfa_required: true, methods: ["totp", "passkey", "recovery_code"] } },
+    });
+    await user.type(await screen.findByLabelText("Username"), "admin");
+    await user.type(screen.getByLabelText("Password"), "s3cret");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByLabelText("Authentication code")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Use a passkey" })).not.toBeInTheDocument();
+  });
+});
+
+describe("required two-factor setup", () => {
+  it("holds an admin on the setup screen until a second factor is saved", async () => {
+    fakeCredentials();
+    const held = adminUser({ two_factor_setup_required: true });
+    const { api, user, screen } = renderApp("/runs", {
+      user: held,
+      routes: {
+        ...DASHBOARD,
+        "GET /auth/providers": {
+          oidc: { enabled: false, label: "SSO" },
+          github: { enabled: false, label: "GitHub" },
+          passkeys: { enabled: true, origin: window.location.origin },
+        },
+        "POST /auth/passkeys/registration/options": { options: CREATION_OPTIONS },
+        "POST /auth/passkeys": { passkey: passkey(), recovery_codes: ["aaaaa-11111"] },
+      },
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "Set up two-factor login" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1, name: "Runs" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: "Add a passkey" }));
+    await user.type(screen.getByLabelText("Current password", { selector: "#passkey-password" }), "pw");
+    api.set({
+      "GET /auth/passkeys": [passkey()],
+      "GET /auth/me": adminUser({ passkey_count: 1, two_factor_enabled: true }),
+    });
+    await user.click(screen.getByRole("button", { name: "Add passkey" }));
+    // The codes stay up until they're saved, then the page they asked for opens.
+    expect(await screen.findByText("aaaaa-11111")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "I've saved them" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Runs" })).toBeInTheDocument();
   });
 });
 

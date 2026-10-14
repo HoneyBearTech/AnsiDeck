@@ -5,14 +5,14 @@ import { reply } from "@/test/fake-api";
 import { adminUser, adminUserRow, project, viewerUser } from "@/test/fixtures";
 import { choose, renderApp } from "@/test/render";
 
-const ALICE = adminUserRow({ id: 2, username: "alice", role: "operator", email: "alice@example.com", created_by: "admin", sso_linked: true, sso_provider: "Keycloak", totp_enabled: true });
+const ALICE = adminUserRow({ id: 2, username: "alice", role: "operator", email: "alice@example.com", created_by: "admin", sso_linked: true, sso_provider: "Keycloak", totp_enabled: false, passkey_count: 1, two_factor_enabled: true });
 const BOB = adminUserRow({ id: 3, username: "bob", role: "viewer", is_active: false });
 const ROUTES = {
   "GET /users": [adminUserRow(), ALICE, BOB],
   "PATCH /users/:id": ALICE,
   "DELETE /users/:id": reply(204),
   "DELETE /users/:id/sso-link": reply(204),
-  "DELETE /users/:id/totp": reply(204),
+  "DELETE /users/:id/two-factor": reply(204),
 };
 
 describe("users", () => {
@@ -118,7 +118,7 @@ describe("users", () => {
     await user.click(screen.getAllByRole("button", { name: "Delete" })[0]!);
     await user.click(screen.getByRole("button", { name: "Deactivate" }));
     expect(api.requests("DELETE /users/2/sso-link")).toHaveLength(1);
-    expect(api.requests("DELETE /users/2/totp")).toHaveLength(1);
+    expect(api.requests("DELETE /users/2/two-factor")).toHaveLength(1);
     expect(api.requests("DELETE /users/2")).toHaveLength(1);
     expect(api.requests("PATCH /users/2").at(-1)?.body).toEqual({ is_active: false });
   });

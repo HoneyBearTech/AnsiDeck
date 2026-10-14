@@ -32,7 +32,8 @@ Global admins manage accounts on the **Users** page.
   the projects they're a member of; the role picked here seeds that first membership. Pick **admin** to make
   a global admin.
 - On each user: change the role, set the **Email**, **Reset password**, **Reset 2FA** (when they lost their
-  authenticator and recovery codes), **Deactivate** / **Activate**, **Unlink SSO** and **Delete**. Changing
+  authenticator app, passkeys and recovery codes: all of them are removed), **Deactivate** / **Activate**,
+  **Unlink SSO** and **Delete**. Changing
   the role, deactivating, or resetting a password or 2FA signs that user out immediately. Deleting asks
   first; deactivating is usually better, and run history keeps the user's name either way.
 - You can't change your own role or deactivate yourself here; change your own password on **Account**.
@@ -45,20 +46,46 @@ Sign in with your user name and password. After five wrong passwords in five min
 locked for a while, and too many failures from one address lock that address; admins are notified.
 
 Under **Account** you can change your password (at least 12 characters, not your user name; your other
-sessions are signed out) and turn on **two-factor login**:
+sessions are signed out) and turn on **two-factor login** with passkeys, an authenticator app, or both.
 
-1. **Set up two-factor login**, and confirm with your current password.
-2. Scan the QR code with an authenticator app (1Password, Google Authenticator, Aegis, …), or type the key
-   shown under it, and enter the six-digit code.
-3. Save the **recovery codes** (copy or download them). Each one signs you in once if you lose the
-   authenticator; they aren't shown again.
+**Passkeys** confirm it's you with your device's own unlock: Touch ID or Face ID, Windows Hello, your
+phone's screen lock, or a security key such as a YubiKey.
 
-From then on, a password sign-in asks for a code from the app (or a recovery code). **New recovery codes**
-replaces the old ones; **Turn off** needs your password and a code. Two-factor login applies to password
-sign-ins only: single sign-on relies on your provider's MFA.
+1. **Add a passkey**, enter your current password and a name for it (to tell your passkeys apart), and
+   follow your browser's prompt.
+2. If it's your first second factor, save the **recovery codes** (copy or download them). Each one signs
+   you in once if you lose your passkeys and authenticator app; they aren't shown again.
 
-If a global admin loses access, another admin can reset their two-factor login on **Users**, or on the
-server: `docker compose exec backend python -m app.cli reset-totp <username>`.
+You can add up to ten (a laptop, a phone and a spare security key, say), rename them, and see when each
+was last used. A passkey marked **synced** is kept by your platform (iCloud Keychain, Google Password
+Manager, a password manager) and works on your other devices too.
+
+Passkeys work only at the address the server is set up for (`PUBLIC_URL`, which must be `https://`, or
+`http://localhost` to try it out); the Account page says so when that isn't where you are.
+
+**An authenticator app** (1Password, Google Authenticator, Aegis, …):
+
+1. **Set up an authenticator app**, and confirm with your current password.
+2. Scan the QR code, or type the key shown under it, and enter the six-digit code.
+3. Save the recovery codes if it's your first second factor.
+
+From then on, a password sign-in asks for one of them: **Use a passkey**, a code from the app, or a recovery
+code. **New recovery codes** replaces the old ones. Turning a second factor off (**Turn off** for the app,
+**Remove** for a passkey) needs your password and a current second factor: a code, a recovery code, or one
+of your passkeys. Turning off the last one also removes your recovery codes. Two-factor login applies to
+password sign-ins only: single sign-on relies on your provider's MFA.
+
+If someone loses access, a global admin can reset their two-factor login on **Users**, or on the server:
+`docker compose exec backend python -m app.cli reset-2fa <username>` (`reset-totp` still works).
+
+#### Requiring two-factor login for admins
+
+With `REQUIRE_ADMIN_2FA=true`, global admins and project admins who sign in with a password and have no
+second factor see only a **Set up two-factor login** page until they add a passkey or an authenticator app
+(or sign out); the API refuses everything else for that session, and the refusals are audited. While it is
+on, an admin can't remove their last second factor. Single sign-on sessions and API keys are not affected.
+Turn it on once the admins know it's coming: anyone it locks out can still set up a factor at their next
+sign-in.
 
 ### Single sign-on
 

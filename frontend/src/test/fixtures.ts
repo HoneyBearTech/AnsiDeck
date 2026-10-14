@@ -13,6 +13,7 @@ import type {
   MergedHost,
   NotificationCatalog,
   NotificationChannel,
+  Passkey,
   PlaybookDetail,
   ProjectAccess,
   Run,
@@ -441,6 +442,17 @@ export function channel(overrides: Partial<NotificationChannel> = {}): Notificat
     created_at: NOW,
     updated_at: NOW,
     last_delivery: { status: "sent", event: "run.failed", created_at: NOW, error: null },
+    ...overrides,
+  };
+}
+
+export function passkey(overrides: Partial<Passkey> = {}): Passkey {
+  return {
+    id: 1,
+    name: "Work laptop",
+    created_at: NOW,
+    last_used_at: null,
+    synced: false,
     ...overrides,
   };
 }

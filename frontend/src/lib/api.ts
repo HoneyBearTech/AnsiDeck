@@ -63,14 +63,39 @@ export interface User {
   permissions: string[];
   projects: ProjectAccess[];
   totp_enabled: boolean;
+  passkey_count?: number;
+  // TOTP or a passkey.
+  two_factor_enabled?: boolean;
+  // REQUIRE_ADMIN_2FA: this session may only set up a second factor (or sign out).
+  two_factor_setup_required?: boolean;
   // How this session started; an SSO session re-authenticates by signing in again.
   signed_in_with?: "password" | "sso";
 }
 
-// The password was right; the login finishes with loginMfa().
+export type MfaMethod = "totp" | "passkey" | "recovery_code";
+
+// The password was right; the login finishes with loginMfa() or the passkey step.
 export interface MfaChallenge {
   mfa_required: true;
+  methods?: MfaMethod[];
 }
+
+export interface Passkey {
+  id: number;
+  name: string;
+  created_at: string;
+  last_used_at: string | null;
+  // Synced by its platform (iCloud Keychain, Google Password Manager, ...).
+  synced: boolean;
+}
+
+// PublicKeyCredential{Creation,Request}OptionsJSON, as the server sends them (see lib/webauthn).
+export type PasskeyOptionsJSON = Record<string, unknown>;
+// A navigator.credentials response, serialised for the server.
+export type PasskeyResponseJSON = Record<string, unknown>;
+
+// A current second factor, to confirm turning one off.
+export type SecondFactorProof = { code: string } | { passkey: PasskeyResponseJSON };
 
 export interface TotpSetup {
   secret: string;
@@ -137,11 +162,15 @@ export interface AdminUser {
   sso_linked: boolean;
   sso_provider: string | null;
   totp_enabled: boolean;
+  passkey_count?: number;
+  two_factor_enabled?: boolean;
 }
 
 export interface AuthProviders {
   oidc: { enabled: boolean; label: string };
   github: { enabled: boolean; label: string };
+  // Passkeys work only at `origin` (the server's PUBLIC_URL).
+  passkeys?: { enabled: boolean; origin: string | null };
 }
 
 export interface AuditEvent {
@@ -818,6 +847,10 @@ export const api = {
     }),
   loginMfa: (second: { code: string } | { recovery_code: string }) =>
     request<User>("/auth/login/mfa", { method: "POST", body: JSON.stringify(second) }),
+  loginPasskeyOptions: () =>
+    request<{ options: PasskeyOptionsJSON }>("/auth/login/mfa/passkey/options", { method: "POST" }),
+  loginPasskey: (credential: PasskeyResponseJSON) =>
+    request<User>("/auth/login/mfa/passkey", { method: "POST", body: JSON.stringify({ credential }) }),
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
   me: () => request<User>("/auth/me"),
   changePassword: (currentPassword: string, newPassword: string) =>
@@ -833,20 +866,41 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ current_password: currentPassword }),
     }),
+  // Recovery codes come only with the first second factor.
   totpEnable: (code: string) =>
-    request<{ recovery_codes: string[] }>("/auth/totp/enable", {
+    request<{ recovery_codes: string[] | null }>("/auth/totp/enable", {
       method: "POST",
       body: JSON.stringify({ code }),
     }),
-  totpDisable: (currentPassword: string, code: string) =>
+  totpDisable: (currentPassword: string, proof: SecondFactorProof) =>
     request<{ ok: boolean }>("/auth/totp/disable", {
       method: "POST",
-      body: JSON.stringify({ current_password: currentPassword, code }),
+      body: JSON.stringify({ current_password: currentPassword, ...proof }),
     }),
-  totpRegenerateRecoveryCodes: (currentPassword: string) =>
-    request<{ recovery_codes: string[] }>("/auth/totp/recovery-codes", {
+  regenerateRecoveryCodes: (currentPassword: string) =>
+    request<{ recovery_codes: string[] }>("/auth/recovery-codes", {
       method: "POST",
       body: JSON.stringify({ current_password: currentPassword }),
+    }),
+  listPasskeys: () => request<Passkey[]>("/auth/passkeys"),
+  passkeyRegistrationOptions: (currentPassword: string) =>
+    request<{ options: PasskeyOptionsJSON }>("/auth/passkeys/registration/options", {
+      method: "POST",
+      body: JSON.stringify({ current_password: currentPassword }),
+    }),
+  addPasskey: (name: string, credential: PasskeyResponseJSON) =>
+    request<{ passkey: Passkey; recovery_codes: string[] | null }>("/auth/passkeys", {
+      method: "POST",
+      body: JSON.stringify({ name, credential }),
+    }),
+  renamePasskey: (id: number, name: string) =>
+    request<Passkey>(`/auth/passkeys/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  passkeyStepUpOptions: () =>
+    request<{ options: PasskeyOptionsJSON }>("/auth/passkeys/step-up-options", { method: "POST" }),
+  removePasskey: (id: number, currentPassword: string, proof: SecondFactorProof) =>
+    request<{ ok: boolean }>(`/auth/passkeys/${id}/remove`, {
+      method: "POST",
+      body: JSON.stringify({ current_password: currentPassword, ...proof }),
     }),
 
   listProjects: () => request<ProjectSummary[]>("/projects"),
@@ -937,7 +991,8 @@ export const api = {
     }),
   deleteUser: (id: number) => request<void>(`/users/${id}`, { method: "DELETE" }),
   unlinkSso: (id: number) => request<void>(`/users/${id}/sso-link`, { method: "DELETE" }),
-  resetUserTotp: (id: number) => request<void>(`/users/${id}/totp`, { method: "DELETE" }),
+  // Turns off TOTP and removes passkeys and recovery codes.
+  resetUserTwoFactor: (id: number) => request<void>(`/users/${id}/two-factor`, { method: "DELETE" }),
 
   getAuthProviders: () => request<AuthProviders>("/auth/providers"),
 

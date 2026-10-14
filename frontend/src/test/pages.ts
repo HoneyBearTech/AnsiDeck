@@ -13,6 +13,7 @@ import {
   hostKeys,
   inventory,
   mergedHost,
+  passkey,
   playbook,
   run,
   runTemplate,
@@ -24,7 +25,12 @@ import {
 export function baseRoutes(user: User | null = adminUser()): Routes {
   return {
     "GET /auth/me": user ? user : reply(401, { detail: "Not authenticated" }),
-    "GET /auth/providers": { oidc: { enabled: false, label: "SSO" }, github: { enabled: false, label: "GitHub" } },
+    "GET /auth/providers": {
+      oidc: { enabled: false, label: "SSO" },
+      github: { enabled: false, label: "GitHub" },
+      passkeys: { enabled: false, origin: null },
+    },
+    "GET /auth/passkeys": [],
     "GET /health": { status: "ok", service: "ansideck-backend" },
     "GET /secret-store/info": { enabled: false, label: "OpenBao", base_path: null, path_rules: "" },
   };
@@ -32,6 +38,10 @@ export function baseRoutes(user: User | null = adminUser()): Routes {
 
 // Enough data for every page to render its full content.
 export const PAGE_ROUTES: Routes = {
+  "GET /auth/passkeys": [
+    passkey({ last_used_at: "2026-10-14T09:00:00Z" }),
+    passkey({ id: 2, name: "A-very-long-passkey-name-without-any-spaces-for-wrapping-checks", synced: true }),
+  ],
   "GET /playbooks": [playbook()],
   "GET /playbooks/:id": playbook(),
   "GET /inventories": [inventory()],
