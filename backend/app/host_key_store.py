@@ -52,10 +52,11 @@ def record_learned(db: Session, run: Run, lines: list[str]) -> list[dict]:
     stored, for the audit log."""
     from app.jobs import run_graph  # app.jobs imports this module
 
-    if run.host_key_checking != "accept_new" or run.inventory_id is None or not lines:
+    if run.host_key_checking != "accept_new" or run.inventory_id is None:
         return []
+    run.host_keys_learned = 0
     inventory = db.get(Inventory, run.inventory_id)
-    if inventory is None or inventory.project_id != run.project_id:
+    if not lines or inventory is None or inventory.project_id != run.project_id:
         return []
     learned, _ = parse_known_hosts("\n".join(lines[:MAX_LEARNED_LINES]), MAX_LEARNED_LINES)
     try:

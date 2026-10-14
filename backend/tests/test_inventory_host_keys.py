@@ -362,6 +362,13 @@ def test_learned_keys_are_kept_only_for_the_runs_own_hosts_that_had_none(client)
     assert all(k["confirmed"] and k["confirmed_by"] == "admin" for k in confirmed)
     assert _audit("inventory.confirm_host_key")[0].detail["count"] == 2
 
+    # A run that learned nothing says so.
+    quiet = _queue(client, inventory_id)
+    claim = _Claim(quiet)
+    claim.job()
+    claim.complete(status="success", return_code=0)
+    assert _run(quiet).host_keys_learned == 0
+
     # Nothing is learned in strict mode (ssh doesn't learn there, so it's planted).
     client.put(f"{url}/mode", json={"mode": "strict"})
     strict_run = _queue(client, inventory_id)
