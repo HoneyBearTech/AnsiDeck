@@ -35,7 +35,7 @@ from app.inventory_sources import (
     normalise,
     store_snapshot,
 )
-from app.jobs import build_job
+from app.jobs import JobError, build_job
 from app.lint import LintJobError, build_lint_job, end_lint
 from app.models import GitSnapshot, HostKeyScan, InventoryRefresh, LintJob, Run, RunStatus
 from app.notifications.events import run_finished
@@ -371,6 +371,11 @@ def job(
                     secret_store_failed(db, exc.kind, label)
             except Exception:  # the run's failure is what matters
                 logger.exception("could not raise the secret store alert")
+        db.commit()
+        _finished(run_id)
+        return _gone()
+    except JobError as exc:
+        fail_run(run, RunStatus.FAILED, f"not run: {exc}")
         db.commit()
         _finished(run_id)
         return _gone()

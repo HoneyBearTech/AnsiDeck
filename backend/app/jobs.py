@@ -10,6 +10,7 @@ import hashlib
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.env_credentials import env_problem, resolve_env
 from app.git_sync import snapshot_path, vars_texts
 from app.host_key_store import job_host_keys
 from app.inventory_render import all_vars_dicts, merge, render, static_data
@@ -92,9 +93,43 @@ def run_graph(db: Session, run: Run, inventory: Inventory) -> dict:
     return merge(static, snapshot.data if snapshot is not None else None)
 
 
+class JobError(ValueError):
+    """The run can't be prepared as it was triggered (its message is safe to show)."""
+
+
+def run_env(db: Session, run: Run, deadline: float) -> dict[str, str]:
+    """The variables of the run's environment-variable credentials (JobError if one is gone
+    or they clash, SecretStoreError if one in the store can't be read)."""
+    env: dict[str, str] = {}
+    origin: dict[str, str] = {}
+    for env_id, name in zip(
+        run.env_credential_ids or [], run.env_credential_names or [], strict=False
+    ):
+        credential = db.get(Credential, env_id)
+        if credential is None:
+            raise JobError(f"its credential '{name}' was deleted")
+        assert_same_project(run, credential, "credential")
+        if credential.kind != "env":
+            raise JobError(f"'{credential.name}' is not an environment-variable credential")
+        try:
+            values = resolve_env(credential, deadline)
+        except SecretStoreError as exc:
+            exc.subject = f"credential '{credential.name}'"
+            raise
+        if problem := env_problem(values):  # a name denied since the credential was saved
+            raise JobError(f"credential '{credential.name}': {problem}")
+        for key in values:
+            if key in env:
+                raise JobError(f"'{credential.name}' and '{origin[key]}' both set {key}")
+            origin[key] = credential.name
+        env.update(values)
+    return env
+
+
 def build_job(db: Session, run: Run) -> dict:
     """SecretStoreError (with `.subject` naming the secret) when a credential or vault password
-    in the secret store can't be read; one deadline covers all of the job's reads."""
+    in the secret store can't be read; one deadline covers all of the job's reads. JobError
+    when the run can't be prepared as it was triggered."""
     deadline = new_deadline()
     credential = db.get(Credential, run.credential_id)
     assert_same_project(run, credential, "credential")
@@ -115,6 +150,8 @@ def build_job(db: Session, run: Run) -> dict:
         except SecretStoreError as exc:
             exc.subject = f"vault password '{vault_password.name}'"
             raise
+
+    env = run_env(db, run, deadline)
 
     inventory = db.get(Inventory, run.inventory_id)
     assert_same_project(run, inventory, "inventory")
@@ -148,6 +185,7 @@ def build_job(db: Session, run: Run) -> dict:
         host_vars=all_vars_dicts(graph),
         repo_vars_texts=repo_vars,
     )
+    secrets.update(v for v in env.values() if v)
 
     flags = []
     if run.become:
@@ -171,4 +209,5 @@ def build_job(db: Session, run: Run) -> dict:
         "secrets": sorted(secrets),
         "project": project,
         "host_keys": job_host_keys(db, run),
+        "env": env,
     }

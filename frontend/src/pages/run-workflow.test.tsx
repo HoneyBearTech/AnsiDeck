@@ -137,6 +137,7 @@ describe("edit and run", () => {
       extra_vars: { release: "1.2" },
       timeout_seconds: 1800,
       refresh_first: false,
+      env_credential_ids: [],
     });
   });
 
@@ -288,6 +289,7 @@ describe("saving templates from the form", () => {
       extra_vars: { greeting: "hi", db_password: "[REDACTED]" },
       timeout_seconds: 3600,
       refresh_first: null,
+      env_credential_ids: [],
     });
   });
 

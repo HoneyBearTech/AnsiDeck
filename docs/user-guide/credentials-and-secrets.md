@@ -10,10 +10,13 @@ Operators can pick a project's credentials for runs; only project admins create 
 - **SSH key**: the private key a run connects to its hosts with (and the deploy key a git source can
   use). Paste it, or upload the key file. Passphrase-protected keys aren't supported yet: use an
   unencrypted key, ideally one made for AnsiDeck and authorised only where it's needed.
-- **Environment variables**: named values, such as `NETBOX_TOKEN`, given to dynamic inventory sources
-  that use the credential (see [Inventories](inventories.md#dynamic-sources)). Names are upper-cased;
-  add as many rows as you need. Only inventory refreshes receive them, never playbook runs, and their
-  values are removed from refresh output.
+- **Environment variables**: named values, such as `NETBOX_TOKEN` or `AWS_ACCESS_KEY_ID` and
+  `AWS_SECRET_ACCESS_KEY`, given to the dynamic inventory sources that use the credential (see
+  [Inventories](inventories.md#dynamic-sources)) and to the runs started with it (**Environment
+  credentials** on New run, for cloud modules). Names are upper-cased; add as many rows as you need.
+  Names that change how ansible, Python, ssh, sudo or the worker behave (`ANSIBLE_*`, `PYTHON*`, `SSH_*`,
+  `SUDO_*`, `PATH`, proxies, CA bundles and the like) are refused. Their values are removed from refresh
+  and run output; a playbook can still read them, like any secret it is given.
 
 Each credential is stored encrypted, or as a reference into a secret store (below). Deleting asks first;
 the secret is then gone from AnsiDeck for good. A credential that a git source or an inventory source

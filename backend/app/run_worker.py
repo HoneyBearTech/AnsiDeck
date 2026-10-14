@@ -12,7 +12,9 @@ Protocol: one JSON job line on stdin: ansible_runner.run kwargs plus "event_fd",
 "project" (a run of a playbook synced from git: {"playbook": its path in the repository}; the
 repository itself, a tar, follows the job line on stdin and is unpacked as the project) and
 "host_keys" (None, or {"mode": "accept_new" | "strict", "known_hosts": text}: see
-host_key_ssh_args).
+host_key_ssh_args) and "env" (variables of the run's environment-variable credentials, set in
+this process's environment, which ansible-runner hands to the playbook; never written to a
+file).
 One JSON line per message on the inherited event_fd: {"type": "refused", "reason": ...} alone
 if the run can't be set up (e.g. its repository won't unpack), else {"type": "started",
 "private_data_dir": ...} first, then {"type": "event", "event": {...}} for each
@@ -248,6 +250,7 @@ def prepare(job: dict) -> str:
     same user@host. Returns the private data dir."""
     files = job.pop("files")
     own_home = job.pop("own_home", False)
+    env = job.pop("env", None) or {}
     repository = job.pop("project", None)
     # Short paths: SSH's control and agent sockets live in here (104-108 byte limit).
     base = "/tmp" if os.path.isdir("/tmp") else None  # noqa: S108 - short socket paths; mkdtemp is private
@@ -291,6 +294,9 @@ def prepare(job: dict) -> str:
     except BaseException:
         shutil.rmtree(pdd, ignore_errors=True)
         raise
+    # The API checked the names (app.env_credentials); none can touch ansible, Python, the
+    # loader or what was set above.
+    os.environ.update({name: value for name, value in env.items() if name not in os.environ})
     job["private_data_dir"] = str(pdd)
     job["playbook"] = playbook
     job["inventory"] = str(pdd / "inventory" / "hosts.yml")

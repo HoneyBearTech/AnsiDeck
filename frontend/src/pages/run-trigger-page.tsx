@@ -143,6 +143,8 @@ export function RunTriggerPage() {
   const [becomeConfirmed, setBecomeConfirmed] = React.useState(false);
   const [checkMode, setCheckMode] = React.useState(false);
   const [diffMode, setDiffMode] = React.useState(false);
+  const [envCredentials, setEnvCredentials] = React.useState<Credential[]>([]);
+  const [envIds, setEnvIds] = React.useState<number[]>([]);
   // null: as the inventory's "refresh before every run" says, until someone ticks or unticks it.
   const [refreshFirst, setRefreshFirst] = React.useState<boolean | null>(null);
   const [limit, setLimit] = React.useState("");
@@ -155,6 +157,7 @@ export function RunTriggerPage() {
     api.listPlaybooks().then(setPlaybooks);
     api.listInventories().then(setInventories);
     api.listCredentials("ssh").then(setCredentials);
+    api.listCredentials("env").then((list) => setEnvCredentials(list.filter((c) => c.kind === "env")));
     api.listVaultPasswords().then(setVaultPasswords);
   }, []);
 
@@ -197,6 +200,7 @@ export function RunTriggerPage() {
       setCheckMode(from.check_mode);
       setDiffMode(from.diff_mode);
       setRefreshFirst(from.refresh_first);
+      setEnvIds(from.env_credential_ids ?? []);
       setLimit(from.limit ?? "");
       setTimeoutMinutes(String(Math.max(1, Math.ceil(from.timeout_seconds / 60))));
       setExtraVarsText(from.extra_vars ? JSON.stringify(from.extra_vars, null, 2) : "{}");
@@ -284,6 +288,7 @@ export function RunTriggerPage() {
       extra_vars: extraVars,
       timeout_seconds: minutes * 60,
       refresh_first: refreshFirst,
+      env_credential_ids: envIds.filter((id) => inProject(envCredentials).some((c) => c.id === id)),
     };
   }
 
@@ -426,6 +431,34 @@ export function RunTriggerPage() {
             </label>
           )}
         </div>
+      )}
+
+      {inProject(envCredentials).length > 0 && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-1 text-sm font-medium">Environment credentials (optional)</legend>
+          {inProject(envCredentials).map((env) => (
+            <label key={env.id} className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={envIds.includes(env.id)}
+                onCheckedChange={(checked) =>
+                  setEnvIds((current) =>
+                    checked === true ? [...current, env.id] : current.filter((id) => id !== env.id),
+                  )
+                }
+              />
+              <span className="wrap-anywhere">
+                {env.name}
+                {env.env_names && env.env_names.length > 0 && (
+                  <span className="text-muted-foreground"> ({env.env_names.join(", ")})</span>
+                )}
+              </span>
+            </label>
+          ))}
+          <p className="text-xs text-muted-foreground">
+            Their variables are in the playbook&apos;s environment (for cloud modules: AWS keys, API tokens), and
+            their values are removed from the output.
+          </p>
+        </fieldset>
       )}
 
       <div className="flex flex-col gap-2">

@@ -28,7 +28,6 @@ on long runs. The most recent release is the supported version.
 ## Over the following year
 
 **Running playbooks**
-- Credentials for cloud modules in runs (environment variables such as AWS keys, scrubbed from output).
 - Run artifacts: files a run produces, kept with the run.
 
 **Authoring**

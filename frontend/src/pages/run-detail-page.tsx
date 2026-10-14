@@ -285,6 +285,7 @@ export function RunDetailPage() {
       <div className="-mt-4 flex flex-col gap-1">
           <p className="text-sm text-muted-foreground">
             Triggered by {run.triggered_by} · credential {run.credential_name}
+            {run.env_credential_names && ` · environment: ${run.env_credential_names.join(", ")}`}
             {run.vault_password_name && ` · vault: ${run.vault_password_name}`}
             {run.become && " · become"}
             {run.check_mode && " · check"}

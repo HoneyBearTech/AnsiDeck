@@ -31,6 +31,9 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- **Environment credentials for runs**: a run (or template) can get up to five environment-variable
+  credentials in the playbook's environment, for cloud modules (AWS keys, API tokens); their values are
+  removed from the output. Credentials may no longer set `SSH_*` or `SUDO_*` variables.
 - **Refresh the inventory before a run**: a run (or template, or API request with `"refresh_first": true`)
   can wait for a fresh refresh of its inventory's dynamic sources and run with what it finds; it fails if the
   refresh does. An inventory's **Refresh before every run** makes that the default.

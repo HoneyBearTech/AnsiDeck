@@ -3836,6 +3836,15 @@
             "title": "Diff Mode",
             "type": "boolean"
           },
+          "env_credential_ids": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "title": "Env Credential Ids",
+            "type": "array"
+          },
           "extra_vars": {
             "anyOf": [
               {
@@ -4011,6 +4020,34 @@
           "diff_mode": {
             "title": "Diff Mode",
             "type": "boolean"
+          },
+          "env_credential_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env Credential Ids"
+          },
+          "env_credential_names": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env Credential Names"
           },
           "extra_vars": {
             "anyOf": [
@@ -4426,6 +4463,15 @@
             "title": "Diff Mode",
             "type": "boolean"
           },
+          "env_credential_ids": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "title": "Env Credential Ids",
+            "type": "array"
+          },
           "extra_vars": {
             "anyOf": [
               {
@@ -4611,6 +4657,28 @@
           "diff_mode": {
             "title": "Diff Mode",
             "type": "boolean"
+          },
+          "env_credential_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env Credential Ids"
+          },
+          "env_credential_names": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Env Credential Names",
+            "type": "array"
           },
           "extra_vars": {
             "anyOf": [

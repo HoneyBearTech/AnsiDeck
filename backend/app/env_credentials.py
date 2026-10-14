@@ -1,7 +1,7 @@
 """Environment-variable credentials: named values (an API token, cloud keys) that inventory
-plugins read from their environment. Stored encrypted here, or as a secret store path whose
-every key becomes a variable. Only refresh jobs receive them, and their values are scrubbed
-from what those jobs return."""
+plugins and playbooks (cloud modules) read from their environment. Stored encrypted here, or
+as a secret store path whose every key becomes a variable. Only the refreshes and runs that
+use them receive them, and their values are scrubbed from what those return."""
 
 import json
 import re
@@ -38,7 +38,10 @@ _DENIED = frozenset(
 _DENIED_PREFIXES = (
     "LC_", "LD_", "PYTHON", "ANSIBLE_", "SSL_", "WORKER_", "ANSIDECK_", "DYLD_",
     "AWS_CONTAINER_", "GIT_", "KRB5",
+    # a run's ssh and sudo read these (askpass programs, the agent)
+    "SSH_", "SUDO_",
 )  # fmt: skip
+MAX_PER_RUN = 5  # environment credentials one run may use
 
 
 def name_problem(name: str) -> str | None:
