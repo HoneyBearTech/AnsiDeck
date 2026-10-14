@@ -38,6 +38,7 @@ jobs:
           - vault_decrypt
           - vault_encrypt
           - inventory_render
+          - known_hosts
     defaults:
       run:
         working-directory: backend

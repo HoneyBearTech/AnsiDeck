@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from app.notifications import (
     ADMIN_CHANGE,
+    HOST_KEY_CHANGED,
     INVENTORY_REFRESH_FAILED,
     LOGIN_ATTACK,
     QUEUE_STUCK,
@@ -216,6 +217,27 @@ def _security(event: str, payload: dict, public_url: str) -> Message:
     )
 
 
+def _host_key(payload: dict, public_url: str) -> Message:
+    name = _clip(payload.get("inventory", "?"), 150)
+    run_id = payload.get("run_id")
+    items = [
+        f"{_clip(h.get('host') or '?', 100)} ({_clip(h.get('name') or '?', 100)}): "
+        f"{_clip(h.get('key_type') or 'key', 40)} {_clip(h.get('presented') or '', 60)}".rstrip()
+        for h in payload.get("hosts") or []
+    ]
+    count = payload.get("count") or len(items)
+    return Message(
+        f"Inventory {name}: SSH host key changed",
+        f"Run #{run_id} was refused by ssh: {count} host(s) presented a key the inventory "
+        "doesn't trust. Check it before trusting the new key.",
+        _RED,
+        facts=[("Project", _clip(payload.get("project") or "?", 150))],
+        items_title="Presented keys" if items else None,
+        items=items,
+        url=_link(public_url, f"/runs/{run_id}") if run_id is not None else None,
+    )
+
+
 def build(event: str, payload: dict, public_url: str = "") -> Message:
     if event == TEST:
         return Message(
@@ -235,6 +257,8 @@ def build(event: str, payload: dict, public_url: str = "") -> Message:
         return _security(event, payload, public_url)
     if event == INVENTORY_REFRESH_FAILED:
         return _inventory(payload, public_url)
+    if event == HOST_KEY_CHANGED:
+        return _host_key(payload, public_url)
     run_id = payload.get("run_id")
     target = _clip(payload.get("inventory", "?"), 150)
     if payload.get("group"):

@@ -66,16 +66,21 @@ flowchart TB
 1. A user (or an API key) starts a run. The API checks the caller's role in the project, pins the
    inventory (static hosts plus the latest dynamic-inventory snapshot) and, for a synced playbook, the git
    commit, then inserts a `queued` run.
-2. A worker slot claims the oldest claimable run. The API returns a job description with exactly that run's
-   secrets: the SSH key, vault password and the inventory rendered for the run, with strings from inventory
-   sources marked `!unsafe`.
+2. A worker slot claims the oldest claimable run (one whose inventory checks SSH host keys only goes to a
+   worker that does, and the inventory's host key mode is fixed on the run). The API returns a job
+   description with exactly that run's secrets: the SSH key, vault password and the inventory rendered for
+   the run, with strings from inventory sources marked `!unsafe`, plus the host keys the run trusts
+   (`app/host_keys.py`, `app/host_key_store.py`).
 3. The slot's child process (as the slot user) writes the job into its private directory, unpacks a git
-   snapshot if there is one, and runs `ansible-playbook` through ansible-runner.
+   snapshot if there is one, writes the run's known_hosts and puts its host key options first on ssh's
+   command line (the `ansible_ssh_args` extra var), and runs `ansible-playbook` through ansible-runner.
 4. Events stream back to the internal API. The API scrubs known secret values, appends them to the run's
    log, and wakes WebSocket listeners (`app/notify.py`), which re-read the log and send new lines to
    browsers.
-5. The worker completes the run. The API records the result, raises notifications, and the slot is swept:
-   everything its user still runs is killed and its files are deleted.
+5. The worker completes the run, with the host keys ssh learned and the hosts whose key it refused. The API
+   records the result, keeps learned keys only for the inventory's own hosts that had none, raises
+   notifications, and the slot is swept: everything its user still runs is killed and its files are
+   deleted.
 
 Inventory refreshes follow the same path, with `ansible-inventory` in place of `ansible-playbook`; the
 API validates and normalises the output before storing it as a snapshot. Playbook checks do too, with

@@ -11,6 +11,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.git_sync import snapshot_path, vars_texts
+from app.host_key_store import job_host_keys
 from app.inventory_render import all_vars_dicts, merge, render, static_data
 from app.models import (
     Credential,
@@ -79,6 +80,18 @@ def extravars(run: Run) -> dict:
     return run.extra_vars or {}
 
 
+def run_graph(db: Session, run: Run, inventory: Inventory) -> dict:
+    """The merged inventory a run sees: pinned when it was triggered (runs queued before 4G
+    see the inventory as it is now)."""
+    static = run.inventory_static if run.inventory_static is not None else static_data(inventory)
+    snapshot = None
+    if run.inventory_snapshot_id is not None:
+        snapshot = db.get(InventorySnapshot, run.inventory_snapshot_id)
+        if snapshot is None or snapshot.inventory_id != inventory.id:
+            raise RuntimeError(f"run {run.id}: its inventory snapshot is gone or elsewhere")
+    return merge(static, snapshot.data if snapshot is not None else None)
+
+
 def build_job(db: Session, run: Run) -> dict:
     """SecretStoreError (with `.subject` naming the secret) when a credential or vault password
     in the secret store can't be read; one deadline covers all of the job's reads."""
@@ -105,14 +118,7 @@ def build_job(db: Session, run: Run) -> dict:
 
     inventory = db.get(Inventory, run.inventory_id)
     assert_same_project(run, inventory, "inventory")
-    # Pinned when triggered; runs queued before 4G see the inventory as it is now.
-    static = run.inventory_static if run.inventory_static is not None else static_data(inventory)
-    snapshot = None
-    if run.inventory_snapshot_id is not None:
-        snapshot = db.get(InventorySnapshot, run.inventory_snapshot_id)
-        if snapshot is None or snapshot.inventory_id != inventory.id:
-            raise RuntimeError(f"run {run.id}: its inventory snapshot is gone or elsewhere")
-    graph = merge(static, snapshot.data if snapshot is not None else None)
+    graph = run_graph(db, run, inventory)
     if run.group_name is not None and run.group_name not in graph["groups"]:
         raise RuntimeError(f"run {run.id}: group {run.group_name!r} is not in its inventory")
     inventory_text = render(graph, run.group_name)
@@ -164,4 +170,5 @@ def build_job(db: Session, run: Run) -> dict:
         "timeout_seconds": run.timeout_seconds,
         "secrets": sorted(secrets),
         "project": project,
+        "host_keys": job_host_keys(db, run),
     }

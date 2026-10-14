@@ -50,7 +50,9 @@ class Claimed:
     def __init__(self, client: TestClient) -> None:
         self.run_id = _queue_run(client)
         self.http = internal_client()
-        claim = self.http.post("/internal/claim", json={"worker_id": "w", "wait_seconds": 0})
+        claim = self.http.post(
+            "/internal/claim", json={"worker_id": "w", "wait_seconds": 0, "host_keys": True}
+        )
         assert claim.status_code == 200
         body = claim.json()
         assert body["run_id"] == self.run_id

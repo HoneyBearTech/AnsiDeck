@@ -35,6 +35,7 @@ TARGETS = {
     "vault_decrypt": "test_decrypt_raises_only_vault_error",
     "vault_encrypt": "test_encrypt_raises_only_vault_error",
     "inventory_render": "test_rendered_inventory_parses_back_to_exactly_the_merged_inventory",
+    "known_hosts": "test_known_hosts_parsing_keeps_only_plain_names_with_checked_keys",
 }
 
 

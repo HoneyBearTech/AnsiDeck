@@ -312,7 +312,7 @@ def test_the_snapshot_endpoint_needs_the_runs_claim(admin, tmp_path) -> None:
     ids = _synced(admin, repo)
     run = _trigger(admin, ids["site.yml"], _inventory(admin, tmp_path))
     db = get_sessionmaker()()
-    claim = claim_next(db, "test-worker")
+    claim = claim_next(db, "test-worker", host_keys=True)
     db.close()
     assert claim is not None and claim.run_id == run["id"]
     internal = internal_client()

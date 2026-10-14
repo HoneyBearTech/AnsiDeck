@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import Project, Run, RunStatus, Worker
 from app.notifications import (
+    HOST_KEY_CHANGED,
     INVENTORY_REFRESH_FAILED,
     QUEUE_STUCK,
     RESOLVED,
@@ -156,6 +157,28 @@ def inventory_refresh_ok(db: Session, inventory) -> None:
             project_id=inventory.project_id,
             data=_inventory_data(db, inventory) | {"state": RESOLVED},
         )
+
+
+def host_key_changed(db: Session, run: Run, problems: list[dict]) -> None:
+    """A run's ssh refused a host whose key changed: once per run (the caller commits)."""
+    project = db.get(Project, run.project_id)
+    emit(
+        db,
+        HOST_KEY_CHANGED,
+        project_id=run.project_id,
+        data={
+            "inventory_id": run.inventory_id,
+            "inventory": run.inventory_name,
+            "project": project.name if project else None,
+            "run_id": run.id,
+            "hosts": [
+                {k: p.get(k) for k in ("host", "name", "key_type", "presented")}
+                for p in problems[:10]
+            ],
+            "count": len(problems),
+        },
+        dedup_key=f"{HOST_KEY_CHANGED}:run:{run.id}",
+    )
 
 
 def _inventory_data(db: Session, inventory) -> dict:

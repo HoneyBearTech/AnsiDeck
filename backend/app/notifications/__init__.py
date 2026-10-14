@@ -16,6 +16,7 @@ KINDS = ("webhook", "discord", "slack", "teams", "email", "pushbullet", "pushove
 RUN_FAILED = "run.failed"
 RUN_RECOVERED = "run.recovered"
 INVENTORY_REFRESH_FAILED = "inventory.refresh_failed"
+HOST_KEY_CHANGED = "inventory.host_key_changed"
 WORKER_OFFLINE = "worker.offline"
 WORKER_UNISOLATED = "worker.unisolated"
 WORKER_UNFILTERED = "worker.unfiltered"
@@ -52,6 +53,13 @@ EVENTS: dict[str, EventInfo] = {
         "Inventory refresh failed",
         "An inventory's dynamic sources could not be refreshed; runs keep using its last good "
         "snapshot (and again when a refresh works).",
+        project=True,
+        group="Inventories",
+    ),
+    HOST_KEY_CHANGED: EventInfo(
+        "SSH host key changed",
+        "A run was refused by ssh because a host presented a different key than the one its "
+        "inventory trusts (a reinstalled host, or someone in between).",
         project=True,
         group="Inventories",
     ),

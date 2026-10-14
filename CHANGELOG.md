@@ -9,7 +9,16 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Upgrading
 
-- The API applies database migrations 0017, 0018 and 0019 when it starts.
+- The API applies database migrations 0017, 0018, 0019 and 0020 when it starts.
+- **Upgrade the workers with the API.** Runs on inventories that check SSH host keys (every new
+  inventory) wait for a worker of this release ("Waiting for a worker that checks SSH host keys").
+- **Inventories you already have keep running without host key checking**, as before. Turn it on per
+  inventory (see Security below). New inventories check host keys from their first run.
+- On an inventory that checks host keys, AnsiDeck sets `ansible_ssh_args` and `ansible_ssh_executable`
+  for its runs (as extra vars, so they win over everything else): inventory, play or extra vars setting
+  either are ignored. Put your own ssh options in `ansible_ssh_common_args`, or in `ssh_args` in a git
+  repository's `ansible.cfg` (kept, after AnsiDeck's). Your own `-o UserKnownHostsFile=...` or
+  `-o StrictHostKeyChecking=no` no longer apply there: give AnsiDeck those keys instead.
 - **Workers need the `NET_ADMIN` capability.** Replace `compose.yaml` with this release's (it adds
   `NET_ADMIN` to the worker and passes the new `WORKER_*` settings on); a production worker without it
   refuses to start. If the workers' network is restricted some other way, `WORKER_EGRESS_FILTER=false`
@@ -31,6 +40,15 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Security
 
+- **Runs check SSH host keys.** Until now ansible-runner turned host key checking off, so a run would talk
+  to whatever answered at a host's address. Each inventory now has a mode: `accept_new` (the default for
+  new inventories) learns a host's key on its first run and fails runs where it changed; `strict` trusts
+  only keys a project admin pasted or confirmed; `off` is the old behaviour (inventories from before this
+  release). Keys are kept per inventory (`GET/PUT/POST /api/inventories/{id}/host-keys...`; project
+  admins manage them), learned keys are kept only for addresses of the inventory's own hosts that had
+  none, a refused key shows on the run and in the audit log, and a changed key raises the new
+  "SSH host key changed" notification. Inventory vars can't turn the checks off; jump hosts are checked
+  too on isolated workers.
 - Runs, inventory refreshes and playbook checks can no longer reach the API's container (any port: the
   public API, the internal worker API, metrics) or cloud metadata services (`169.254.0.0/16`,
   `100.100.100.200`, their IPv6 and NAT64 forms). The worker installs nftables rules for its slot users,

@@ -318,6 +318,10 @@ class Inventory(Base):
     current_snapshot_id: Mapped[int | None] = mapped_column(
         ForeignKey("inventory_snapshots.id", ondelete="SET NULL", use_alter=True), default=None
     )
+    # How runs treat SSH host keys (app.host_keys.MODES); inventories from before it are "off".
+    host_key_checking: Mapped[str] = mapped_column(
+        String(16), default="accept_new", server_default="accept_new"
+    )
 
     groups: Mapped[list["InventoryGroup"]] = relationship(
         back_populates="inventory", cascade="all, delete-orphan"
@@ -361,6 +365,36 @@ class InventoryHost(Base):
     groups: Mapped[list["InventoryGroup"]] = relationship(
         secondary=host_group, back_populates="hosts"
     )
+
+
+class InventoryHostKey(Base):
+    """A trusted SSH host key of an inventory (app.host_keys): one per known_hosts name and
+    key type. Learned keys (from a run in accept_new mode) stay unconfirmed until an admin
+    confirms them; strict runs trust confirmed keys only."""
+
+    __tablename__ = "inventory_host_keys"
+    __table_args__ = (
+        UniqueConstraint("inventory_id", "name", "key_type", name="uq_inventory_host_key"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    inventory_id: Mapped[int] = mapped_column(
+        ForeignKey("inventories.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(300))  # `host` or `[host]:port`
+    key_type: Mapped[str] = mapped_column(String(64))
+    key_b64: Mapped[str] = mapped_column(Text)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(16))  # scan, paste, learned
+    confirmed: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    # The run that learned it.
+    run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), default=None
+    )
+    created_by: Mapped[str] = mapped_column(String(150))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    confirmed_by: Mapped[str | None] = mapped_column(String(150), default=None)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
 
 class InventorySource(Base):
@@ -571,6 +605,11 @@ class Run(Base):
     )
     inventory_snapshot_hosts: Mapped[int | None] = mapped_column(Integer, default=None)
     playbook_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
+    # Its inventory's host key mode when it was claimed (app.host_keys), what ssh refused
+    # ([{host, problem, name, key_type, presented}]) and how many keys it learned.
+    host_key_checking: Mapped[str | None] = mapped_column(String(16), default=None)
+    host_key_problems: Mapped[list | None] = mapped_column(JSON(none_as_null=True), default=None)
+    host_keys_learned: Mapped[int | None] = mapped_column(Integer, default=None)
     timeout_seconds: Mapped[int] = mapped_column(
         Integer,
         default=DEFAULT_RUN_TIMEOUT_SECONDS,
@@ -745,6 +784,8 @@ class Worker(Base):
     isolated: Mapped[bool | None] = mapped_column(Boolean, default=None)
     # Whether its runs can't reach the API or cloud metadata (app.worker.egress); None: unknown.
     egress_filtered: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    # Whether it checks SSH host keys (app.host_keys); runs that must are only given to such.
+    host_keys: Mapped[bool | None] = mapped_column(Boolean, default=None)
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

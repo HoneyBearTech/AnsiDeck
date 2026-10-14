@@ -53,7 +53,7 @@ def _queue_runs(client: TestClient, inventories: int, per_inventory: int) -> dic
 def _claim(worker_id: str = "w"):
     db = get_sessionmaker()()
     try:
-        return claim_next(db, worker_id)
+        return claim_next(db, worker_id, host_keys=True)
     finally:
         db.close()
 
@@ -224,7 +224,9 @@ def test_a_queued_run_executes_the_playbook_as_it_was_when_triggered(client) -> 
     assert edited.status_code == 200
 
     internal = internal_client()
-    claim = internal.post("/internal/claim", json={"worker_id": "w", "wait_seconds": 0}).json()
+    claim = internal.post(
+        "/internal/claim", json={"worker_id": "w", "wait_seconds": 0, "host_keys": True}
+    ).json()
     job = internal.post(
         f"/internal/runs/{run_id}/job",
         json={"job_token": claim["job_token"]},

@@ -8,14 +8,17 @@ app.config, which would load the app's secrets.
 
 Protocol: one JSON job line on stdin: ansible_runner.run kwargs plus "event_fd", "files"
 ({"playbook": text, "inventory": text}), "prefix" (of the private data dir's name),
-"own_home" (isolated runs: use, and check, the slot user's home; see app.run_isolation) and
+"own_home" (isolated runs: use, and check, the slot user's home; see app.run_isolation),
 "project" (a run of a playbook synced from git: {"playbook": its path in the repository}; the
-repository itself, a tar, follows the job line on stdin and is unpacked as the project).
+repository itself, a tar, follows the job line on stdin and is unpacked as the project) and
+"host_keys" (None, or {"mode": "accept_new" | "strict", "known_hosts": text}: see
+host_key_ssh_args).
 One JSON line per message on the inherited event_fd: {"type": "refused", "reason": ...} alone
 if the run can't be set up (e.g. its repository won't unpack), else {"type": "started",
 "private_data_dir": ...} first, then {"type": "event", "event": {...}} for each
-ansible-runner event (see bounded_event), then a final {"type": "result",
-"status": ..., "rc": ...}. No line is longer than MAX_MESSAGE_BYTES (app.run_executor stops
+ansible-runner event (see bounded_event), {"type": "host_keys_learned", "lines": [...]} if ssh
+learned host keys, then a final {"type": "result", "status": ..., "rc": ...}.
+No line is longer than MAX_MESSAGE_BYTES (app.run_executor stops
 a run process that sends one).
 SIGTERM is turned into a clean ansible-runner cancel by ansible-runner itself (it
 installs the handler when running in the main thread).
@@ -136,6 +139,108 @@ def _search_path(project: Path, variable: str, keys: tuple[str, ...], default: s
     return os.pathsep.join([str(e) for e in entries] + ([existing] if existing else []))
 
 
+# ansible's own default ssh_args (kept after ours: ControlPersist makes runs much faster).
+_DEFAULT_SSH_ARGS = "-C -o ControlMaster=auto -o ControlPersist=60s"
+KNOWN_HOSTS = "known_hosts"
+LEARNED_KNOWN_HOSTS = "learned_known_hosts"
+_MAX_LEARNED_BYTES = 64 * 1024
+_MAX_LEARNED_LINES = 200
+
+
+def host_key_options(pdd: Path, mode: str) -> list[tuple[str, str]]:
+    """ssh options that check host keys against the run's own files only. accept_new: unknown
+    hosts are learned into LEARNED_KNOWN_HOSTS (the first file, where ssh writes); strict:
+    only KNOWN_HOSTS is trusted, an unknown host fails."""
+    files = [pdd / KNOWN_HOSTS]
+    if mode == "accept_new":
+        files.insert(0, pdd / LEARNED_KNOWN_HOSTS)
+    return [
+        ("StrictHostKeyChecking", "accept-new" if mode == "accept_new" else "yes"),
+        ("UserKnownHostsFile", " ".join(str(f) for f in files)),
+        ("GlobalKnownHostsFile", "/dev/null"),
+        ("KnownHostsCommand", "none"),
+        ("UpdateHostKeys", "no"),
+        ("CheckHostIP", "no"),
+        ("VerifyHostKeyDNS", "no"),
+        ("HashKnownHosts", "no"),
+    ]
+
+
+def host_key_ssh_args(pdd: Path, mode: str, base_args: str | None) -> str:
+    """ansible_ssh_args for a run that checks host keys: our options first (ssh keeps the first
+    value of an option, and ansible puts ssh_args before everything else, including its own
+    StrictHostKeyChecking=no and any ssh_common_args or extra args), then the repository's
+    ssh_args or ansible's default. Given as an extra var, it outranks every inventory, play
+    and task variable."""
+    import shlex
+
+    ours = " ".join(f"-o {shlex.quote(f'{k}={v}')}" for k, v in host_key_options(pdd, mode))
+    return f"{ours} {base_args or _DEFAULT_SSH_ARGS}"
+
+
+def _repo_ssh_args(project: Path) -> str | None:
+    """[ssh_connection] ssh_args from the repository's ansible.cfg (it would otherwise replace
+    ansible's default, which the extra var now does)."""
+    import configparser
+
+    cfg = project / "ansible.cfg"
+    if not cfg.is_file():
+        return None
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    with contextlib.suppress(configparser.Error, UnicodeDecodeError):
+        parser.read(cfg, encoding="utf-8")
+    value = parser.get("ssh_connection", "ssh_args", fallback="").strip()
+    return value or None
+
+
+def _write_hop_config(home: str, pdd: Path, mode: str) -> None:
+    """The same checks for the ssh a ProxyJump or ProxyCommand starts (it doesn't get the
+    run's -o options, but it reads ~/.ssh/config): written in the slot's own home, which the
+    sweep empties after the run."""
+    ssh_dir = Path(home) / ".ssh"
+    ssh_dir.mkdir(mode=0o700, exist_ok=True)
+    lines = ["Host *"] + [f"    {k} {v}" for k, v in host_key_options(pdd, mode)]
+    _write_private(ssh_dir / "config", "\n".join(lines) + "\n")
+
+
+def _write_private(path: Path, text: str) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as file:
+        file.write(text)
+
+
+def _set_up_host_keys(job: dict, pdd: Path, project: Path, own_home: bool) -> None:
+    host_keys = job.pop("host_keys", None)
+    if not host_keys:
+        return  # "off": ansible-runner's own default (no checking)
+    mode = host_keys["mode"]
+    if mode not in ("accept_new", "strict"):
+        raise RuntimeError(f"unknown host key mode {mode!r}")
+    _write_private(pdd / KNOWN_HOSTS, host_keys.get("known_hosts") or "")
+    if mode == "accept_new":
+        _write_private(pdd / LEARNED_KNOWN_HOSTS, "")
+    job["extravars"] = {
+        **(job.get("extravars") or {}),
+        "ansible_ssh_args": host_key_ssh_args(pdd, mode, _repo_ssh_args(project)),
+        "ansible_ssh_executable": "ssh",
+    }
+    if own_home:
+        _write_hop_config(os.environ["HOME"], pdd, mode)
+
+
+def read_learned(pdd: Path) -> list[str]:
+    """The known_hosts lines ssh learned during the run (bounded; untrusted: the playbook can
+    write this file too, the API decides what to keep)."""
+    try:
+        with open(pdd / LEARNED_KNOWN_HOSTS, "rb") as file:
+            data = file.read(_MAX_LEARNED_BYTES)
+    except OSError:
+        return []
+    text = data.decode("utf-8", "replace")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return lines[:_MAX_LEARNED_LINES]
+
+
 def prepare(job: dict) -> str:
     """Creates the run's private data dir (0700) with its playbook and inventory, and gives
     ansible a home of its own in it: its SSH ControlPersist sockets (~/.ansible/cp) would
@@ -181,6 +286,11 @@ def prepare(job: dict) -> str:
         os.environ["HOME"] = _own_home()
         (pdd / "tmp").mkdir(mode=0o700)
         os.environ["TMPDIR"] = str(pdd / "tmp")
+    try:
+        _set_up_host_keys(job, pdd, project, own_home)
+    except BaseException:
+        shutil.rmtree(pdd, ignore_errors=True)
+        raise
     job["private_data_dir"] = str(pdd)
     job["playbook"] = playbook
     job["inventory"] = str(pdd / "inventory" / "hosts.yml")
@@ -529,6 +639,8 @@ def run(job: dict) -> None:
     emit({"type": "started", "private_data_dir": pdd})
     try:
         runner = ansible_runner.run(event_handler=on_event, **job)
+        if learned := read_learned(Path(pdd)):
+            emit({"type": "host_keys_learned", "lines": learned})
         emit({"type": "result", "status": runner.status, "rc": runner.rc})
     finally:
         shutil.rmtree(pdd, ignore_errors=True)

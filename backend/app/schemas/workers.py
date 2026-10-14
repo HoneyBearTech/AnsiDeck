@@ -8,6 +8,7 @@ class WorkerOut(BaseModel):
     slots: int
     isolated: bool | None
     egress_filtered: bool | None
+    host_keys: bool | None = None
     running: int
     online: bool
     first_seen_at: datetime
