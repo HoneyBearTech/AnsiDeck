@@ -298,7 +298,7 @@ Proxmox needs requests) don't work yet.
 ## Notifications
 
 The **Notifications** page sends events to Discord, Slack, Microsoft Teams (a Workflows
-webhook), a generic webhook, email, Pushbullet or Pushover. Each channel picks its events:
+webhook), a generic webhook, email, Pushbullet, Pushover, ntfy or Gotify. Each channel picks its events:
 
 - **Run failed**: a run failed, timed out, or lost its worker. The message names the failed
   tasks and their hosts.

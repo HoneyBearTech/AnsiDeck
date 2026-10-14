@@ -498,6 +498,35 @@ def pushover(message: Message, app_token: str, user_key: str) -> dict:
     return push
 
 
+def ntfy(message: Message, topic: str) -> dict:
+    """ntfy's JSON publish format; failures are high priority."""
+    alert = message.color == _RED
+    push = {
+        "topic": topic,
+        "title": _clip(message.title, 250),
+        "message": plain(message, 4000) or message.title,
+        "priority": 4 if alert else 3,
+        "tags": [
+            "warning" if alert else ("white_check_mark" if message.color == _GREEN else "bell")
+        ],
+    }
+    if message.url:
+        push["click"] = message.url
+    return push
+
+
+def gotify(message: Message) -> dict:
+    """Gotify's message format; failures are high priority (8 of 10)."""
+    push: dict = {
+        "title": _clip(message.title, 250),
+        "message": plain(message, 4000) or message.title,
+        "priority": 8 if message.color == _RED else 4,
+    }
+    if message.url:
+        push["extras"] = {"client::notification": {"click": {"url": message.url}}}
+    return push
+
+
 # ------------------------------------------------------------------ email
 
 

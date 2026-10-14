@@ -35,6 +35,8 @@ DNS = {
     "example.com": PUBLIC_IP,
     "api.pushbullet.com": PUBLIC_IP,
     "api.pushover.net": PUBLIC_IP,
+    "ntfy.sh": PUBLIC_IP,
+    "gotify.lan": "192.168.1.30",
     "lan.example": "192.168.1.20",
     "localhost": "127.0.0.1",
     "metadata.example": "169.254.169.254",
@@ -1211,3 +1213,90 @@ def test_an_inventory_refresh_failure_and_its_all_clear_render() -> None:
     assert failed.url == "https://ansideck.example/inventories/3"
     resolved = render.build("inventory.refresh_failed", {**payload, "state": "resolved"})
     assert resolved.title == "Inventory netbox refreshes again" and resolved.url is None
+
+
+# ------------------------------------------------------------------ ntfy and Gotify
+
+
+def test_ntfy_and_gotify_settings_are_checked(settings_env) -> None:
+    settings = get_settings()
+    assert validate("ntfy", {"url": "https://ntfy.sh/ansideck-alerts/"}, settings) == {
+        "url": "https://ntfy.sh/ansideck-alerts"
+    }
+    assert (
+        validate("ntfy", {"url": "https://ntfy.sh/a", "token": "tk_abcdefgh123"}, settings)["token"]
+        == "tk_abcdefgh123"
+    )
+    for config, message in (
+        ({"url": ""}, "topic's URL"),
+        ({"url": "https://ntfy.sh/a?auth=x"}, "without"),
+        ({"url": "https://ntfy.sh/bad.topic"}, "end in the topic"),
+        ({"url": "https://ntfy.sh/a", "token": "no spaces allowed"}, "access token"),
+        ({"url": "http://ntfy.sh/a"}, "https"),
+        ({"url": "https://lan.example/a"}, "non-public"),
+    ):
+        with pytest.raises(ConfigError, match=message):
+            validate("ntfy", config, settings)
+    with pytest.raises(ConfigError, match="application token"):
+        validate("gotify", {"url": "https://example.com"}, settings)
+    with pytest.raises(ConfigError, match="non-public"):
+        validate("gotify", {"url": "http://gotify.lan", "token": "Abcdefgh123"}, settings)
+    settings_env(NOTIFY_ALLOWED_PRIVATE_HOSTS="gotify.lan")
+    assert validate(
+        "gotify", {"url": "http://gotify.lan/", "token": "Abcdefgh123"}, get_settings()
+    ) == {
+        "url": "http://gotify.lan",
+        "token": "Abcdefgh123",
+    }
+
+
+def test_ntfy_and_gotify_get_their_formats_with_the_token_in_a_header(sink, settings_env) -> None:
+    settings_env(NOTIFY_ALLOWED_PRIVATE_HOSTS="gotify.lan", PUBLIC_URL="https://ansideck.example")
+    ntfy = NotificationChannel(
+        kind="ntfy",
+        config_encrypted=seal(
+            {"url": "https://ntfy.sh/ansideck-alerts", "token": "tk_abcdefgh123"}
+        ),
+    )
+    assert channel_mod.send(ntfy, RUN_FAILED, FAILED, get_settings()).ok
+    request = sink.requests[-1]
+    assert request.url.path == "/" and request.headers["Host"] == "ntfy.sh"  # the root
+    assert request.headers["Authorization"] == "Bearer tk_abcdefgh123"
+    body = sink.json()
+    assert body["topic"] == "ansideck-alerts" and body["priority"] == 4
+    assert body["title"].startswith("Run #7 failed") and body["tags"] == ["warning"]
+    assert body["click"] == "https://ansideck.example/runs/7"
+
+    gotify = NotificationChannel(
+        kind="gotify",
+        config_encrypted=seal({"url": "http://gotify.lan", "token": "Abcdefgh123"}),
+    )
+    assert channel_mod.send(gotify, RUN_RECOVERED, FAILED, get_settings()).ok
+    request = sink.requests[-1]
+    assert request.url.path == "/message" and request.headers["X-Gotify-Key"] == "Abcdefgh123"
+    assert "Abcdefgh123" not in str(request.url)
+    body = sink.json()
+    assert body["priority"] == 4 and body["title"].startswith("Run #7 recovered")
+    assert body["extras"]["client::notification"]["click"]["url"].endswith("/runs/7")
+
+
+def test_ntfy_topics_and_tokens_are_never_shown(admin_client, settings_env) -> None:
+    created = admin_client.post(
+        "/api/notifications/channels",
+        json={
+            "name": "phone",
+            "kind": "ntfy",
+            "url": "https://ntfy.sh/secret-topic-name",
+            "token": "tk_abcdefgh123",
+            "events": [RUN_FAILED],
+        },
+    )
+    assert created.status_code == 201, created.text
+    shown = created.json()
+    assert shown["target"] == "ntfy https://ntfy.sh/…" and shown["has_secret"] is True
+    assert "secret-topic-name" not in created.text and "tk_abcdefgh123" not in created.text
+    # An empty token removes it; the topic is kept.
+    updated = admin_client.patch(
+        f"/api/notifications/channels/{shown['id']}", json={"token": ""}
+    ).json()
+    assert updated["has_secret"] is False

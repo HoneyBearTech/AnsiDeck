@@ -486,7 +486,9 @@
               "teams",
               "email",
               "pushbullet",
-              "pushover"
+              "pushover",
+              "ntfy",
+              "gotify"
             ],
             "title": "Kind",
             "type": "string"

@@ -3,7 +3,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-Kind = Literal["webhook", "discord", "slack", "teams", "email", "pushbullet", "pushover"]
+Kind = Literal[
+    "webhook", "discord", "slack", "teams", "email", "pushbullet", "pushover", "ntfy", "gotify"
+]
 
 
 class _Secrets(BaseModel):
@@ -11,7 +13,8 @@ class _Secrets(BaseModel):
 
     url: str | None = Field(None, max_length=2000)
     secret: str | None = Field(None, max_length=500)  # webhook signing secret; "" removes it
-    token: str | None = Field(None, max_length=200)  # Pushbullet / Pushover
+    # Pushbullet / Pushover / Gotify (app token) / ntfy (access token, optional; "" removes it)
+    token: str | None = Field(None, max_length=200)
     user_key: str | None = Field(None, max_length=200)  # Pushover
     recipients: list[str] | None = Field(None, max_length=20)  # email
 
