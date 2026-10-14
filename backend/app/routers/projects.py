@@ -33,7 +33,7 @@ from app.schemas.projects import (
     ProjectUpdate,
 )
 from app.scoping import require_project_permission
-from app.storage import run_log_path
+from app.storage import run_artifacts_path, run_log_path
 
 # GET (list): any member. Mutating project routes: global `projects:manage`.
 _project_guard = guard(Permission.CONTENT_READ, Permission.PROJECTS_MANAGE, scope=Scope.PROJECT)
@@ -163,6 +163,7 @@ def delete_project(
     # An empty project's run history goes with it (runs are project-owned).
     for run in db.query(Run).filter(Run.project_id == project_id).all():
         run_log_path(run.id).unlink(missing_ok=True)
+        run_artifacts_path(run.id).unlink(missing_ok=True)
         db.delete(run)
     db.flush()
     db.delete(project)  # memberships cascade at the DB level

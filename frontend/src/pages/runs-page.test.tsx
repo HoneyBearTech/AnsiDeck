@@ -218,6 +218,40 @@ describe("new run", () => {
 });
 
 describe("run detail", () => {
+  it("lists a run's artifacts, downloadable by those who can start runs", async () => {
+    const files = { files: [{ path: "reports/web1.txt", size: 2048 }], bytes: 2048, error: null, deleted_at: null };
+    const { screen } = renderApp("/runs/7", {
+      routes: {
+        "GET /runs/:id": run({ artifacts_count: 1, artifacts_bytes: 2048 }),
+        "GET /runs/:id/artifacts": { ...files, can_download: true },
+      },
+    });
+    expect(await screen.findByRole("link", { name: "Download all (.tar.gz)" })).toHaveAttribute(
+      "href",
+      "/api/runs/7/artifacts/download",
+    );
+    expect(screen.getByRole("link", { name: "reports/web1.txt" })).toHaveAttribute(
+      "href",
+      "/api/runs/7/artifacts/file?path=reports%2Fweb1.txt",
+    );
+    expect(screen.getByText("2.0 KB")).toBeInTheDocument();
+  });
+
+  it("shows artifacts without links to viewers, and why some weren't kept", async () => {
+    const { screen } = renderApp("/runs/7", {
+      user: viewerUser(),
+      routes: {
+        "GET /runs/:id": run({ artifacts_count: 1, artifacts_error: null }),
+        "GET /runs/:id/artifacts": {
+          files: [{ path: "out.json", size: 10 }], bytes: 10, error: null, deleted_at: null, can_download: false,
+        },
+      },
+    });
+    expect(await screen.findByText("out.json")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "out.json" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Only people who can start runs may download artifacts/)).toBeInTheDocument();
+  });
+
   it("shows hosts whose SSH host key was refused, and how keys were checked", async () => {
     const problems = [
       {

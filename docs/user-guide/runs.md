@@ -68,6 +68,28 @@ run learn it). If nothing changed on the host, don't. Admins can be notified (**
 
 The run's page also says how it checked host keys and how many new keys it learned.
 
+## Artifacts
+
+Files a run produces (reports, backups, collected configs) can be kept with it: put them in the run's
+artifacts directory, which is `$ARTIFACTS_DIR` on the worker (`{{ lookup('env', 'ARTIFACTS_DIR') }}`) or the
+variable `ansideck_artifacts_dir`. From the managed hosts, `fetch` them there:
+
+```yaml
+- ansible.builtin.fetch:
+    src: /var/log/app/report.txt
+    dest: "{{ ansideck_artifacts_dir }}/{{ inventory_hostname }}/"
+    flat: true
+```
+
+When the run ends, everything in that directory is kept (regular files only; links aren't followed), up to
+`RUN_ARTIFACT_MAX_MB` (100) and `RUN_ARTIFACT_MAX_FILES` (1000). Over either limit, nothing is kept and the
+run's page says why; the run's own result doesn't change. The **Artifacts** card on the run's page lists
+the files to everyone who can see the run. **Artifacts aren't scrubbed of secrets** like the output is, so
+only people who can start runs (operators, admins, and trigger API keys at
+`GET /api/runs/{id}/artifacts/download`) can download them, one file or all of them as a `.tar.gz`. Each
+download is in the audit log. Artifacts are deleted `RUN_ARTIFACT_RETENTION_DAYS` (30) after the run ends;
+the list stays.
+
 ## The queue
 
 Runs wait in a queue until a worker slot is free. A queued run's page says what it waits for: a free

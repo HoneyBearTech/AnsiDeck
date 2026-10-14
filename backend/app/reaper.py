@@ -45,7 +45,7 @@ from app.notifications.ops import check_queue, check_workers
 from app.notify import notifier, run_topic
 from app.queue import QUEUE_TOPIC, fail_run
 from app.run_executor import format_duration
-from app.storage import inventory_refresh_output_path
+from app.storage import inventory_refresh_output_path, run_artifacts_path
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +202,31 @@ def reap_lints(db: Session) -> bool:
     return ended
 
 
+def prune_artifacts(db: Session, retention_days: int) -> int:
+    """Deletes the artifacts of runs that ended more than retention_days ago (0 keeps them);
+    the run keeps their listing and says when they went."""
+    if retention_days <= 0:
+        return 0
+    cutoff = func.now() - func.make_interval(0, 0, 0, retention_days)
+    runs = list(
+        db.scalars(
+            select(Run)
+            .where(
+                Run.artifacts_files.is_not(None),
+                Run.artifacts_deleted_at.is_(None),
+                Run.finished_at < cutoff,
+            )
+            .limit(_BATCH)
+            .with_for_update(skip_locked=True)
+        )
+    )
+    for run in runs:
+        run_artifacts_path(run.id).unlink(missing_ok=True)
+        run.artifacts_deleted_at = func.now()
+    db.commit()
+    return len(runs)
+
+
 def reap_once() -> list[int]:
     """One pass; returns the ids of the runs it ended."""
     ended: list[tuple[int, str | None, int, str | None]] = []  # id, audit action, project, worker
@@ -299,6 +324,11 @@ def reap_once() -> list[int]:
         except Exception:  # the next pass tries again
             db.rollback()
             logger.exception("could not prune API keys")
+        try:
+            prune_artifacts(db, get_settings().run_artifact_retention_days)
+        except Exception:  # the next pass tries again
+            db.rollback()
+            logger.exception("could not prune run artifacts")
         try:
             prune_snapshots(db)
         except Exception:  # the next pass tries again

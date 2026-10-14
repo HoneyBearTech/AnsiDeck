@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, status
@@ -44,7 +45,7 @@ from app.notify import notifier, run_topic
 from app.queue import QUEUE_TOPIC, Claim, claim_next, fail_run, hash_token, record_worker
 from app.run_log import append_events
 from app.secret_store import OUTAGE_KINDS, SecretStoreError, explain
-from app.storage import inventory_refresh_output_path
+from app.storage import inventory_refresh_output_path, run_artifacts_path
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +241,21 @@ class HostKeyProblemIn(BaseModel):
     presented: str | None = Field(None, max_length=64, pattern=r"^SHA256:[A-Za-z0-9+/]{43}$")
 
 
+class ArtifactFile(BaseModel):
+    path: str = Field(max_length=1024)
+    size: int = Field(ge=0)
+
+
+class ArtifactsIn(BaseModel):
+    """The run's artifacts as uploaded (POST /runs/{id}/artifacts), or why they weren't kept."""
+
+    files: list[ArtifactFile] = Field([], max_length=100_000)
+    bytes: int = Field(0, ge=0)
+    tar_bytes: int = Field(0, ge=0)
+    sha256: str | None = Field(None, max_length=64)
+    error: str | None = Field(None, max_length=300)
+
+
 class CompleteIn(BaseModel):
     last_seq: int = Field(ge=0)
     status: Literal["success", "failed", "cancelled", "timed_out"]
@@ -252,6 +268,7 @@ class CompleteIn(BaseModel):
         None, max_length=MAX_LEARNED_LINES
     )
     host_key_problems: list[HostKeyProblemIn] | None = Field(None, max_length=MAX_PROBLEMS)
+    artifacts: ArtifactsIn | None = None
 
 
 @router.post("/ping")
@@ -550,6 +567,8 @@ def complete(
     run.claim_token_hash = None
     project_id, worker_id = run.project_id, run.worker_id
     learned, problems = _host_keys(db, run, body)
+    if body.artifacts is not None:
+        _keep_artifacts(run, body.artifacts)
     run_finished(db, run)
     metrics.run_finished(db, project_id, body.status, run.started_at)
     db.commit()
@@ -567,6 +586,79 @@ def complete(
     _audit_host_keys(db, run_id, project_id, learned, problems)
     _finished(run_id)
     return {}
+
+
+def _artifacts_part(run_id: int) -> Path:
+    return run_artifacts_path(run_id).with_suffix(".part")
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while chunk := handle.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _keep_artifacts(run: Run, artifacts: ArtifactsIn) -> None:
+    """Makes the uploaded tar the run's artifacts if it is what the worker says it is (and
+    within this API's limits), else records why it wasn't kept."""
+    settings = get_settings()
+    part, error = _artifacts_part(run.id), artifacts.error
+    if error is None:
+        size = part.stat().st_size if part.exists() else -1
+        digest = _sha256_file(part) if size >= 0 else None
+        if size != artifacts.tar_bytes or digest != artifacts.sha256:
+            error = "the artifacts didn't arrive intact"
+        elif len(artifacts.files) > settings.run_artifact_max_files or (
+            artifacts.bytes > settings.run_artifact_max_mb * 1024 * 1024
+        ):
+            error = "the artifacts are over this server's limits"
+    if error is not None:
+        part.unlink(missing_ok=True)
+        run.artifacts_error = error[:300]
+        return
+    part.replace(run_artifacts_path(run.id))
+    run.artifacts_files = [f.model_dump() for f in artifacts.files]
+    run.artifacts_bytes = artifacts.bytes
+    run.artifacts_tar_bytes = artifacts.tar_bytes
+    run.artifacts_sha256 = artifacts.sha256
+
+
+@router.post("/runs/{run_id}/artifacts")
+async def run_artifacts(
+    run_id: int,
+    request: Request,
+    x_claim_token: str = Header(max_length=200),
+    x_offset: int = Header(ge=0),
+) -> Any:
+    """Appends a chunk of the run's artifacts tar at X-Offset (a resent chunk is accepted
+    again; a gap is refused with the offset to resend from)."""
+    chunk = await request.body()
+    return await asyncio.to_thread(_append_artifacts, run_id, x_claim_token, x_offset, chunk)
+
+
+def _append_artifacts(run_id: int, claim_token: str, offset: int, chunk: bytes) -> Any:
+    db = get_sessionmaker()()
+    try:
+        run = _locked_run(db, run_id, claim_token)
+        if run is None:
+            return _gone()
+        path = _artifacts_part(run.id)  # the row's id, not the request's
+        size = path.stat().st_size if path.exists() else 0
+        if offset > size:
+            return JSONResponse({"expected_offset": size}, status.HTTP_409_CONFLICT)
+        # A tar can be a little larger than its files, never twice their size.
+        if offset + len(chunk) > get_settings().run_artifact_max_mb * 2 * 1024 * 1024 + 2**20:
+            return JSONResponse({"detail": "The artifacts are too large"}, 413)
+        with open(path, "r+b" if path.exists() else "wb") as staged:
+            staged.seek(offset)
+            staged.write(chunk)
+            staged.truncate()
+        db.commit()
+        return {"offset": offset + len(chunk)}
+    finally:
+        db.close()
 
 
 def _host_keys(db: Session, run: Run, body: CompleteIn) -> tuple[list[dict], list[dict]]:

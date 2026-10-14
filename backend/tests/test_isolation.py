@@ -195,7 +195,9 @@ def test_prepare_builds_the_private_data_dir_and_a_home_for_ansible(monkeypatch,
             "private_data_dir": str(pdd),
             "playbook": "playbook.yml",
             "inventory": str(pdd / "inventory" / "hosts.yml"),
+            "extravars": {"ansideck_artifacts_dir": str(pdd / "ansideck-artifacts")},
         }
+        assert (pdd / "ansideck-artifacts").stat().st_mode & 0o777 == 0o700
         assert os.environ["ANSIBLE_HOME"] == str(pdd / "ansible")
         assert os.environ["ANSIBLE_SSH_CONTROL_PATH_DIR"] == str(pdd / "ansible" / "cp")
         assert os.environ["HOME"] == str(home)

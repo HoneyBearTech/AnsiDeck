@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LiveLogViewer } from "@/components/live-log-viewer";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/context/auth-context";
-import { api, ApiError, type Run } from "@/lib/api";
+import { api, ApiError, type Run, type RunArtifacts } from "@/lib/api";
 import { deletedItems, describeDeleted, formatDuration, STATUS_VARIANT } from "@/lib/runs";
 
 
@@ -214,6 +214,73 @@ function RunAgain({ run }: { run: Run }) {
   );
 }
 
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// Files the playbook left in $ARTIFACTS_DIR. Not scrubbed of secrets, so only people who can start
+// runs download them; others see the list.
+function Artifacts({ run }: { run: Run }) {
+  const [artifacts, setArtifacts] = React.useState<RunArtifacts | null>(null);
+  const finished = run.status !== "queued" && run.status !== "running";
+  const has = run.artifacts_count > 0 || run.artifacts_error !== null;
+
+  React.useEffect(() => {
+    if (!finished || !has) return;
+    api
+      .getRunArtifacts(run.id)
+      .then(setArtifacts)
+      .catch(() => setArtifacts(null));
+  }, [run.id, finished, has]);
+
+  if (!finished || !has) return null;
+  const link = "text-primary hover:underline";
+  const gone = artifacts?.deleted_at;
+  return (
+    <Card>
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+        <CardTitle>Artifacts</CardTitle>
+        {artifacts?.can_download && !gone && artifacts.files.length > 0 && (
+          <a href={api.runArtifactsUrl(run.id)} download className={`text-sm ${link}`}>
+            Download all (.tar.gz)
+          </a>
+        )}
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {run.artifacts_error && <p className="text-sm text-status-changed">Not kept: {run.artifacts_error}.</p>}
+        {gone && (
+          <p className="text-sm text-muted-foreground">
+            Deleted on {new Date(gone).toLocaleString()} (artifacts are kept for a limited time).
+          </p>
+        )}
+        {artifacts && artifacts.files.length > 0 && (
+          <ul className="flex flex-col gap-1 text-sm">
+            {artifacts.files.map((file) => (
+              <li key={file.path} className="flex flex-wrap items-center justify-between gap-2">
+                {artifacts.can_download && !gone ? (
+                  <a href={api.runArtifactUrl(run.id, file.path)} download className={`font-mono wrap-anywhere ${link}`}>
+                    {file.path}
+                  </a>
+                ) : (
+                  <span className="font-mono wrap-anywhere">{file.path}</span>
+                )}
+                <span className="text-xs text-muted-foreground">{formatSize(file.size)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {artifacts && !artifacts.can_download && !gone && artifacts.files.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            Only people who can start runs may download artifacts: they aren&apos;t scrubbed of secrets.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function DownloadLog({ run }: { run: Run }) {
   if (run.status === "queued") return null;
   const link = "text-sm text-primary hover:underline";
@@ -341,6 +408,8 @@ export function RunDetailPage() {
           </CardContent>
         </Card>
       )}
+
+      <Artifacts run={run} />
 
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">

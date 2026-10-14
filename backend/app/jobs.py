@@ -10,6 +10,7 @@ import hashlib
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.env_credentials import env_problem, resolve_env
 from app.git_sync import snapshot_path, vars_texts
 from app.host_key_store import job_host_keys
@@ -210,4 +211,8 @@ def build_job(db: Session, run: Run) -> dict:
         "project": project,
         "host_keys": job_host_keys(db, run),
         "env": env,
+        "artifacts": {
+            "max_bytes": get_settings().run_artifact_max_mb * 1024 * 1024,
+            "max_files": get_settings().run_artifact_max_files,
+        },
     }

@@ -28,7 +28,9 @@ on long runs. The most recent release is the supported version.
 ## Over the following year
 
 **Running playbooks**
-- Run artifacts: files a run produces, kept with the run.
+- Ad-hoc commands (one module against an inventory or group), run and audited like playbook runs.
+- Comparing runs host by host, and two runs side by side.
+- Inventory sources from git: inventory files, and scripts in a synced repository.
 
 **Authoring**
 - More from the editor: completion of module names and options, and ansible-lint's fixes offered as edits.
