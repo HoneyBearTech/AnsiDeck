@@ -41,6 +41,8 @@ NOT_HERE = {
     ("POST", "/api/inventories/{inventory_id}/host-keys/paste"),
     ("POST", "/api/inventories/{inventory_id}/host-keys/confirm"),
     ("DELETE", "/api/inventories/{inventory_id}/host-keys/{key_id}"),
+    ("POST", "/api/inventories/{inventory_id}/host-keys/trust"),
+    ("POST", "/api/inventories/{inventory_id}/host-key-scans"),  # tests/test_host_key_scans.py
 }
 
 

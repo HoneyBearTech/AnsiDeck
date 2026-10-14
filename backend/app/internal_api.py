@@ -25,6 +25,7 @@ from app.db import get_db, get_sessionmaker
 from app.galaxy import try_start_install
 from app.git_sync import snapshot_path
 from app.hardening import FailureThrottle
+from app.host_key_scans import MAX_RESULTS, build_scan_job, end_scan, scanned_keys
 from app.host_key_store import record_learned, record_problems
 from app.host_keys import MAX_LEARNED_LINES, MAX_PROBLEMS
 from app.inventory_sources import (
@@ -36,7 +37,7 @@ from app.inventory_sources import (
 )
 from app.jobs import build_job
 from app.lint import LintJobError, build_lint_job, end_lint
-from app.models import GitSnapshot, InventoryRefresh, LintJob, Run, RunStatus
+from app.models import GitSnapshot, HostKeyScan, InventoryRefresh, LintJob, Run, RunStatus
 from app.notifications.events import run_finished
 from app.notifications.ops import host_key_changed, secret_store_failed
 from app.notify import notifier, run_topic
@@ -134,14 +135,17 @@ class ClaimIn(BaseModel):
     egress_filtered: bool | None = None  # None: a worker from before its egress filter
     wait_seconds: float = Field(MAX_CLAIM_WAIT_SECONDS, ge=0, le=MAX_CLAIM_WAIT_SECONDS)
     # What the worker can do; one from before 4G (no kinds) is only ever given runs.
-    kinds: list[Literal["run", "refresh", "lint"]] = Field(["run"], min_length=1, max_length=3)
+    kinds: list[Literal["run", "refresh", "lint", "keyscan"]] = Field(
+        ["run"], min_length=1, max_length=4
+    )
     # It checks SSH host keys (app.host_keys); one that doesn't never gets a run that must.
     host_keys: bool = False
 
 
 class ClaimOut(BaseModel):
-    # "refresh" / "lint": run_id is an inventory refresh's or a playbook check's id.
-    kind: Literal["run", "refresh", "lint"] = "run"
+    # "refresh" / "lint" / "keyscan": run_id is an inventory refresh's, a playbook check's or a
+    # host key scan's id.
+    kind: Literal["run", "refresh", "lint", "keyscan"] = "run"
     run_id: int
     claim_token: str
     job_token: str
@@ -166,6 +170,11 @@ class HeartbeatRefresh(BaseModel):
     claim_token: str = Field(max_length=200)
 
 
+class HeartbeatKeyscan(BaseModel):
+    scan_id: int
+    claim_token: str = Field(max_length=200)
+
+
 class HeartbeatLint(BaseModel):
     lint_id: int
     claim_token: str = Field(max_length=200)
@@ -180,6 +189,7 @@ class HeartbeatIn(BaseModel):
     runs: list[HeartbeatRun] = Field(max_length=256)
     refreshes: list[HeartbeatRefresh] = Field([], max_length=256)
     lints: list[HeartbeatLint] = Field([], max_length=256)
+    keyscans: list[HeartbeatKeyscan] = Field([], max_length=256)
 
 
 class FindingIn(BaseModel):
@@ -191,6 +201,13 @@ class FindingIn(BaseModel):
     line: int = Field(ge=1, le=10_000_000)
     column: int | None = Field(None, ge=0, le=10_000_000)
     url: str | None = Field(None, max_length=300, pattern=r"^https://")
+
+
+class KeyscanCompleteIn(BaseModel):
+    status: Literal["success", "failed", "timed_out"]
+    # ssh-keyscan's output lines (untrusted: only keys for the scan's own targets are kept).
+    lines: list[Annotated[str, Field(max_length=20_000)]] = Field([], max_length=MAX_RESULTS)
+    error: str | None = Field(None, max_length=1000)
 
 
 class LintCompleteIn(BaseModel):
@@ -479,8 +496,24 @@ def heartbeat(body: HeartbeatIn, db: Session = Depends(get_db)) -> dict[str, lis
             .returning(LintJob.id)
         ).first()
         lints.append({"lint_id": item.lint_id, "state": "ok" if renewed is not None else "gone"})
+    keyscans: list[dict] = []
+    for item in body.keyscans:
+        renewed = db.execute(
+            update(HostKeyScan)
+            .where(
+                HostKeyScan.id == item.scan_id,
+                HostKeyScan.status == RunStatus.RUNNING.value,
+                HostKeyScan.claim_token_hash == hash_token(item.claim_token),
+            )
+            .values(
+                heartbeat_at=func.now(),
+                lease_expires_at=func.now() + func.make_interval(0, 0, 0, 0, 0, 0, lease),
+            )
+            .returning(HostKeyScan.id)
+        ).first()
+        keyscans.append({"scan_id": item.scan_id, "state": "ok" if renewed is not None else "gone"})
     db.commit()
-    return {"runs": answers, "refreshes": refreshes, "lints": lints}
+    return {"runs": answers, "refreshes": refreshes, "lints": lints, "keyscans": keyscans}
 
 
 @router.post("/runs/{run_id}/complete")
@@ -838,3 +871,75 @@ internal_app = FastAPI(
 internal_app.include_router(router)
 internal_app.add_middleware(WorkerAuthMiddleware)
 internal_app.add_middleware(metrics.HTTPMetricsMiddleware, server="internal")  # outermost
+
+
+# --- host key scans -----------------------------------------------------------------------
+
+
+def _locked_scan(db: Session, scan_id: int, claim_token: str) -> HostKeyScan | None:
+    """The scan, row-locked, if this claim still owns it."""
+    scan = db.scalars(
+        select(HostKeyScan).where(HostKeyScan.id == scan_id).with_for_update()
+    ).first()
+    if (
+        scan is None
+        or scan.status != RunStatus.RUNNING.value
+        or scan.claim_token_hash is None
+        or not hmac.compare_digest(scan.claim_token_hash, hash_token(claim_token))
+    ):
+        return None
+    return scan
+
+
+def _end_scan(
+    db: Session, scan: HostKeyScan, status: str, error: str | None, results: list | None = None
+) -> None:
+    end_scan(scan, status, error=error, results=results)
+    db.commit()
+    notifier.notify(QUEUE_TOPIC)  # the inventory's next scan may start
+
+
+@router.post("/keyscans/{scan_id}/job")
+def keyscan_job(
+    scan_id: int,
+    body: JobIn,
+    x_claim_token: str = Header(max_length=200),
+    db: Session = Depends(get_db),
+) -> Any:
+    """Hands the scan's job (its targets) out exactly once."""
+    scan = _locked_scan(db, scan_id, x_claim_token)
+    if (
+        scan is None
+        or scan.job_token_hash is None
+        or not hmac.compare_digest(scan.job_token_hash, hash_token(body.job_token))
+        or scan.job_token_expires_at <= db.scalar(select(func.now()))
+    ):
+        return _gone()
+    scan.job_token_hash = None
+    scan.job_token_expires_at = None
+    scan.started_at = func.now()
+    payload = build_scan_job(scan)
+    db.commit()
+    return payload
+
+
+@router.post("/keyscans/{scan_id}/complete")
+def keyscan_complete(
+    scan_id: int,
+    body: KeyscanCompleteIn,
+    x_claim_token: str = Header(max_length=200),
+    db: Session = Depends(get_db),
+) -> Any:
+    """Records the keys the targets presented, or why the scan failed."""
+    scan = _locked_scan(db, scan_id, x_claim_token)
+    if scan is None:
+        return _gone()
+    if body.status != RunStatus.SUCCESS.value:
+        _end_scan(db, scan, body.status, body.error or body.status.replace("_", " "))
+        return {}
+    results = scanned_keys(scan, body.lines)
+    error = None
+    if not results:
+        error = body.error or "no host answered with a key"
+    _end_scan(db, scan, RunStatus.SUCCESS.value, error, results)
+    return {}

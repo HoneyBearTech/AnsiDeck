@@ -39,6 +39,12 @@ keys.
 
 Project admins manage the keys:
 
+- **Scan host keys** asks every host whose address is known for its SSH keys, from a worker (where runs
+  connect from; add jump hosts by name). The result lists each key with whether it is new, matches the key a
+  run learned, is already trusted, or **differs from the trusted key**. Tick the keys to trust and **Trust
+  selected**; **Select the learned keys that match** confirms learned keys the hosts still present. Compare a
+  fingerprint with the host's own before trusting it: a scan shows what answered, not who. Hosts that don't
+  answer are listed. Scans are kept for an hour.
 - **Paste known_hosts** trusts keys from known_hosts lines, for example the output of
   `ssh-keyscan -p 2222 10.0.0.5` run from a machine you trust, or a host's
   `/etc/ssh/ssh_host_ed25519_key.pub` with its name put in front. **Preview** shows which keys are new,

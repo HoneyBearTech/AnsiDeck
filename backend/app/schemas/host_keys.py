@@ -79,3 +79,45 @@ class PasteOut(BaseModel):
 
 class ConfirmIn(BaseModel):
     ids: list[int] = Field(min_length=1, max_length=2000)
+
+
+class ScanIn(BaseModel):
+    # The inventory hosts to scan (all when left out), and extra names such as jump hosts
+    # (`host` or `[host]:port`).
+    hosts: list[str] | None = Field(None, max_length=5000)
+    extra: list[str] = Field([], max_length=20)
+
+
+class ScannedKey(BaseModel):
+    name: str
+    key_type: str
+    fingerprint: str
+    hosts: list[str] = []
+    # trusted: the same key is trusted; learned: the same key was learned (trusting it confirms
+    # it); new: no key of this type is trusted for the name; changed: a different one is.
+    state: Literal["trusted", "learned", "new", "changed"]
+    previous: str | None = None  # the trusted key's fingerprint, when changed
+
+
+class ScanOut(BaseModel):
+    id: int
+    status: str
+    wait_reason: str | None = None
+    error: str | None = None
+    requested_by: str
+    queued_at: datetime
+    finished_at: datetime | None
+    targets: int
+    keys: list[ScannedKey] = []
+    # Targets that presented no key (unreachable, or not ssh).
+    silent: list[str] = []
+
+
+class TrustKey(BaseModel):
+    name: str = Field(max_length=300)
+    key_type: str = Field(max_length=64)
+
+
+class TrustIn(BaseModel):
+    scan_id: int
+    keys: list[TrustKey] = Field(min_length=1, max_length=1500)

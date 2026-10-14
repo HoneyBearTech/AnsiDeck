@@ -378,6 +378,78 @@ describe("SSH host keys", () => {
     expect(api.requests("DELETE /inventories/1/host-keys/1")).toHaveLength(1);
   });
 
+  it("scans the hosts' keys in a worker and trusts the ones picked", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      const queued = {
+        id: 3,
+        status: "queued",
+        wait_reason: "Waiting for a worker that can scan host keys…",
+        error: null,
+        requested_by: "admin",
+        queued_at: "2026-10-14T12:00:00Z",
+        finished_at: null,
+        targets: 3,
+        keys: [],
+        silent: [],
+      };
+      const { api, user, screen } = renderApp("/inventories/1", {
+        routes: detail({
+          "GET /inventories/:id/host-keys": hostKeys(),
+          "POST /inventories/:id/host-key-scans": queued,
+          "GET /inventories/:id/host-key-scans/:scan": queued,
+          "POST /inventories/:id/host-keys/trust": [],
+        }),
+      });
+      await user.click(await screen.findByRole("button", { name: "Scan host keys" }));
+      const dialog = within(await screen.findByRole("dialog"));
+      await user.type(dialog.getByLabelText("Jump hosts (optional)"), "bastion [[10.0.0.1]:2222");
+      await user.click(dialog.getByRole("button", { name: "Scan" }));
+      expect(await dialog.findByText("Waiting for a worker that can scan host keys…")).toBeInTheDocument();
+      expect(api.requests("POST /inventories/1/host-key-scans")[0]?.body).toEqual({
+        extra: ["bastion", "[10.0.0.1]:2222"],
+      });
+
+      api.set({
+        "GET /inventories/:id/host-key-scans/:scan": {
+          ...queued,
+          status: "success",
+          wait_reason: null,
+          finished_at: "2026-10-14T12:00:05Z",
+          silent: ["bastion"],
+          keys: [
+            { name: "[10.0.0.5]:2222", key_type: "ssh-ed25519", fingerprint: "SHA256:aaa", hosts: ["web1.example"],
+              state: "learned", previous: null },
+            { name: "db1", key_type: "ssh-ed25519", fingerprint: "SHA256:new", hosts: ["db1"], state: "changed",
+              previous: "SHA256:old" },
+            { name: "db2", key_type: "ssh-rsa", fingerprint: "SHA256:ok", hosts: ["db2"], state: "trusted",
+              previous: null },
+          ],
+        },
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(await dialog.findByText("differs from the trusted key")).toBeInTheDocument();
+      expect(dialog.getByText("trusted now: SHA256:old")).toBeInTheDocument();
+      expect(dialog.getByText(/No key from bastion/)).toBeInTheDocument();
+      expect(dialog.getByLabelText("Trust the ssh-rsa key of db2")).toBeDisabled();
+
+      await user.click(dialog.getByRole("button", { name: "Select the learned keys that match" }));
+      await user.click(dialog.getByLabelText("Trust the ssh-ed25519 key of db1"));
+      await user.click(dialog.getByRole("button", { name: "Trust selected (2)" }));
+      expect(confirm.mock.calls.at(-1)?.[0]).toMatch(/Replace the trusted key of db1/);
+      expect(api.requests("POST /inventories/1/host-keys/trust")[0]?.body).toEqual({
+        scan_id: 3,
+        keys: [
+          { name: "[10.0.0.5]:2222", key_type: "ssh-ed25519" },
+          { name: "db1", key_type: "ssh-ed25519" },
+        ],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("is read-only for everyone else", async () => {
     const { screen } = renderApp("/inventories/1", {
       user: viewerUser(),
@@ -386,7 +458,7 @@ describe("SSH host keys", () => {
     expect(await screen.findByText("SSH host keys")).toBeInTheDocument();
     expect(screen.getByText("Learn new hosts")).toBeInTheDocument();
     expect(screen.queryByLabelText("Host key mode")).not.toBeInTheDocument();
-    for (const name of ["Paste known_hosts", "Confirm learned (1)", "Remove"]) {
+    for (const name of ["Scan host keys", "Paste known_hosts", "Confirm learned (1)", "Remove"]) {
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     }
   });

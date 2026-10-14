@@ -228,6 +228,32 @@ export interface PastedHostKey {
   hosts: string[];
 }
 
+export interface ScannedHostKey {
+  name: string;
+  key_type: string;
+  fingerprint: string;
+  hosts: string[];
+  // trusted / learned: the same key is trusted or was learned; new: none of this type yet;
+  // changed: a different key of this type is trusted (`previous`).
+  state: "trusted" | "learned" | "new" | "changed";
+  previous: string | null;
+}
+
+/** ssh-keyscan of an inventory's hosts, run by a worker. */
+export interface HostKeyScan {
+  id: number;
+  status: "queued" | "running" | "success" | "failed" | "timed_out";
+  wait_reason: string | null;
+  error: string | null;
+  requested_by: string;
+  queued_at: string;
+  finished_at: string | null;
+  targets: number;
+  keys: ScannedHostKey[];
+  // Targets that presented no key.
+  silent: string[];
+}
+
 /** A host whose key ssh refused in a run. */
 export interface HostKeyProblem {
   host: string;
@@ -968,6 +994,19 @@ export const api = {
     }),
   removeHostKey: (id: number, keyId: number) =>
     request<void>(`/inventories/${id}/host-keys/${keyId}`, { method: "DELETE" }),
+  scanHostKeys: (id: number, extra: string[] = []) =>
+    request<HostKeyScan>(`/inventories/${id}/host-key-scans`, {
+      method: "POST",
+      body: JSON.stringify({ extra }),
+    }),
+  getHostKeyScan: (id: number, scanId: number) =>
+    request<HostKeyScan>(`/inventories/${id}/host-key-scans/${scanId}`),
+  /** Trusts keys a scan found (the keys come from the scan, not from here). */
+  trustScannedHostKeys: (id: number, scanId: number, keys: { name: string; key_type: string }[]) =>
+    request<HostKey[]>(`/inventories/${id}/host-keys/trust`, {
+      method: "POST",
+      body: JSON.stringify({ scan_id: scanId, keys }),
+    }),
 
   createGroup: (inventoryId: number, name: string) =>
     request<InventoryGroup>(`/inventories/${inventoryId}/groups`, {

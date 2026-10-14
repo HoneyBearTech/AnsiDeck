@@ -397,6 +397,53 @@ class InventoryHostKey(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
 
+class HostKeyScan(Base):
+    """ssh-keyscan of an inventory's hosts, run by a worker (as a slot user, behind its egress
+    filter) like a playbook check, for a project admin to trust what they presented. The keys
+    are only shown; trusting one copies it from here. Pruned an hour after it ends."""
+
+    __tablename__ = "host_key_scans"
+    __table_args__ = (
+        Index(
+            "ix_host_key_scans_queue", "queued_at", "id", postgresql_where=text("status = 'queued'")
+        ),
+        Index(
+            "ix_host_key_scans_lease",
+            "lease_expires_at",
+            postgresql_where=text("status = 'running'"),
+        ),
+        Index("ix_host_key_scans_finished_at", "finished_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    inventory_id: Mapped[int] = mapped_column(
+        ForeignKey("inventories.id", ondelete="CASCADE"), index=True
+    )
+    requested_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    requested_by: Mapped[str] = mapped_column(String(150))
+    # [{"name": "[10.0.0.5]:2222", "host": "10.0.0.5", "port": 2222}]: what to scan.
+    targets: Mapped[list] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(20), default=RunStatus.QUEUED.value)
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    timeout_seconds: Mapped[int] = mapped_column(Integer)
+    worker_id: Mapped[str | None] = mapped_column(String(255), default=None)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    claim_token_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    job_token_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    job_token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    # [{"name", "key_type", "key_b64", "fingerprint"}] for the targets that answered.
+    results: Mapped[list | None] = mapped_column(JSON, default=None)
+    error: Mapped[str | None] = mapped_column(String(1000), default=None)
+
+
 class InventorySource(Base):
     """A dynamic inventory source: an inventory plugin's config (YAML with a `plugin:` key),
     run by ansible-inventory in an isolated worker when the inventory is refreshed."""

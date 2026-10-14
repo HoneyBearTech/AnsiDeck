@@ -4705,27 +4705,119 @@
         "title": "RunTemplateOut",
         "type": "object"
       },
-      "ScannedKey": {
+      "ScanIn": {
         "properties": {
-          "fingerprint": {
-            "title": "Fingerprint",
+          "extra": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Extra",
+            "type": "array"
+          },
+          "hosts": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 5000,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hosts"
+          }
+        },
+        "title": "ScanIn",
+        "type": "object"
+      },
+      "ScanOut": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "keys": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/app__schemas__host_keys__ScannedKey"
+            },
+            "title": "Keys",
+            "type": "array"
+          },
+          "queued_at": {
+            "format": "date-time",
+            "title": "Queued At",
             "type": "string"
           },
-          "trusted": {
-            "title": "Trusted",
-            "type": "boolean"
-          },
-          "type": {
-            "title": "Type",
+          "requested_by": {
+            "title": "Requested By",
             "type": "string"
+          },
+          "silent": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Silent",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "targets": {
+            "title": "Targets",
+            "type": "integer"
+          },
+          "wait_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wait Reason"
           }
         },
         "required": [
-          "type",
-          "fingerprint",
-          "trusted"
+          "id",
+          "status",
+          "requested_by",
+          "queued_at",
+          "finished_at",
+          "targets"
         ],
-        "title": "ScannedKey",
+        "title": "ScanOut",
         "type": "object"
       },
       "SecretCheck": {
@@ -5358,6 +5450,49 @@
         "title": "TrustHostKey",
         "type": "object"
       },
+      "TrustIn": {
+        "properties": {
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/TrustKey"
+            },
+            "maxItems": 1500,
+            "minItems": 1,
+            "title": "Keys",
+            "type": "array"
+          },
+          "scan_id": {
+            "title": "Scan Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scan_id",
+          "keys"
+        ],
+        "title": "TrustIn",
+        "type": "object"
+      },
+      "TrustKey": {
+        "properties": {
+          "key_type": {
+            "maxLength": 64,
+            "title": "Key Type",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 300,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "key_type"
+        ],
+        "title": "TrustKey",
+        "type": "object"
+      },
       "UserAdminOut": {
         "properties": {
           "created_at": {
@@ -5936,6 +6071,29 @@
         "title": "WorkerOut",
         "type": "object"
       },
+      "app__schemas__git_sources__ScannedKey": {
+        "properties": {
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "trusted": {
+            "title": "Trusted",
+            "type": "boolean"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "fingerprint",
+          "trusted"
+        ],
+        "title": "ScannedKey",
+        "type": "object"
+      },
       "app__schemas__git_sources__SnapshotOut": {
         "properties": {
           "commit": {
@@ -6063,7 +6221,7 @@
           "host_keys": {
             "default": [],
             "items": {
-              "$ref": "#/components/schemas/ScannedKey"
+              "$ref": "#/components/schemas/app__schemas__git_sources__ScannedKey"
             },
             "title": "Host Keys",
             "type": "array"
@@ -6077,6 +6235,59 @@
           "ok"
         ],
         "title": "TestResult",
+        "type": "object"
+      },
+      "app__schemas__host_keys__ScannedKey": {
+        "properties": {
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "hosts": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Hosts",
+            "type": "array"
+          },
+          "key_type": {
+            "title": "Key Type",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous"
+          },
+          "state": {
+            "enum": [
+              "trusted",
+              "learned",
+              "new",
+              "changed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "key_type",
+          "fingerprint",
+          "state"
+        ],
+        "title": "ScannedKey",
         "type": "object"
       },
       "app__schemas__inventory_sources__SnapshotOut": {
@@ -8695,6 +8906,174 @@
         ]
       }
     },
+    "/api/inventories/{inventory_id}/host-key-scans": {
+      "post": {
+        "description": "Scans the hosts' SSH keys from a worker (where runs connect from). Returns the\ninventory's scan already waiting or running instead of starting another.",
+        "operationId": "start_scan_api_inventories__inventory_id__host_key_scans_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inventory_id",
+            "required": true,
+            "schema": {
+              "title": "Inventory Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Scan",
+        "tags": [
+          "inventories"
+        ]
+      }
+    },
+    "/api/inventories/{inventory_id}/host-key-scans/{scan_id}": {
+      "get": {
+        "operationId": "get_scan_api_inventories__inventory_id__host_key_scans__scan_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inventory_id",
+            "required": true,
+            "schema": {
+              "title": "Inventory Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "scan_id",
+            "required": true,
+            "schema": {
+              "title": "Scan Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Scan",
+        "tags": [
+          "inventories"
+        ]
+      }
+    },
     "/api/inventories/{inventory_id}/host-keys": {
       "get": {
         "description": "The inventory's trusted keys and, for each host (a page, filtered by `q` on the host or\nits address, and with `untrusted` to those without a confirmed key), whether a run can\ncheck it.",
@@ -9062,6 +9441,95 @@
           }
         },
         "summary": "Paste Host Keys",
+        "tags": [
+          "inventories"
+        ]
+      }
+    },
+    "/api/inventories/{inventory_id}/host-keys/trust": {
+      "post": {
+        "description": "Trusts keys a scan of this inventory found: the keys come from the scan, never from\nthe request. A key replaces the inventory's key of the same name and type; trusting a\nlearned key confirms it.",
+        "operationId": "trust_scanned_keys_api_inventories__inventory_id__host_keys_trust_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inventory_id",
+            "required": true,
+            "schema": {
+              "title": "Inventory Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrustIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/HostKeyOut"
+                  },
+                  "title": "Response Trust Scanned Keys Api Inventories  Inventory Id  Host Keys Trust Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trust Scanned Keys",
         "tags": [
           "inventories"
         ]

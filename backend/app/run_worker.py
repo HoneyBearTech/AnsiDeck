@@ -607,6 +607,73 @@ def run_lint(job: dict, emit) -> None:
         shutil.rmtree(pdd, ignore_errors=True)
 
 
+_MAX_KEYSCAN_LINES = 1500
+_MAX_KEYSCAN_BYTES = 2 * 1024 * 1024
+
+
+def run_keyscan(job: dict, emit) -> None:
+    """A host key scan: ssh-keyscan of the job's targets (grouped by port), as the slot user,
+    so from where runs connect and behind the worker's egress filter. Sends {"type":
+    "keyscan_result", "lines": [...], "error": the end of its stderr or None} and the usual
+    "result". The keys are untrusted: the API keeps only those of the scan's own targets."""
+    import subprocess
+
+    base = "/tmp" if os.path.isdir("/tmp") else None  # noqa: S108 - mkdtemp is private
+    pdd = Path(tempfile.mkdtemp(prefix=job.get("prefix", "ansideck-keyscan-"), dir=base))
+    emit({"type": "started", "private_data_dir": str(pdd)})
+    try:
+        if job.get("own_home"):
+            os.environ["HOME"] = _own_home()
+        by_port: dict[int, list[str]] = {}
+        for target in job["targets"]:
+            host, port = str(target["host"]), int(target["port"])
+            if not host or host.startswith("-") or any(c.isspace() for c in host):
+                raise RuntimeError(f"invalid host {host[:100]!r}")
+            if not 1 <= port <= 65535:
+                raise RuntimeError(f"invalid port {port}")
+            by_port.setdefault(port, []).append(host)
+        deadline = time.monotonic() + job.get("timeout_seconds", 90) - 5
+        lines: list[str] = []
+        size = 0
+        errors: list[str] = []
+        for port, hosts in sorted(by_port.items()):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                errors.append(f"out of time before port {port}")
+                break
+            names = pdd / f"hosts-{port}"
+            names.write_text("".join(f"{h}\n" for h in hosts))
+            command = ["ssh-keyscan", "-T", "5", "-t", "rsa,ecdsa,ed25519", "-p", str(port),
+                       "-f", str(names)]  # fmt: skip
+            try:
+                done = subprocess.run(  # noqa: S603 - argument list, no shell
+                    command, stdin=subprocess.DEVNULL, capture_output=True, timeout=remaining,
+                    check=False, cwd=pdd,
+                )  # fmt: skip
+            except subprocess.TimeoutExpired:
+                errors.append(f"ssh-keyscan of port {port} ran out of time")
+                continue
+            for raw in done.stdout.decode("utf-8", "replace").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                size += len(line)
+                if len(lines) >= _MAX_KEYSCAN_LINES or size > _MAX_KEYSCAN_BYTES:
+                    break
+                lines.append(line)
+            stderr = [
+                line
+                for line in done.stderr.decode("utf-8", "replace").splitlines()
+                if line.strip() and not line.startswith("#")
+            ]
+            errors.extend(stderr[-5:])
+        error = "\n".join(errors)[-1000:] or None
+        emit({"type": "keyscan_result", "lines": lines, "error": error})
+        emit({"type": "result", "status": "successful", "rc": 0})
+    finally:
+        shutil.rmtree(pdd, ignore_errors=True)
+
+
 def run(job: dict) -> None:
     event_fd = job.pop("event_fd")
     # Not inherited by anything the playbook spawns, so it can't forge results.
@@ -617,9 +684,10 @@ def run(job: dict) -> None:
         events.write(json.dumps(message) + "\n")
         events.flush()
 
-    if job.get("mode") in ("inventory", "lint"):
+    if job.get("mode") in ("inventory", "lint", "keyscan"):
+        modes = {"inventory": run_inventory, "lint": run_lint, "keyscan": run_keyscan}
         try:
-            (run_inventory if job["mode"] == "inventory" else run_lint)(job, emit)
+            modes[job["mode"]](job, emit)
         except Exception as exc:  # noqa: BLE001 - reported, the job fails with this reason
             emit({"type": "refused", "reason": str(exc)[:300]})
         return

@@ -20,6 +20,7 @@ from app.run_executor import (
     format_duration,
     host_counts,
     inventory_in_worker,
+    keyscan_in_worker,
     lint_in_worker,
     run_in_worker,
     sweep,
@@ -89,7 +90,7 @@ def refresh_error(stderr: str, secrets: list[str], rc: int | None) -> str:
     return (summary or f"ansible-inventory failed (exit code {rc})")[-1000:]
 
 
-_JOB_PATHS = {"run": "runs", "refresh": "refreshes", "lint": "lints"}
+_JOB_PATHS = {"run": "runs", "refresh": "refreshes", "lint": "lints", "keyscan": "keyscans"}
 
 
 def _ssh_agent_noise(event: dict) -> bool:
@@ -362,7 +363,7 @@ class Worker:
                         "isolated": self.isolated,
                         "egress_filtered": self.egress_filtered(),
                         "wait_seconds": self.claim_wait_seconds,
-                        "kinds": ["run", "refresh", "lint"],
+                        "kinds": ["run", "refresh", "lint", "keyscan"],
                         "host_keys": True,
                     },
                     timeout=self.claim_wait_seconds + 15,
@@ -390,6 +391,8 @@ class Worker:
                     self._execute_refresh(task, claim["job_token"], identity)
                 elif task.kind == "lint":
                     self._execute_lint(task, claim["job_token"], identity)
+                elif task.kind == "keyscan":
+                    self._execute_keyscan(task, claim["job_token"], identity)
                 else:
                     self._execute(task, claim["job_token"], identity)
             except Exception:  # one job's failure must not end the slot
@@ -618,7 +621,7 @@ class Worker:
         if job.get("project"):
             snapshot = self._fetch_snapshot(task, job["project"])
             if snapshot is None:
-                self._complete_lint(
+                self._complete_job(
                     task, {"status": "failed", "error": "could not fetch the repository"}
                 )
                 return
@@ -651,21 +654,21 @@ class Worker:
             return
         if reason is not None:
             outcome, why = self._outcome(task, reason, None, False)
-            self._complete_lint(task, {"status": outcome, "error": why})
+            self._complete_job(task, {"status": outcome, "error": why})
         elif refused is not None:
-            self._complete_lint(
+            self._complete_job(
                 task, {"status": "failed", "error": Scrubber(secrets).scrub_text(refused)}
             )
         elif result is None:
-            self._complete_lint(
+            self._complete_job(
                 task, {"status": "failed", "error": "the check ended without a result"}
             )
         elif result.get("error"):
             error = Scrubber(secrets).scrub_text(result["error"])
-            self._complete_lint(task, {"status": "failed", "error": error})
+            self._complete_job(task, {"status": "failed", "error": error})
         else:
             findings, scrubbed = scrub_findings(result["findings"], secrets)
-            self._complete_lint(
+            self._complete_job(
                 task,
                 {
                     "status": "success",
@@ -679,12 +682,59 @@ class Worker:
                 },
             )
 
-    def _complete_lint(self, task: RunTask, body: dict) -> None:
+    # ------------------------------------------------------------------ host key scans
+
+    def _execute_keyscan(
+        self, task: RunTask, job_token: str, identity: RunIdentity | None = None
+    ) -> None:
+        """A host key scan: ssh-keyscan in the slot's run process, then what it printed."""
+        job = self._fetch_job(task, job_token)
+        if job is None:
+            return
+        task.timeout_seconds = job["timeout_seconds"]
+        task.deadline = time.monotonic() + task.timeout_seconds
+        logger.info("%s: starting", task.label)
+        result: dict | None = None
+        refused: str | None = None
+        try:
+            result = keyscan_in_worker(
+                {
+                    "targets": job["targets"],
+                    "timeout_seconds": job["timeout_seconds"],
+                    "prefix": f"ansideck-keyscan-{task.run_id}-",
+                    "own_home": identity is not None,
+                },
+                clean_env(),
+                task.handle,
+                identity,
+            )
+        except RunRefused as exc:
+            refused = str(exc)
+        except Exception:  # reported as a failed scan below
+            if task.handle.stop_reason is None:
+                logger.exception("%s: could not run ssh-keyscan", task.label)
+        reason = task.handle.stop_reason
+        if reason == GONE:
+            return
+        if reason is not None:
+            outcome, why = self._outcome(task, reason, None, False)
+            body = {"status": outcome, "error": why}
+        elif refused is not None:
+            body = {"status": "failed", "error": f"not run: {refused}"[:1000]}
+        elif result is None:
+            body = {"status": "failed", "error": "the scan ended without a result"}
+        else:
+            body = {"status": "success", "lines": result["lines"], "error": result.get("error")}
+        self._complete_job(task, body)
+
+    def _complete_job(self, task: RunTask, body: dict) -> None:
         deadline = time.monotonic() + _FLUSH_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
             try:
                 response = self.client.post(
-                    f"/internal/lints/{task.run_id}/complete", body, claim_token=task.claim_token
+                    f"/internal/{_JOB_PATHS[task.kind]}/{task.run_id}/complete",
+                    body,
+                    claim_token=task.claim_token,
                 )
             except ApiUnavailable as exc:
                 logger.warning("%s: reporting failed (%s); retrying", task.label, exc)
@@ -856,6 +906,11 @@ class Worker:
                         for t in tasks
                         if t.kind == "lint"
                     ],
+                    "keyscans": [
+                        {"scan_id": t.run_id, "claim_token": t.claim_token}
+                        for t in tasks
+                        if t.kind == "keyscan"
+                    ],
                 },
                 timeout=max(self.heartbeat_seconds, 2.0),
             )
@@ -870,10 +925,14 @@ class Worker:
                 for answer in answers.get("lints", []):
                     answer["run_id"] = answer["lint_id"]
                     answer["kind"] = "lint"
+                for answer in answers.get("keyscans", []):
+                    answer["run_id"] = answer["scan_id"]
+                    answer["kind"] = "keyscan"
                 for answer in [
                     *answers["runs"],
                     *answers.get("refreshes", []),
                     *answers.get("lints", []),
+                    *answers.get("keyscans", []),
                 ]:
                     task = by_key.get((answer.get("kind", "run"), answer["run_id"]))
                     if task is None:

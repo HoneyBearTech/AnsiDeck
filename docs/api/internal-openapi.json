@@ -38,11 +38,12 @@
               "enum": [
                 "run",
                 "refresh",
-                "lint"
+                "lint",
+                "keyscan"
               ],
               "type": "string"
             },
-            "maxItems": 3,
+            "maxItems": 4,
             "minItems": 1,
             "title": "Kinds",
             "type": "array"
@@ -89,7 +90,8 @@
             "enum": [
               "run",
               "refresh",
-              "lint"
+              "lint",
+              "keyscan"
             ],
             "title": "Kind",
             "type": "string"
@@ -346,6 +348,15 @@
             ],
             "title": "Isolated"
           },
+          "keyscans": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/HeartbeatKeyscan"
+            },
+            "maxItems": 256,
+            "title": "Keyscans",
+            "type": "array"
+          },
           "lints": {
             "default": [],
             "items": {
@@ -391,6 +402,25 @@
           "runs"
         ],
         "title": "HeartbeatIn",
+        "type": "object"
+      },
+      "HeartbeatKeyscan": {
+        "properties": {
+          "claim_token": {
+            "maxLength": 200,
+            "title": "Claim Token",
+            "type": "string"
+          },
+          "scan_id": {
+            "title": "Scan Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scan_id",
+          "claim_token"
+        ],
+        "title": "HeartbeatKeyscan",
         "type": "object"
       },
       "HeartbeatLint": {
@@ -523,6 +553,46 @@
           "job_token"
         ],
         "title": "JobIn",
+        "type": "object"
+      },
+      "KeyscanCompleteIn": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "lines": {
+            "default": [],
+            "items": {
+              "maxLength": 20000,
+              "type": "string"
+            },
+            "maxItems": 1500,
+            "title": "Lines",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "success",
+              "failed",
+              "timed_out"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "KeyscanCompleteIn",
         "type": "object"
       },
       "LintCompleteIn": {
@@ -791,6 +861,126 @@
           }
         },
         "summary": "Heartbeat"
+      }
+    },
+    "/internal/keyscans/{scan_id}/complete": {
+      "post": {
+        "description": "Records the keys the targets presented, or why the scan failed.",
+        "operationId": "keyscan_complete_internal_keyscans__scan_id__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scan_id",
+            "required": true,
+            "schema": {
+              "title": "Scan Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-claim-token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "title": "X-Claim-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyscanCompleteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Keyscan Complete Internal Keyscans  Scan Id  Complete Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Keyscan Complete"
+      }
+    },
+    "/internal/keyscans/{scan_id}/job": {
+      "post": {
+        "description": "Hands the scan's job (its targets) out exactly once.",
+        "operationId": "keyscan_job_internal_keyscans__scan_id__job_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scan_id",
+            "required": true,
+            "schema": {
+              "title": "Scan Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-claim-token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "title": "X-Claim-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Keyscan Job Internal Keyscans  Scan Id  Job Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Keyscan Job"
       }
     },
     "/internal/lints/{lint_id}/complete": {
