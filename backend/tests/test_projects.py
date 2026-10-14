@@ -344,6 +344,8 @@ def test_every_project_scoped_route_with_an_id_is_covered_by_the_idor_matrix() -
         ("POST", "/api/projects/{project_id}/api-keys"),
         ("DELETE", "/api/projects/{project_id}/api-keys/{key_id}"),
         ("POST", "/api/projects/{project_id}/api-keys/{key_id}/rotate"),
+        # tests/test_api_key_limits.py (incl. another project's key)
+        ("PATCH", "/api/projects/{project_id}/api-keys/{key_id}"),
         # notification channels: tests/test_notifications.py (incl. another project's channel)
         ("GET", "/api/projects/{project_id}/notifications/channels"),
         ("POST", "/api/projects/{project_id}/notifications/channels"),

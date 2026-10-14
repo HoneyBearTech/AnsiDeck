@@ -109,6 +109,16 @@ export interface ApiKey {
   // suspended: its creator is deactivated, deleted, or can no longer manage this project's keys.
   status: "active" | "suspended" | "expired" | "revoked";
   suspended_because?: string | null;
+  // Optional limits (null: any): addresses it may be used from, playbooks and inventories it may run.
+  allowed_networks: string[] | null;
+  allowed_playbooks: { id: number; name: string }[] | null;
+  allowed_inventories: { id: number; name: string }[] | null;
+}
+
+export interface ApiKeyLimits {
+  allowed_networks: string[] | null;
+  allowed_playbook_ids: number[] | null;
+  allowed_inventory_ids: number[] | null;
 }
 
 // The plaintext token only ever exists in this creation response.
@@ -855,6 +865,7 @@ export const api = {
     preset: ApiKeyPreset,
     expiresInDays: number,
     currentPassword?: string,
+    limits?: ApiKeyLimits,
   ) =>
     request<ApiKeyCreated>(`/projects/${projectId}/api-keys`, {
       method: "POST",
@@ -863,7 +874,13 @@ export const api = {
         preset,
         expires_in_days: expiresInDays,
         ...(currentPassword ? { current_password: currentPassword } : {}),
+        ...limits,
       }),
+    }),
+  updateApiKeyLimits: (projectId: number, keyId: number, limits: ApiKeyLimits) =>
+    request<ApiKey>(`/projects/${projectId}/api-keys/${keyId}`, {
+      method: "PATCH",
+      body: JSON.stringify(limits),
     }),
   rotateApiKey: (projectId: number, keyId: number, currentPassword?: string) =>
     request<ApiKeyCreated>(`/projects/${projectId}/api-keys/${keyId}/rotate`, {

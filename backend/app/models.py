@@ -151,6 +151,13 @@ class ApiKey(Base):
     last_used_ip: Mapped[str | None] = mapped_column(String(64), default=None)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     revoked_by: Mapped[str | None] = mapped_column(String(150), default=None)
+    # Optional limits (None: any): the addresses (CIDRs) it may be used from, and the playbooks
+    # and inventories it may start runs of (app.api_keys).
+    allowed_networks: Mapped[list | None] = mapped_column(JSON(none_as_null=True), default=None)
+    allowed_playbook_ids: Mapped[list | None] = mapped_column(JSON(none_as_null=True), default=None)
+    allowed_inventory_ids: Mapped[list | None] = mapped_column(
+        JSON(none_as_null=True), default=None
+    )
 
 
 CREDENTIAL_KINDS = ("ssh", "env")

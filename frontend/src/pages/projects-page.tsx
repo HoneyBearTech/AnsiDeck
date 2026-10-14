@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { ApiKeyLimitsEditor, ApiKeyLimitsSummary } from "@/components/api-key-limits";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,7 @@ import {
   ApiError,
   type ApiKey,
   type ApiKeyCreated,
+  type ApiKeyLimits,
   type ApiKeyPreset,
   type ProjectMember,
   type ProjectSummary,
@@ -258,6 +260,23 @@ const KEY_STATUS_VARIANT = {
 // Mirrors the server's rule; it stays the real check.
 const KEY_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 
+const NO_LIMITS: ApiKeyLimits = { allowed_networks: null, allowed_playbook_ids: null, allowed_inventory_ids: null };
+
+/** "Only some" with none picked would mean no limit at all to the API. */
+function limitsProblem(limits: ApiKeyLimits): string | null {
+  if (limits.allowed_playbook_ids?.length === 0) return "Pick the playbooks it may run, or untick Only some.";
+  if (limits.allowed_inventory_ids?.length === 0) return "Pick the inventories it may use, or untick Only some.";
+  return null;
+}
+
+function limitsOf(key: ApiKey): ApiKeyLimits {
+  return {
+    allowed_networks: key.allowed_networks,
+    allowed_playbook_ids: key.allowed_playbooks?.map((p) => p.id) ?? null,
+    allowed_inventory_ids: key.allowed_inventories?.map((i) => i.id) ?? null,
+  };
+}
+
 function formatWhen(value: string | null): string {
   return value ? new Date(value).toLocaleString() : "never";
 }
@@ -283,6 +302,11 @@ function ApiKeysPanel({ project }: { project: ProjectSummary }) {
   const [rotateError, setRotateError] = React.useState<string | null>(null);
   const [rotateBusy, setRotateBusy] = React.useState(false);
   const [rotated, setRotated] = React.useState(false);
+  const [createLimits, setCreateLimits] = React.useState<ApiKeyLimits | null>(null);
+  // The key whose limits are being edited, and the draft.
+  const [limiting, setLimiting] = React.useState<ApiKey | null>(null);
+  const [limitsDraft, setLimitsDraft] = React.useState<ApiKeyLimits>(NO_LIMITS);
+  const [limitsError, setLimitsError] = React.useState<string | null>(null);
 
   const refresh = React.useCallback(() => {
     api
@@ -298,6 +322,11 @@ function ApiKeysPanel({ project }: { project: ProjectSummary }) {
 
   async function handleCreate() {
     setError(null);
+    const problem = createLimits && limitsProblem(createLimits);
+    if (problem) {
+      setError(problem);
+      return;
+    }
     setCreating(true);
     try {
       const key = await api.createApiKey(
@@ -306,9 +335,11 @@ function ApiKeysPanel({ project }: { project: ProjectSummary }) {
         preset,
         Number(days),
         password || undefined,
+        createLimits ?? undefined,
       );
       setName("");
       setPassword("");
+      setCreateLimits(null);
       setCopied(false);
       setRotated(false);
       setCreated(key);
@@ -317,6 +348,28 @@ function ApiKeysPanel({ project }: { project: ProjectSummary }) {
       setError(errorMessage(err));
     } finally {
       setCreating(false);
+    }
+  }
+
+  function openLimits(key: ApiKey) {
+    setLimitsDraft(limitsOf(key));
+    setLimitsError(null);
+    setLimiting(key);
+  }
+
+  async function handleSaveLimits() {
+    if (!limiting) return;
+    const problem = limitsProblem(limitsDraft);
+    if (problem) {
+      setLimitsError(problem);
+      return;
+    }
+    try {
+      await api.updateApiKeyLimits(project.id, limiting.id, limitsDraft);
+      setLimiting(null);
+      refresh();
+    } catch (err) {
+      setLimitsError(errorMessage(err));
     }
   }
 
@@ -393,9 +446,13 @@ function ApiKeysPanel({ project }: { project: ProjectSummary }) {
             {key.status === "suspended" && key.suspended_because && (
               <span className="text-xs text-status-changed">Not working: {key.suspended_because}.</span>
             )}
+            <ApiKeyLimitsSummary apiKey={key} />
           </div>
           {(key.status === "active" || key.status === "suspended") && (
             <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => openLimits(key)}>
+                Limits
+              </Button>
               <Button variant="outline" size="sm" onClick={() => openRotate(key)}>
                 Rotate
               </Button>
@@ -453,18 +510,61 @@ function ApiKeysPanel({ project }: { project: ProjectSummary }) {
           />
         </div>
         <Button
+          variant="outline"
+          onClick={() => setCreateLimits((current) => (current === null ? NO_LIMITS : null))}
+          aria-expanded={createLimits !== null}
+        >
+          {createLimits === null ? "Add limits" : "No limits"}
+        </Button>
+        <Button
           onClick={handleCreate}
           disabled={creating || !KEY_NAME_PATTERN.test(name.trim()) || (!ssoSession && !password)}
         >
           Create key
         </Button>
       </div>
+      {createLimits !== null && (
+        <div className="rounded-md border border-border p-3">
+          <ApiKeyLimitsEditor
+            projectId={project.id}
+            idPrefix={`new-key-${project.id}`}
+            value={createLimits}
+            onChange={setCreateLimits}
+          />
+        </div>
+      )}
       <p className="text-xs text-muted-foreground">
         {KEY_PRESET_HELP[preset]} Names use letters, digits, dots, dashes and underscores.{" "}
         {ssoSession
           ? "Signed in with single sign-on: within 15 minutes of signing in, no password is needed."
           : "A key outlives your session, so creating one asks for your password."}
       </p>
+
+      <Dialog open={limiting !== null} onOpenChange={(open) => !open && setLimiting(null)}>
+        {limiting && (
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Limits of &ldquo;{limiting.name}&rdquo;</DialogTitle>
+              <DialogDescription>
+                Change where the key may be used from and what it may run. The key itself stays the same, and
+                the change applies to its next request.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="-mx-1 max-h-[60vh] overflow-y-auto px-1">
+              <ApiKeyLimitsEditor
+                projectId={project.id}
+                idPrefix={`key-${limiting.id}`}
+                value={limitsDraft}
+                onChange={setLimitsDraft}
+              />
+            </div>
+            {limitsError && <p className="text-sm text-destructive">{limitsError}</p>}
+            <DialogFooter>
+              <Button onClick={handleSaveLimits}>Save limits</Button>
+            </DialogFooter>
+          </DialogContent>
+        )}
+      </Dialog>
 
       <Dialog open={rotating !== null} onOpenChange={(open) => !open && setRotating(null)}>
         {rotating && (
