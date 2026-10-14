@@ -31,6 +31,8 @@ class RunTemplateIn(BaseModel):
     limit: str | None = Field(None, max_length=500)
     extra_vars: dict[str, Any] | None = None
     timeout_seconds: int = Field(DEFAULT_RUN_TIMEOUT_SECONDS, ge=1, le=MAX_RUN_TIMEOUT_SECONDS)
+    # Refresh the inventory's sources before each launch; None: as the inventory says.
+    refresh_first: bool | None = None
 
     @field_validator("name")
     @classmethod
@@ -51,6 +53,7 @@ class RunTemplateLaunch(BaseModel):
 
     limit: str | None = Field(None, max_length=500)
     check_mode: bool | None = None
+    refresh_first: bool | None = None
 
 
 class RunTemplateOut(BaseModel):
@@ -75,6 +78,7 @@ class RunTemplateOut(BaseModel):
     limit: str | None
     extra_vars: dict[str, Any] | None
     timeout_seconds: int
+    refresh_first: bool | None = None
     created_by: str
     updated_by: str
     created_at: datetime

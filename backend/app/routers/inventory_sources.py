@@ -235,12 +235,12 @@ def update_refresh_settings(
     db: Session = Depends(get_db),
 ) -> Targets:
     inventory = _inventory(db, user, request, inventory_id, Permission.SOURCES_MANAGE)
-    inventory.refresh_interval_seconds = payload.refresh_interval_seconds
+    changed = payload.model_dump(exclude_none=True)
+    for field, value in changed.items():
+        setattr(inventory, field, value)
     db.commit()
-    _audit(
-        db, "inventory.refresh_settings", user, request, inventory,
-        refresh_interval_seconds=payload.refresh_interval_seconds,
-    )  # fmt: skip
+    if changed:
+        _audit(db, "inventory.refresh_settings", user, request, inventory, **changed)
     return _targets(db, inventory)
 
 
@@ -418,6 +418,7 @@ def _targets(db: Session, inventory: Inventory) -> Targets:
         snapshot_at=current.created_at if current else None,
         last_refresh=RefreshOut.model_validate(last) if last else None,
         refresh_interval_seconds=inventory.refresh_interval_seconds,
+        refresh_before_run=inventory.refresh_before_run,
     )
 
 

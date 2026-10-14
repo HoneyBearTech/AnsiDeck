@@ -100,7 +100,35 @@ describe("new run", () => {
       limit: "web1",
       extra_vars: { release: "1.2" },
       timeout_seconds: 1800,
+      refresh_first: null,
     });
+  });
+
+  it("refreshes the inventory first as the inventory says, unless unticked", async () => {
+    const { api, user, screen } = renderApp("/runs/new", {
+      routes: {
+        ...TRIGGER,
+        "GET /inventories/:id/targets": targets({
+          has_sources: true,
+          snapshot_at: null,
+          refresh_before_run: true,
+        }),
+        "POST /runs": run({ id: 42, refresh_first: true }),
+        "GET /runs/:id": run({ id: 42, refresh_first: true, inventory_snapshot_at: "2026-10-14T12:00:00Z" }),
+      },
+    });
+    await screen.findByRole("heading", { name: "New run" });
+    await choose(user, screen.getByLabelText("Playbook"), "site.yml");
+    await choose(user, screen.getByLabelText("Inventory"), "lab");
+    await choose(user, screen.getByLabelText("Credential"), "deploy-key");
+    expect(await screen.findByText(/haven't been refreshed yet: refresh them first/)).toBeInTheDocument();
+    const box = screen.getByRole("checkbox", { name: /Refresh the dynamic sources first/ });
+    expect(box).toBeChecked(); // the inventory's default
+    await user.click(box);
+    await user.click(box);
+    await user.click(screen.getByRole("button", { name: "Start run" }));
+    expect(await screen.findByText(/^Inventory sources refreshed for this run: /)).toBeInTheDocument();
+    expect(api.requests("POST /runs")[0]?.body).toMatchObject({ refresh_first: true });
   });
 
   it("checks extra vars and the timeout, and shows refusals", async () => {

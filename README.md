@@ -276,7 +276,8 @@ An inventory can also get hosts and groups from **sources**: inventory plugin co
 key, for example `netbox.netbox.nb_inventory`, or `ansible.builtin.constructed` to group hosts by their vars).
 A refresh runs them with `ansible-inventory` in an isolated worker slot, together with the inventory's own
 hosts (so `constructed` can group those too; it reads their vars as plain text, never as templates), and keeps the result as a **snapshot**. Runs use the snapshot that
-is current when they are started; the inventory's own host vars win over a source's. A refresh happens when a
+is current when they are started, or wait for a refresh of their own when started with **Refresh the dynamic
+sources first** (the inventory's **Refresh before every run** ticks it by default); the inventory's own host vars win over a source's. A refresh happens when a
 source changes, when the inventory's own hosts or groups change, on demand, and on a schedule (at most every 5
 minutes). If a refresh fails, runs keep the last good snapshot and an **Inventory refresh failed** notification
 goes out once (and again when it works).

@@ -97,6 +97,7 @@ export function inventory(overrides: Partial<InventoryDetail> = {}): InventoryDe
     description: "The lab",
     project_id: 1,
     host_key_checking: "accept_new",
+    refresh_before_run: false,
     groups: [{ id: 1, name: "web" }],
     hosts: [{ id: 1, hostname: "web1.example", vars: { ansible_user: "deploy" }, group_ids: [1] }],
     ...overrides,
@@ -112,6 +113,7 @@ export function targets(overrides: Partial<InventoryTargets> = {}): InventoryTar
     snapshot_at: null,
     last_refresh: null,
     refresh_interval_seconds: 0,
+    refresh_before_run: false,
     ...overrides,
   };
 }
@@ -245,6 +247,7 @@ export function run(overrides: Partial<Run> = {}): Run {
     waiting_reason: null,
     inventory_snapshot_at: null,
     inventory_snapshot_hosts: null,
+    refresh_first: false,
     host_key_checking: "accept_new",
     host_key_problems: null,
     host_keys_learned: null,
@@ -344,6 +347,7 @@ export function runTemplate(overrides: Partial<RunTemplate> = {}): RunTemplate {
     limit: null,
     extra_vars: { greeting: "hi" },
     timeout_seconds: 3600,
+    refresh_first: null,
     missing: [],
     created_by: "admin",
     updated_by: "admin",

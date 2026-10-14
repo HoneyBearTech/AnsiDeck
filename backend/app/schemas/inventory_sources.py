@@ -43,12 +43,14 @@ class SourceOut(BaseModel):
 class RefreshSettings(BaseModel):
     """0: refreshed only on demand (and when sources or the inventory's hosts change)."""
 
-    refresh_interval_seconds: int = Field(ge=0, le=MAX_INTERVAL_SECONDS)
+    refresh_interval_seconds: int | None = Field(None, ge=0, le=MAX_INTERVAL_SECONDS)
+    # Runs refresh the sources first unless whoever starts one unticks it. None keeps it.
+    refresh_before_run: bool | None = None
 
     @field_validator("refresh_interval_seconds")
     @classmethod
-    def _sensible(cls, value: int) -> int:
-        if 0 < value < MIN_INTERVAL_SECONDS:
+    def _sensible(cls, value: int | None) -> int | None:
+        if value is not None and 0 < value < MIN_INTERVAL_SECONDS:
             raise ValueError(f"refresh at most every {MIN_INTERVAL_SECONDS} seconds")
         return value
 
@@ -136,3 +138,4 @@ class Targets(BaseModel):
     snapshot_at: datetime | None
     last_refresh: RefreshOut | None
     refresh_interval_seconds: int
+    refresh_before_run: bool = False

@@ -209,6 +209,20 @@ describe("dynamic inventory sources", () => {
     expect(api.calls.some((c) => c.path === "/inventories/1/hosts" && c.query.get("q") === "zzz")).toBe(true);
   });
 
+  it("lets project admins make runs refresh the sources first", async () => {
+    const { api, user, screen } = renderApp("/inventories/1", {
+      routes: detail({
+        "GET /inventories/:id/sources": [inventorySource()],
+        "GET /inventories/:id/targets": targets({ has_sources: true }),
+        "PUT /inventories/:id/refresh-settings": targets({ has_sources: true, refresh_before_run: true }),
+      }),
+    });
+    const toggle = await screen.findByRole("switch", { name: "Refresh before every run" });
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    expect(api.requests("PUT /inventories/1/refresh-settings")[0]?.body).toEqual({ refresh_before_run: true });
+  });
+
   it("refreshes now, polls until the refresh ends, and sets the schedule", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

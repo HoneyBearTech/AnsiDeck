@@ -8,7 +8,9 @@ Rules, in this order:
 - per inventory, runs start in the order they were queued: only the oldest queued run of an
   inventory may be claimed, so a busy inventory's runs can't overtake each other;
 - a run whose inventory checks SSH host keys goes only to a worker that does (one from before
-  app.host_keys would run it unchecked). Its mode is fixed when it is claimed.
+  app.host_keys would run it unchecked). Its mode is fixed when it is claimed;
+- a run that refreshes its inventory first waits for that refresh (which then pins its
+  snapshot, or fails it).
 Inventory refreshes, playbook checks (lints) and host key scans are claimed the same way, before
 runs.
 """
@@ -28,7 +30,7 @@ from app import metrics
 from app.config import get_settings
 from app.db import GALAXY_GATE_KEY, LINT_CLAIM_KEY
 from app.jobs import unrunnable_reason
-from app.models import GalaxyInstall, Inventory, Run, RunStatus, Worker
+from app.models import GalaxyInstall, Inventory, InventoryRefresh, Run, RunStatus, Worker
 from app.notifications.events import run_finished
 from app.notifications.ops import worker_seen
 from app.notify import notifier, run_topic
@@ -51,6 +53,9 @@ _CLAIM = text(
           AND NOT EXISTS (
               SELECT 1 FROM runs busy
               WHERE busy.inventory_id = r.inventory_id AND busy.status = 'running')
+          AND NOT EXISTS (
+              SELECT 1 FROM inventory_refreshes f
+              WHERE f.id = r.waiting_refresh_id AND f.status IN ('queued', 'running'))
           AND (:host_keys OR NOT EXISTS (
               SELECT 1 FROM inventories i
               WHERE i.id = r.inventory_id AND i.host_key_checking <> 'off'))
@@ -258,6 +263,10 @@ def wait_reason(db: Session, run: Run) -> str:
     """Why a queued run hasn't started yet, in the claim rules' order."""
     if install_pending(db):
         return "Waiting for a galaxy install to finish"
+    if run.waiting_refresh_id is not None and db.scalar(
+        select(InventoryRefresh.status).where(InventoryRefresh.id == run.waiting_refresh_id)
+    ) in (RunStatus.QUEUED.value, RunStatus.RUNNING.value):
+        return "Waiting for its inventory's sources to be refreshed"
     if run.inventory_id is not None:
         # The run right ahead of it on the same inventory: the last earlier queued one, or else
         # the one running there now.

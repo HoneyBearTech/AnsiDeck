@@ -179,6 +179,7 @@ export interface InventorySummary {
   project_id: number;
   // How runs treat SSH host keys (project admins change it under Host keys).
   host_key_checking: HostKeyMode;
+  refresh_before_run: boolean;
 }
 
 export type HostKeyMode = "off" | "accept_new" | "strict";
@@ -349,6 +350,8 @@ export interface InventoryTargets {
   snapshot_at: string | null;
   last_refresh: InventoryRefresh | null;
   refresh_interval_seconds: number;
+  // Runs refresh the sources first unless whoever starts one unticks it.
+  refresh_before_run: boolean;
 }
 
 // How an inventory's groups nest (its own and its sources'): names, edges and counts only.
@@ -505,6 +508,8 @@ export interface Run {
   hosts_unreachable: number | null;
   // Why a queued run hasn't started (getRun only; null otherwise).
   waiting_reason: string | null;
+  // It refreshed its inventory's sources first (waiting for that refresh while queued).
+  refresh_first: boolean;
   // Runs on an inventory with sources: when the snapshot it used was refreshed, and its hosts.
   inventory_snapshot_at: string | null;
   inventory_snapshot_hosts: number | null;
@@ -533,6 +538,9 @@ export interface RunRequest {
   limit: string | null;
   extra_vars: Record<string, unknown> | null;
   timeout_seconds: number;
+  // Refresh the inventory's dynamic sources first (the run fails if that refresh does); null: as
+  // the inventory's "refresh before every run" says.
+  refresh_first?: boolean | null;
 }
 
 export interface RunTemplateInput extends RunRequest {
@@ -561,6 +569,7 @@ export interface RunTemplate {
   limit: string | null;
   extra_vars: Record<string, unknown> | null;
   timeout_seconds: number;
+  refresh_first: boolean | null;
   missing: string[];
   created_by: string;
   updated_by: string;
@@ -979,6 +988,11 @@ export const api = {
     request<InventoryTargets>(`/inventories/${id}/refresh-settings`, {
       method: "PUT",
       body: JSON.stringify({ refresh_interval_seconds: seconds }),
+    }),
+  setInventoryRefreshBeforeRun: (id: number, on: boolean) =>
+    request<InventoryTargets>(`/inventories/${id}/refresh-settings`, {
+      method: "PUT",
+      body: JSON.stringify({ refresh_before_run: on }),
     }),
 
   /** The keys, and a page of hosts: those without a trusted key with `untrusted`, filtered by `q`. */

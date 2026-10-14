@@ -136,6 +136,7 @@ describe("edit and run", () => {
       limit: "web2",
       extra_vars: { release: "1.2" },
       timeout_seconds: 1800,
+      refresh_first: false,
     });
   });
 
@@ -286,6 +287,7 @@ describe("saving templates from the form", () => {
       limit: null,
       extra_vars: { greeting: "hi", db_password: "[REDACTED]" },
       timeout_seconds: 3600,
+      refresh_first: null,
     });
   });
 

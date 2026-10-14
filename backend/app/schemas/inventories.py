@@ -21,6 +21,8 @@ class InventorySummary(BaseModel):
     project_id: int
     # How runs treat SSH host keys: off, accept_new, strict (app.host_keys).
     host_key_checking: str
+    # Runs refresh the dynamic sources first unless whoever starts one unticks it.
+    refresh_before_run: bool = False
 
 
 class GroupCreate(BaseModel):

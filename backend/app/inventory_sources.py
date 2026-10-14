@@ -518,6 +518,43 @@ def prune_snapshots(db: Session) -> int:
     return len(doomed)
 
 
+def _release_waiting_runs(
+    db: Session, refresh: InventoryRefresh, status: str, error: str | None
+) -> None:
+    """The runs that asked for this refresh: they get the snapshot it made (their target group
+    checked again), or fail with it. The caller commits; the queue is woken after."""
+    from app.inventory_render import merge
+    from app.queue import fail_run
+
+    waiting = db.scalars(
+        select(Run)
+        .where(Run.waiting_refresh_id == refresh.id, Run.status == RunStatus.QUEUED.value)
+        .order_by(Run.id)
+        .with_for_update()
+    ).all()
+    snapshot = (
+        db.get(InventorySnapshot, refresh.snapshot_id)
+        if status == RunStatus.SUCCESS.value and refresh.snapshot_id is not None
+        else None
+    )
+    for run in waiting:
+        if snapshot is None:
+            why = (error or status.replace("_", " ")).splitlines()[0][:300]
+            fail_run(run, RunStatus.FAILED, f"not run: the inventory refresh failed: {why}")
+            continue
+        graph = merge(run.inventory_static or {"hosts": {}, "groups": {}}, snapshot.data)
+        if run.group_name is not None and run.group_name not in graph["groups"]:
+            fail_run(
+                run,
+                RunStatus.FAILED,
+                f"not run: its target group {run.group_name!r} is not in the refreshed inventory",
+            )
+            continue
+        run.inventory_snapshot_id = snapshot.id
+        run.inventory_snapshot_at = snapshot.created_at
+        run.inventory_snapshot_hosts = snapshot.host_count
+
+
 def end_refresh(
     db: Session, refresh: InventoryRefresh, status: str, error: str | None = None
 ) -> dict | None:
@@ -538,6 +575,7 @@ def end_refresh(
     if refresh.started_at is not None:
         seconds = (db.scalar(select(func.now())) - refresh.started_at).total_seconds()
     metrics.inventory_refresh_finished(status, seconds)
+    _release_waiting_runs(db, refresh, status, error)
     inventory = db.get(Inventory, refresh.inventory_id)
     if inventory is None:
         return None

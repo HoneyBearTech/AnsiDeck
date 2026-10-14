@@ -2492,6 +2492,11 @@
           "project_id": {
             "title": "Project Id",
             "type": "integer"
+          },
+          "refresh_before_run": {
+            "default": false,
+            "title": "Refresh Before Run",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2591,6 +2596,11 @@
           "project_id": {
             "title": "Project Id",
             "type": "integer"
+          },
+          "refresh_before_run": {
+            "default": false,
+            "title": "Refresh Before Run",
+            "type": "boolean"
           }
         },
         "required": [
@@ -3755,16 +3765,31 @@
       "RefreshSettings": {
         "description": "0: refreshed only on demand (and when sources or the inventory's hosts change).",
         "properties": {
+          "refresh_before_run": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Before Run"
+          },
           "refresh_interval_seconds": {
-            "maximum": 604800.0,
-            "minimum": 0.0,
-            "title": "Refresh Interval Seconds",
-            "type": "integer"
+            "anyOf": [
+              {
+                "maximum": 604800.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Interval Seconds"
           }
         },
-        "required": [
-          "refresh_interval_seconds"
-        ],
         "title": "RefreshSettings",
         "type": "object"
       },
@@ -3864,6 +3889,17 @@
           "playbook_id": {
             "title": "Playbook Id",
             "type": "integer"
+          },
+          "refresh_first": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh First"
           },
           "timeout_seconds": {
             "default": 7200,
@@ -4212,6 +4248,11 @@
             "title": "Queued At",
             "type": "string"
           },
+          "refresh_first": {
+            "default": false,
+            "title": "Refresh First",
+            "type": "boolean"
+          },
           "return_code": {
             "anyOf": [
               {
@@ -4435,6 +4476,17 @@
             "title": "Playbook Id",
             "type": "integer"
           },
+          "refresh_first": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh First"
+          },
           "timeout_seconds": {
             "default": 7200,
             "maximum": 86400.0,
@@ -4488,6 +4540,17 @@
               }
             ],
             "title": "Limit"
+          },
+          "refresh_first": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh First"
           }
         },
         "title": "RunTemplateLaunch",
@@ -4646,6 +4709,17 @@
           "project_id": {
             "title": "Project Id",
             "type": "integer"
+          },
+          "refresh_first": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh First"
           },
           "timeout_seconds": {
             "title": "Timeout Seconds",
@@ -5324,6 +5398,11 @@
                 "type": "null"
               }
             ]
+          },
+          "refresh_before_run": {
+            "default": false,
+            "title": "Refresh Before Run",
+            "type": "boolean"
           },
           "refresh_interval_seconds": {
             "title": "Refresh Interval Seconds",
@@ -14574,7 +14653,7 @@
     },
     "/api/run-templates/{template_id}/launch": {
       "post": {
-        "description": "Starts a run from the template, as its items are now. `limit` and `check_mode` may be\nchanged for this run only. The caller needs the same permissions as for starting the run\ndirectly (become included).",
+        "description": "Starts a run from the template, as its items are now. `limit`, `check_mode` and\n`refresh_first` may be changed for this run only. The caller needs the same permissions as\nfor starting the run directly (become included).",
         "operationId": "launch_template_api_run_templates__template_id__launch_post",
         "parameters": [
           {

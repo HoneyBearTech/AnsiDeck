@@ -363,6 +363,14 @@ export function InventorySourcesPanel({
                     ))}
                   </SelectContent>
                 </Select>
+                <Switch
+                  id="refresh-before-run"
+                  checked={targets?.refresh_before_run ?? false}
+                  onCheckedChange={(on) => act(() => api.setInventoryRefreshBeforeRun(inventoryId, on))}
+                />
+                <Label htmlFor="refresh-before-run" className="text-xs text-muted-foreground">
+                  Refresh before every run
+                </Label>
               </div>
             ) : null}
           </div>
