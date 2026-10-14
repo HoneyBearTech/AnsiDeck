@@ -184,6 +184,9 @@ class Settings(BaseSettings):
     secrets_store_project_policy: str = ""
     secrets_store_timeout_seconds: float = Field(8.0, ge=2.0, le=10.0)
     secrets_store_label: str = "OpenBao"
+    # Optional: the store's SSH secrets engine mounts (comma list) that "SSH certificate"
+    # credentials may sign with (app.ssh_certificates). Empty: that kind isn't offered.
+    secrets_store_ssh_mounts: str = ""
 
     # Test-only escape hatch: lets requirements.yml reference local tarballs/dirs
     # so tests can install offline. Must stay False in any real deployment —
@@ -308,9 +311,15 @@ class Settings(BaseSettings):
     def secrets_store_enabled(self) -> bool:
         return bool(self.secrets_store_url)
 
+    @property
+    def secrets_store_ssh_mount_list(self) -> list[str]:
+        return [part.strip() for part in self.secrets_store_ssh_mounts.split(",") if part.strip()]
+
     @model_validator(mode="after")
     def _validate_secrets_store(self) -> "Settings":
         if not self.secrets_store_url:
+            if self.secrets_store_ssh_mount_list:
+                raise ValueError("SECRETS_STORE_SSH_MOUNTS needs SECRETS_STORE_URL")
             return self
         url = urlsplit(self.secrets_store_url)
         if url.scheme not in ("https", "http") or not url.hostname:
@@ -326,6 +335,12 @@ class Settings(BaseSettings):
                      "secrets_store_approle_mount"):  # fmt: skip
             if not segment.match(getattr(self, name)):
                 raise ValueError(f"{name.upper()} must be one path segment (letters, digits, ._-)")
+        mounts = self.secrets_store_ssh_mount_list
+        if len(mounts) > 8 or not all(segment.match(mount) for mount in mounts):
+            raise ValueError(
+                "SECRETS_STORE_SSH_MOUNTS must be up to 8 mounts, each one path segment "
+                "(letters, digits, ._-)"
+            )
         if self.secrets_store_namespace and not all(
             segment.match(part) for part in self.secrets_store_namespace.split("/")
         ):

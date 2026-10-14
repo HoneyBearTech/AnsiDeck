@@ -132,6 +132,11 @@
             "title": "Slots",
             "type": "integer"
           },
+          "ssh_certificates": {
+            "default": false,
+            "title": "Ssh Certificates",
+            "type": "boolean"
+          },
           "wait_seconds": {
             "default": 25.0,
             "maximum": 25.0,
@@ -703,6 +708,11 @@
             "minimum": 1.0,
             "title": "Slots",
             "type": "integer"
+          },
+          "ssh_certificates": {
+            "default": false,
+            "title": "Ssh Certificates",
+            "type": "boolean"
           },
           "worker_id": {
             "maxLength": 255,

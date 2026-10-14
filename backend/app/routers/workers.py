@@ -35,6 +35,7 @@ def list_workers(db: Session = Depends(get_db)) -> list[WorkerOut]:
             egress_filtered=worker.egress_filtered,
             host_keys=worker.host_keys,
             egress_allowlist=worker.egress_allowlist,
+            ssh_certificates=worker.ssh_certificates,
             running=busy,
             online=online,
             first_seen_at=worker.first_seen_at,

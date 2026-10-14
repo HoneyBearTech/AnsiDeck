@@ -14,7 +14,8 @@
   refresh. **Refresh the dynamic sources first** makes the run wait for a refresh started with it and run
   with what that refresh finds; the run fails (without running) if the refresh fails, or if its target
   group isn't in what the refresh found. It is ticked when the inventory says **Refresh before every run**.
-- **Credential**: the SSH key to connect with.
+- **Credential**: the SSH key to connect with, or an SSH certificate credential (marked "certificate"):
+  the run then gets a new key and a certificate valid for its timeout plus 5 minutes.
 - **Vault password** (optional): needed if the playbook or extra vars contain vault-encrypted values.
 - **Environment credentials** (optional, up to 5): environment-variable credentials whose variables the
   playbook gets in its environment, for cloud modules (AWS keys, API tokens). Two of them may not set the
@@ -77,6 +78,15 @@ of them needs an extra entry on the inventory. A run that doesn't start with "no
 network egress, and ..." names the hosts whose address isn't known before the run, or the names that don't
 resolve on the worker.
 
+## SSH certificates
+
+A run with an SSH certificate credential shows the certificate it got: its serial (the number targets' sshd
+logs show, as `Accepted publickey ... (serial N)`), the users it may log in as, when it expires and the CA's
+fingerprint; **download** saves the certificate itself (for `ssh-keygen -L`, or to revoke it on targets). If
+the store's role allows shorter certificates than the run's timeout, the page warns that connections the run
+opens after that time fail. A run that couldn't get a certificate fails without running, with the store's
+reason ("not run: could not get an SSH certificate for credential 'web' from OpenBao: ...").
+
 ## Artifacts
 
 Files a run produces (reports, backups, collected configs) can be kept with it: put them in the run's
@@ -103,8 +113,10 @@ the list stays.
 
 Runs wait in a queue until a worker slot is free. A queued run's page says what it waits for: a free
 worker, the run ahead of it on the same inventory, a Galaxy install, no worker being online at all, or a
-worker new enough to check SSH host keys (the Workers page marks older ones "no host key checks"), or one
-that can limit a run's network (for inventories whose runs may reach only their hosts).
+worker new enough to check SSH host keys (the Workers page marks older ones "no host key checks"), one
+that can limit a run's network (for inventories whose runs may reach only their hosts), or one that loads SSH
+certificates (for runs with an SSH certificate credential; the Workers page marks older ones "no SSH
+certificates").
 
 - Runs against the same inventory go one at a time, in the order they were started.
 - While a Galaxy install waits or runs, no new run starts.

@@ -6,6 +6,10 @@ class SecretStoreInfo(BaseModel):
     label: str
     base_path: str | None  # e.g. secret/ansideck/7/: every reference of the project is below
     path_rules: str
+    # SSH engine mounts SSH certificate credentials may use (SECRETS_STORE_SSH_MOUNTS; empty:
+    # that kind isn't offered), and what the project's role names start with ("ansideck-7-").
+    ssh_mounts: list[str] = []
+    ssh_role_prefix: str | None = None
 
 
 class SecretStoreStatus(BaseModel):

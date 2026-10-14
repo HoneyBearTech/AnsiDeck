@@ -464,7 +464,7 @@ export interface SecretRef {
   store_location: string | null;
 }
 
-export type CredentialKind = "ssh" | "env";
+export type CredentialKind = "ssh" | "env" | "ssh_cert";
 
 export interface Credential extends SecretRef {
   id: number;
@@ -472,10 +472,41 @@ export interface Credential extends SecretRef {
   description: string | null;
   project_id: number;
   created_at: string;
-  // "ssh": a private key (runs, git deploy keys); "env": named variables for inventory plugins.
+  // "ssh": a private key (runs, git deploy keys); "env": named variables for inventory plugins;
+  // "ssh_cert": no secret, each run gets a new key and a certificate the secret store signs.
   kind: CredentialKind;
   // An env credential's variable names (never values); null when they live in the store.
   env_names: string[] | null;
+  // An SSH certificate credential: the store's SSH engine mount, the project-local role name and
+  // the store's role it stands for ("ansideck-7-web"), and the users it may log in as.
+  ssh_mount?: string | null;
+  ssh_role?: string | null;
+  ssh_role_full?: string | null;
+  ssh_principals?: string[] | null;
+}
+
+/** An SSH certificate the secret store signed, for a run or a credential's test. */
+export interface SshCertificateInfo {
+  // Decimal, as targets' sshd logs it.
+  serial: string;
+  serial_hex: string;
+  key_id: string;
+  principals: string[];
+  valid_after: string;
+  valid_before: string;
+  ca_fingerprint: string;
+  key_fingerprint: string;
+  location: string;
+  requested_seconds: number;
+  // The role's maximum TTL was shorter than asked for: the certificate expires sooner.
+  capped: boolean;
+}
+
+/** An SSH certificate credential's settings. */
+export interface SshCertSource {
+  mount: string;
+  role: string;
+  principals: string[];
 }
 
 /** An env credential's variables: entered here, or every key of one secret in the store. */
@@ -494,6 +525,8 @@ export interface SecretCheck {
   ok: boolean;
   version: number | null;
   env_names?: string[] | null;
+  // An SSH certificate credential: the test certificate the store signed.
+  certificate?: SshCertificateInfo | null;
   error_kind: string | null;
   error: string | null;
 }
@@ -503,6 +536,10 @@ export interface SecretStoreInfo {
   label: string;
   base_path: string | null;
   path_rules: string;
+  // SSH engine mounts SSH certificate credentials may use (empty: that kind isn't offered), and
+  // what this project's role names start with ("ansideck-7-").
+  ssh_mounts?: string[];
+  ssh_role_prefix?: string | null;
 }
 
 export interface SecretStoreStatus {
@@ -621,6 +658,8 @@ export interface Run {
   egress_restricted?: boolean | null;
   egress_addresses?: number | null;
   egress_refused?: EgressRefused[] | null;
+  // With an SSH certificate credential: the certificate its job got (runSshCertificateUrl serves it).
+  ssh_certificate?: SshCertificateInfo | null;
   // Runs of playbooks synced from git: the commit they execute and a link to it.
   git_source_name: string | null;
   git_commit: string | null;
@@ -801,6 +840,8 @@ export interface WorkerInfo {
   host_keys: boolean | null;
   // Whether it can limit runs to their inventory's hosts; restricted runs wait for such a worker.
   egress_allowlist?: boolean | null;
+  // Whether it loads SSH certificates; runs with a certificate credential wait for such a worker.
+  ssh_certificates?: boolean | null;
   running: number;
   online: boolean;
   first_seen_at: string;
@@ -1243,12 +1284,25 @@ export const api = {
       method: "DELETE",
     }),
 
-  listCredentials: (kind?: CredentialKind) => {
+  listCredentials: (kinds?: CredentialKind | CredentialKind[]) => {
     const query = new URLSearchParams();
     if (activeProjectId !== null) query.set("project_id", String(activeProjectId));
-    if (kind) query.set("kind", kind);
+    for (const kind of kinds === undefined ? [] : [kinds].flat()) query.append("kind", kind);
     return request<Credential[]>(`/credentials${query.size ? `?${query}` : ""}`);
   },
+  createSshCertCredential: (name: string, source: SshCertSource, description?: string) =>
+    request<Credential>("/credentials", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        description,
+        kind: "ssh_cert",
+        ssh_mount: source.mount,
+        ssh_role: source.role,
+        ssh_principals: source.principals,
+        project_id: activeProjectId ?? undefined,
+      }),
+    }),
   createEnvCredential: (name: string, source: EnvSource, description?: string) =>
     request<Credential>("/credentials", {
       method: "POST",
@@ -1354,6 +1408,7 @@ export const api = {
   runLogUrl: (id: number, format: RunLogFormat) => `${API_BASE_URL}/runs/${id}/log?format=${format}`,
   getRunArtifacts: (id: number) => request<RunArtifacts>(`/runs/${id}/artifacts`),
   runArtifactsUrl: (id: number) => `${API_BASE_URL}/runs/${id}/artifacts/download`,
+  runSshCertificateUrl: (id: number) => `${API_BASE_URL}/runs/${id}/ssh-certificate`,
   runArtifactUrl: (id: number, path: string) =>
     `${API_BASE_URL}/runs/${id}/artifacts/file?path=${encodeURIComponent(path)}`,
 

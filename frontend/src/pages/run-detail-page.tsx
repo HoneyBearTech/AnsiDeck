@@ -170,6 +170,31 @@ function EgressNote({ run }: { run: Run }) {
   );
 }
 
+// The short-lived SSH certificate the run logged in with: its serial is what targets' sshd logs show.
+function SshCertificateNote({ run }: { run: Run }) {
+  const certificate = run.ssh_certificate;
+  if (!certificate) return null;
+  const until = new Date(certificate.valid_before).toLocaleString();
+  return (
+    <div className="flex flex-col gap-1 text-sm text-muted-foreground">
+      <p className="wrap-anywhere">
+        SSH certificate (serial <span className="font-mono">{certificate.serial}</span>,{" "}
+        {certificate.principals.join(", ")}) valid until {until} · CA{" "}
+        <span className="font-mono">{certificate.ca_fingerprint}</span> ·{" "}
+        <a href={api.runSshCertificateUrl(run.id)} download className="text-primary hover:underline">
+          download
+        </a>
+      </p>
+      {certificate.capped && (
+        <p className="text-status-changed">
+          The SSH role allows shorter certificates than this run&apos;s timeout: connections it opens after{" "}
+          {until} fail.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // Connections a restricted run's network refused (the first 256 destinations).
 function EgressRefusedCard({ run }: { run: Run }) {
   const { canInProject } = useAuth();
@@ -491,6 +516,7 @@ export function RunDetailPage() {
           )}
           {hostKeyNote(run) && <p className="text-sm text-muted-foreground">{hostKeyNote(run)}</p>}
           <EgressNote run={run} />
+          <SshCertificateNote run={run} />
           <StatusNote run={run} />
       </div>
 

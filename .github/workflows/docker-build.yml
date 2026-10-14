@@ -290,8 +290,10 @@ jobs:
         if: matrix.service == 'backend' && matrix.target == 'runtime'
         # An OpenBao dev server set up by backend/scripts/openbao_dev_setup.py (as the compose
         # openbao profile is; piped in, it isn't part of the image) keeps the smoke key. A run
-        # uses it and AnsiDeck stores it nowhere; with the store down the next run fails with
-        # its reason and raises the secrets.unavailable alert.
+        # uses it and AnsiDeck stores it nowhere; a run with an SSH certificate credential gets a
+        # fresh key and the store's certificate in its ssh-agent, and no private key is stored
+        # anywhere; with the store down the next run fails with its reason and raises the
+        # secrets.unavailable alert.
         run: |
           docker run -d --name smoke-bao --network smoke-net \
             -e BAO_DEV_ROOT_TOKEN_ID=ci-smoke-root -e BAO_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
@@ -311,6 +313,7 @@ jobs:
           SECRETS_STORE_ROLE_ID=ansideck-dev
           SECRETS_STORE_SECRET_ID_FILE=/data/openbao/secret_id
           SECRETS_STORE_PROJECT_POLICY=ansideck-project-{project_id}
+          SECRETS_STORE_SSH_MOUNTS=ssh
           ENV
           docker rm -f smoke
           # Something else takes the API's old address, so the new API gets another one: the
@@ -333,10 +336,12 @@ jobs:
             || { docker logs smoke-worker; exit 1; }
           python3 backend/scripts/smoke_run.py http://localhost:8000 ci-test --store-path smoke/ssh \
             --check-egress smoke || { docker logs smoke-worker; docker logs smoke; exit 1; }
+          python3 backend/scripts/smoke_run.py http://localhost:8000 ci-test --ssh-cert dev:ansible \
+            || { docker logs smoke-worker; docker logs smoke; exit 1; }
           marker=$(sed -n 2p "$RUNNER_TEMP/smoke_key")
           if { docker exec smoke-db pg_dump -U ansideck ansideck; docker logs smoke 2>&1;
-               docker logs smoke-worker 2>&1; } | grep -qF -- "$marker"; then
-            echo "the stored key is in the database or the logs"; exit 1
+               docker logs smoke-worker 2>&1; } | grep -qF -e "$marker" -e "OPENSSH PRIVATE KEY"; then
+            echo "a private key is in the database or the logs"; exit 1
           fi
           docker stop smoke-bao
           python3 backend/scripts/smoke_run.py http://localhost:8000 ci-test --store-path smoke/ssh \

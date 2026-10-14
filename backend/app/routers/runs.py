@@ -17,7 +17,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -56,6 +56,7 @@ from app.permissions import (
 from app.queue import QUEUE_TOPIC, fail_run, wait_reason
 from app.schemas.runs import ArtifactsOut, RunCreate, RunEgressOut, RunOut
 from app.scoping import get_scoped, readable_project_ids
+from app.ssh_certificates import run_credential_problem
 from app.storage import playbook_path, run_artifacts_path, run_log_path
 
 router = APIRouter()
@@ -353,8 +354,8 @@ def queue_run(
         "Credential not found",
     )
     _require_same_project(credential, project_id, "Credential")
-    if credential.kind != "ssh":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A run needs an SSH key credential")
+    if problem := run_credential_problem(credential):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, problem)
 
     vault_password = None
     if payload.vault_password_id is not None:
@@ -711,6 +712,29 @@ def run_egress(
         restricted=bool(run.egress_restricted),
         allowlist=run.egress_allowlist,
         refused=run.egress_refused or [],
+    )
+
+
+@router.get(
+    "/{run_id}/ssh-certificate",
+    response_class=PlainTextResponse,
+    responses={200: {"content": {"text/plain": {}}}, 404: {"description": "No certificate"}},
+)
+def run_ssh_certificate(
+    run_id: int,
+    request: Request,
+    user: User = Depends(_user_guard),
+    db: Session = Depends(get_db),
+) -> PlainTextResponse:
+    """The SSH certificate a run's job got (public: its key, principals and the CA's signature),
+    e.g. for `ssh-keygen -L`, or to revoke it on targets with a KRL."""
+    run = get_scoped(db, user, request, Run, run_id, Permission.CONTENT_READ, "Run not found")
+    certificate = (run.ssh_certificate or {}).get("certificate")
+    if not certificate:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "This run has no SSH certificate")
+    return PlainTextResponse(
+        certificate.strip() + "\n",
+        headers={"Content-Disposition": f'attachment; filename="ansideck-run-{run.id}-cert.pub"'},
     )
 
 

@@ -20,6 +20,7 @@ import type {
   Run,
   RunTemplate,
   User,
+  SshCertificateInfo,
   VaultPassword,
 } from "@/lib/api";
 
@@ -190,6 +191,38 @@ export function credential(overrides: Partial<Credential> = {}): Credential {
     store_path: null,
     store_key: null,
     store_location: null,
+    ...overrides,
+  };
+}
+
+export function sshCertCredential(overrides: Partial<Credential> = {}): Credential {
+  return credential({
+    id: 5,
+    name: "web-cert",
+    kind: "ssh_cert",
+    store: "external",
+    store_location: "ssh/sign/ansideck-1-web",
+    ssh_mount: "ssh",
+    ssh_role: "web",
+    ssh_role_full: "ansideck-1-web",
+    ssh_principals: ["deploy", "ansible"],
+    ...overrides,
+  });
+}
+
+export function sshCertificate(overrides: Partial<SshCertificateInfo> = {}): SshCertificateInfo {
+  return {
+    serial: "6109869050348158858",
+    serial_hex: "54ca9d87a227bf8a",
+    key_id: "vault-token-ansideck-project-1-ab12",
+    principals: ["deploy"],
+    valid_after: "2026-10-05T11:59:30Z",
+    valid_before: "2026-10-05T14:05:00Z",
+    ca_fingerprint: "SHA256:SnC9xXbMkPaHgX0yJ8k1aKlfAJ3Bk1aY2HhqLr8yFt8",
+    key_fingerprint: "SHA256:2pX4Yqv3c3OtUHgJQ0w0B4a7uZ0Bq5Gm0kq1y5nY7cE",
+    location: "ssh/sign/ansideck-1-web",
+    requested_seconds: 7500,
+    capped: false,
     ...overrides,
   };
 }

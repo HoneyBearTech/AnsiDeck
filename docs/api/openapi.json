@@ -1042,7 +1042,7 @@
         "type": "object"
       },
       "CredentialCreate": {
-        "description": "kind \"ssh\": either `private_key` (stored encrypted here) or a secret store reference,\n`store_path` under the project's own subtree and `store_key` in that secret.\nkind \"env\": either `env` (named variables, stored encrypted here) or `store_path`, a\nsecret whose every key becomes a variable.",
+        "description": "kind \"ssh\": either `private_key` (stored encrypted here) or a secret store reference,\n`store_path` under the project's own subtree and `store_key` in that secret.\nkind \"env\": either `env` (named variables, stored encrypted here) or `store_path`, a\nsecret whose every key becomes a variable.\nkind \"ssh_cert\": no secret; `ssh_role` (project-local) and `ssh_principals`, and the\nsecret store's SSH engine mount `ssh_mount` (default: the first of\nSECRETS_STORE_SSH_MOUNTS). Each run gets a new key and a certificate for it.",
         "properties": {
           "description": {
             "anyOf": [
@@ -1073,7 +1073,8 @@
             "default": "ssh",
             "enum": [
               "ssh",
-              "env"
+              "env",
+              "ssh_cert"
             ],
             "title": "Kind",
             "type": "string"
@@ -1103,6 +1104,45 @@
               }
             ],
             "title": "Project Id"
+          },
+          "ssh_mount": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh Mount"
+          },
+          "ssh_principals": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh Principals"
+          },
+          "ssh_role": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh Role"
           },
           "store_key": {
             "anyOf": [
@@ -1175,7 +1215,8 @@
             "default": "ssh",
             "enum": [
               "ssh",
-              "env"
+              "env",
+              "ssh_cert"
             ],
             "title": "Kind",
             "type": "string"
@@ -1187,6 +1228,53 @@
           "project_id": {
             "title": "Project Id",
             "type": "integer"
+          },
+          "ssh_mount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh Mount"
+          },
+          "ssh_principals": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh Principals"
+          },
+          "ssh_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh Role"
+          },
+          "ssh_role_full": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh Role Full"
           },
           "store": {
             "default": "ansideck",
@@ -5135,6 +5223,16 @@
             ],
             "title": "Return Code"
           },
+          "ssh_certificate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SshCertificateInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "started_at": {
             "anyOf": [
               {
@@ -5801,6 +5899,16 @@
       "SecretCheck": {
         "description": "Whether a stored secret can be read (never its value).",
         "properties": {
+          "certificate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SshCertificateInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "env_names": {
             "anyOf": [
               {
@@ -5883,6 +5991,25 @@
           "path_rules": {
             "title": "Path Rules",
             "type": "string"
+          },
+          "ssh_mounts": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Ssh Mounts",
+            "type": "array"
+          },
+          "ssh_role_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh Role Prefix"
           }
         },
         "required": [
@@ -6248,6 +6375,75 @@
           }
         },
         "title": "SourceUpdate",
+        "type": "object"
+      },
+      "SshCertificateInfo": {
+        "description": "An SSH certificate the secret store signed (for a run, or a credential's test).",
+        "properties": {
+          "ca_fingerprint": {
+            "title": "Ca Fingerprint",
+            "type": "string"
+          },
+          "capped": {
+            "default": false,
+            "title": "Capped",
+            "type": "boolean"
+          },
+          "key_fingerprint": {
+            "title": "Key Fingerprint",
+            "type": "string"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "principals": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Principals",
+            "type": "array"
+          },
+          "requested_seconds": {
+            "title": "Requested Seconds",
+            "type": "integer"
+          },
+          "serial": {
+            "title": "Serial",
+            "type": "string"
+          },
+          "serial_hex": {
+            "title": "Serial Hex",
+            "type": "string"
+          },
+          "valid_after": {
+            "format": "date-time",
+            "title": "Valid After",
+            "type": "string"
+          },
+          "valid_before": {
+            "format": "date-time",
+            "title": "Valid Before",
+            "type": "string"
+          }
+        },
+        "required": [
+          "serial",
+          "serial_hex",
+          "key_id",
+          "principals",
+          "valid_after",
+          "valid_before",
+          "ca_fingerprint",
+          "key_fingerprint",
+          "location",
+          "requested_seconds"
+        ],
+        "title": "SshCertificateInfo",
         "type": "object"
       },
       "TargetGroup": {
@@ -7093,6 +7289,17 @@
           "slots": {
             "title": "Slots",
             "type": "integer"
+          },
+          "ssh_certificates": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh Certificates"
           }
         },
         "required": [
@@ -9149,11 +9356,15 @@
             "schema": {
               "anyOf": [
                 {
-                  "enum": [
-                    "ssh",
-                    "env"
-                  ],
-                  "type": "string"
+                  "items": {
+                    "enum": [
+                      "ssh",
+                      "env",
+                      "ssh_cert"
+                    ],
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
@@ -17527,6 +17738,84 @@
           }
         },
         "summary": "Rerun",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/runs/{run_id}/ssh-certificate": {
+      "get": {
+        "description": "The SSH certificate a run's job got (public: its key, principals and the CA's signature),\ne.g. for `ssh-keygen -L`, or to revoke it on targets with a KRL.",
+        "operationId": "run_ssh_certificate_api_runs__run_id__ssh_certificate_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No certificate"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Ssh Certificate",
         "tags": [
           "runs"
         ]

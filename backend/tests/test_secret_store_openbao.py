@@ -1,17 +1,22 @@
 """The secret store against a real OpenBao (or Vault) dev server: AppRole, a read-only policy
-on AnsiDeck's prefix, per-project policies, runs using stored keys and vault passwords, and a
-store outage. Skipped unless TEST_OPENBAO_ADDR and TEST_OPENBAO_ROOT_TOKEN are set (CI runs an
-OpenBao service; locally: docker run -d -p 127.0.0.1:18200:8200 -e BAO_DEV_ROOT_TOKEN_ID=root
-openbao/openbao)."""
+on AnsiDeck's prefix, per-project policies, runs using stored keys and vault passwords, a
+store outage, and SSH certificates from its SSH engine. Skipped unless TEST_OPENBAO_ADDR and
+TEST_OPENBAO_ROOT_TOKEN are set (CI runs an OpenBao service; locally: docker run -d -p
+127.0.0.1:18200:8200 -e BAO_DEV_ROOT_TOKEN_ID=root openbao/openbao)."""
 
+import base64
+import hashlib
 import os
+import time
 import uuid
+from datetime import datetime
+from types import SimpleNamespace
 
 import httpx
 import pytest
 from sqlalchemy import select, text
 
-from app import secret_store
+from app import secret_store, ssh_certificates
 from app.config import get_settings
 from app.db import Base, get_engine, get_sessionmaker
 from app.main import _probe_secret_store
@@ -25,11 +30,13 @@ from tests.test_runs import (
     _vault_var_playbook,
     _wait_for_completion,
 )
+from tests.test_ssh_certificates import AGENT_PLAYBOOK
 
 ADDR = os.environ.get("TEST_OPENBAO_ADDR", "")
 ROOT = os.environ.get("TEST_OPENBAO_ROOT_TOKEN", "")
 pytestmark = pytest.mark.skipif(not (ADDR and ROOT), reason="no TEST_OPENBAO_ADDR / _ROOT_TOKEN")
 PREFIX = "ansideck-test"
+SSH_MOUNT = "ssh-test"
 
 
 def _admin() -> httpx.Client:
@@ -52,11 +59,13 @@ def approle() -> dict:
             "ansideck-test-base": (
                 f'path "secret/data/{PREFIX}/*" {{ capabilities = ["read"] }}\n'
                 'path "auth/token/create" { capabilities = ["update"] }\n'
+                f'path "{SSH_MOUNT}/sign/{PREFIX}-*" {{ capabilities = ["update"] }}\n'
             )
         }
         for project in (1, 2, 3):
             policies[f"ansideck-test-p{project}"] = (
                 f'path "secret/data/{PREFIX}/{project}/*" {{ capabilities = ["read"] }}\n'
+                f'path "{SSH_MOUNT}/sign/{PREFIX}-{project}-*" {{ capabilities = ["update"] }}\n'
             )
         for name, rules in policies.items():
             assert (
@@ -322,3 +331,159 @@ def test_an_env_credential_reads_the_whole_secret(store, client, monkeypatch) ->
     assert check["ok"] and check["env_names"] == ["NB_REGION", "NETBOX_TOKEN"]
     data, version = secret_store.read_all_versioned(1, "env/netbox")
     assert data == {"NETBOX_TOKEN": "nb-real-token", "NB_REGION": "eu"} and version >= 1
+
+
+# ---------------------------------------------------------------- SSH certificates
+
+
+def _ssh_role(bao: httpx.Client, name: str, users: str = "deploy,ansible", **extra) -> None:
+    role = {
+        "key_type": "ca",
+        "allow_user_certificates": True,
+        "allowed_users": users,
+        "default_extensions": {"permit-pty": ""},
+        "allowed_extensions": "permit-pty",
+        "allowed_user_key_lengths": {"ed25519": [0]},
+        "ttl": "30m",
+        "max_ttl": "25h",
+        **extra,
+    }
+    response = bao.post(f"/v1/{SSH_MOUNT}/roles/{name}", json=role)
+    assert response.status_code in (200, 204), response.text
+
+
+@pytest.fixture(scope="module")
+def ssh_engine(approle) -> str:
+    """An SSH engine at ssh-test/ with a CA (made once: posting config/ca again would rotate
+    it) and roles for projects 1, 2 and 10. Returns the CA's public key line."""
+    with _admin() as bao:
+        bao.post(f"/v1/sys/mounts/{SSH_MOUNT}", json={"type": "ssh"})  # 400 once it exists
+        ca = bao.get(f"/v1/{SSH_MOUNT}/public_key")
+        if ca.status_code != 200:
+            created = bao.post(
+                f"/v1/{SSH_MOUNT}/config/ca",
+                json={"generate_signing_key": True, "key_type": "ed25519"},
+            )
+            assert created.status_code == 200, created.text
+            ca = bao.get(f"/v1/{SSH_MOUNT}/public_key")
+        for project in (1, 2, 10):
+            _ssh_role(bao, f"{PREFIX}-{project}-web")
+        _ssh_role(bao, f"{PREFIX}-1-short", ttl="5m", max_ttl="10m")
+    return ca.text.strip()
+
+
+@pytest.fixture
+def ssh(store, ssh_engine, monkeypatch) -> str:
+    monkeypatch.setenv("SECRETS_STORE_SSH_MOUNTS", SSH_MOUNT)
+    get_settings.cache_clear()
+    return ssh_engine
+
+
+def _cert_credential(project_id: int = 1, role: str = "web", principals=("deploy",)):
+    return SimpleNamespace(
+        id=1,
+        name="web",
+        kind="ssh_cert",
+        project_id=project_id,
+        ssh_mount=SSH_MOUNT,
+        ssh_role=role,
+        ssh_principals=list(principals),
+    )
+
+
+def _fingerprint(public_key_line: str) -> str:
+    digest = hashlib.sha256(base64.b64decode(public_key_line.split()[1])).digest()
+    return "SHA256:" + base64.b64encode(digest).decode().rstrip("=")
+
+
+def test_a_real_certificate_for_a_run(ssh) -> None:
+    run = SimpleNamespace(timeout_seconds=1800)
+    issued = ssh_certificates.issue_for_run(
+        _cert_credential(principals=("deploy", "ansible")), run, secret_store.new_deadline()
+    )
+    info = issued.info
+    assert sorted(info["principals"]) == ["ansible", "deploy"]
+    assert info["ca_fingerprint"] == _fingerprint(ssh)
+    assert info["location"] == f"{SSH_MOUNT}/sign/{PREFIX}-1-web" and not info["capped"]
+    valid_before = datetime.fromisoformat(info["valid_before"]).timestamp()
+    assert abs(valid_before - (time.time() + 1800 + 300)) < 30
+    # The store's default key ID names the token (here AnsiDeck's AppRole token).
+    assert info["key_id"].startswith("vault-")
+
+
+def test_the_roles_max_ttl_caps_the_certificate(ssh) -> None:
+    """Pins OpenBao's "ttl is larger than maximum allowed N" refusal, which AnsiDeck parses."""
+    issued = ssh_certificates.issue(
+        _cert_credential(role="short"), 3600, secret_store.new_deadline()
+    )
+    assert issued.info["capped"] is True and issued.info["requested_seconds"] == 3600
+    valid_before = datetime.fromisoformat(issued.info["valid_before"]).timestamp()
+    assert abs(valid_before - (time.time() + 600)) < 30
+
+
+def test_project_policies_keep_ssh_roles_apart(ssh, monkeypatch) -> None:
+    monkeypatch.setenv("SECRETS_STORE_PROJECT_POLICY", "ansideck-test-p{project_id}")
+    get_settings.cache_clear()
+    ssh_certificates.issue(_cert_credential(), 60, secret_store.new_deadline())
+    # Even if AnsiDeck's role naming were bypassed, project 1's token can't sign with project
+    # 2's role, nor with project 10's ("ansideck-test-1-*" doesn't match "ansideck-test-10-").
+    for other in ("2", "10"):
+        monkeypatch.setattr(
+            secret_store,
+            "ssh_role_name",
+            lambda project_id, role, other=other: f"{PREFIX}-{other}-{role}",
+        )
+        with pytest.raises(SecretStoreError) as error:
+            ssh_certificates.issue(_cert_credential(), 60, secret_store.new_deadline())
+        assert error.value.kind == "denied"
+
+
+def test_a_principal_the_role_doesnt_allow_is_refused(ssh) -> None:
+    with pytest.raises(SecretStoreError) as error:
+        ssh_certificates.issue(
+            _cert_credential(principals=("deploy", "root")), 60, secret_store.new_deadline()
+        )
+    assert error.value.kind == "principal_refused"
+
+
+def test_a_missing_role_is_named(ssh) -> None:
+    with pytest.raises(SecretStoreError) as error:
+        ssh_certificates.issue(_cert_credential(role="nope"), 60, secret_store.new_deadline())
+    assert error.value.kind == "no_ssh_role"
+
+
+def test_a_run_with_a_certificate_credential_succeeds_and_stores_no_key(
+    ssh, client, tmp_path, monkeypatch
+) -> None:
+    _login(client)
+    made = []
+    real = ssh_certificates.new_key_pair
+
+    def capture():
+        made.append(real())
+        return made[-1]
+
+    monkeypatch.setattr(ssh_certificates, "new_key_pair", capture)
+    credential = client.post(
+        "/api/credentials",
+        json={"name": "cert", "kind": "ssh_cert", "ssh_role": "web", "ssh_principals": ["deploy"]},
+    )
+    assert credential.status_code == 201, credential.text
+    inventory_id, _ = _create_inventory_with_host(client, str(tmp_path / "m"))
+    run = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": _create_playbook(client, AGENT_PLAYBOOK),
+            "inventory_id": inventory_id,
+            "credential_id": credential.json()["id"],
+        },
+    ).json()
+    done = _wait_for_completion(client, run["id"], timeout=60)
+    assert done["status"] == "success", done["status_reason"]
+    assert done["ssh_certificate"]["ca_fingerprint"] == _fingerprint(ssh)
+    log = client.get(f"/api/runs/{run['id']}/log").text
+    assert "agent has ssh-ed25519 ssh-ed25519-cert-v01@openssh.com" in log
+    assert len(made) == 2  # the credential's test, then the run
+    for private_key, _ in made:
+        body = private_key.splitlines()[1]
+        assert _sentinel_rows(body) == [] and body not in log

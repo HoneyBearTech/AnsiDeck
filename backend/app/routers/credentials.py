@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import audit, secret_store
+from app import audit, secret_store, ssh_certificates
 from app.config import get_settings
 from app.crypto import encrypt_secret
 from app.db import get_db
@@ -54,6 +54,14 @@ def _out(credential: Credential) -> dict:
         "kind": credential.kind,
         "env_names": credential.env_names,
         **secret_store.reference_fields(credential),
+        "ssh_mount": credential.ssh_mount,
+        "ssh_role": credential.ssh_role,
+        "ssh_role_full": (
+            secret_store.ssh_role_name(credential.project_id, credential.ssh_role)
+            if credential.ssh_role
+            else None
+        ),
+        "ssh_principals": credential.ssh_principals,
     }
 
 
@@ -102,7 +110,7 @@ def throttled_check(user: User) -> None:
 def list_credentials(
     request: Request,
     project_id: int | None = Query(None),
-    kind: Literal["ssh", "env"] | None = Query(None),
+    kind: list[Literal["ssh", "env", "ssh_cert"]] | None = Query(None),
     user: User = Depends(_guard),
     db: Session = Depends(get_db),
 ) -> list[dict]:
@@ -110,8 +118,8 @@ def list_credentials(
     query = db.query(Credential)
     if ids is not None:
         query = query.filter(Credential.project_id.in_(ids))
-    if kind is not None:
-        query = query.filter(Credential.kind == kind)
+    if kind:
+        query = query.filter(Credential.kind.in_(kind))
     return [_out(credential) for credential in query.order_by(Credential.name).all()]
 
 
@@ -128,6 +136,8 @@ def create_credential(
     detail: dict | None = None
     if payload.kind == "env":
         credential, detail = _new_env_credential(payload, project_id)
+    elif payload.kind == "ssh_cert":
+        credential, detail = _new_ssh_cert_credential(payload, project_id)
     elif payload.store_path is not None:
         # Read once to check it is there and is a key; never stored here.
         value, version = read_reference(project_id, payload.store_path, payload.store_key)
@@ -206,6 +216,42 @@ def _new_env_credential(payload: CredentialCreate, project_id: int) -> tuple[Cre
     return credential, {"kind": "env", "names": sorted(env)}
 
 
+def _new_ssh_cert_credential(payload: CredentialCreate, project_id: int) -> tuple[Credential, dict]:
+    """Checks the settings and has the store sign a throwaway key once (as a reference is read
+    once), so a role that doesn't exist or doesn't allow the principals is caught now."""
+    settings = get_settings()
+    mounts = settings.secrets_store_ssh_mount_list
+    try:
+        mount = ssh_certificates.check_mount(payload.ssh_mount or (mounts[0] if mounts else ""))
+        role = ssh_certificates.check_role(payload.ssh_role)
+        principals = ssh_certificates.check_principals(payload.ssh_principals)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    credential = Credential(
+        name=payload.name,
+        description=payload.description,
+        kind="ssh_cert",
+        ssh_mount=mount,
+        ssh_role=role,
+        ssh_principals=principals,
+        project_id=project_id,
+    )
+    location = secret_store.ssh_location(project_id, mount, role)
+    try:
+        info = ssh_certificates.sign_test_certificate(credential)
+    except SecretStoreError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{settings.secrets_store_label}: {secret_store.explain(exc.kind)} ({location})",
+        ) from None
+    return credential, {
+        "kind": "ssh_cert",
+        "location": location,
+        "principals": principals,
+        "test_serial": info["serial"],
+    }
+
+
 @router.post("/{credential_id}/check", response_model=SecretCheck)
 def check_credential(
     credential_id: int,
@@ -221,6 +267,8 @@ def check_credential(
     throttled_check(actor)
     if credential.kind == "env":
         return check_env_reference(db, actor, request, credential)
+    if credential.kind == "ssh_cert":
+        return check_ssh_certificate(db, actor, request, credential)
     return check_reference(
         db, actor, request, credential, "credential", validate=_validate_private_key_text
     )
@@ -255,6 +303,38 @@ def check_env_reference(db: Session, actor: User, request: Request, credential) 
         target_type="credential",
         ip=client_ip(request),
         detail=None if result["ok"] else {"error_kind": result["error_kind"]},
+        **target,
+    )
+    return result
+
+
+def check_ssh_certificate(db: Session, actor: User, request: Request, credential) -> dict:
+    """Has the store sign a throwaway key with the credential's role, and audits the check
+    with the test certificate's serial."""
+    target = {
+        "target_id": credential.id,
+        "target_name": credential.name,
+        "project_id": credential.project_id,
+    }
+    db.expunge(credential)  # read its fields after the rollback below
+    db.rollback()  # no transaction held open while the store answers
+    try:
+        info = ssh_certificates.sign_test_certificate(credential)
+        result: dict = {"ok": True, "certificate": info}
+    except SecretStoreError as exc:
+        result = {"ok": False, "error_kind": exc.kind, "error": secret_store.explain(exc.kind)}
+    audit.record(
+        db,
+        "credential.check",
+        outcome="success" if result["ok"] else "failure",
+        actor=actor,
+        target_type="credential",
+        ip=client_ip(request),
+        detail=(
+            {"serial": result["certificate"]["serial"]}
+            if result["ok"]
+            else {"error_kind": result["error_kind"]}
+        ),
         **target,
     )
     return result

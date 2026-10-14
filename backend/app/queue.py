@@ -11,6 +11,8 @@ Rules, in this order:
   app.host_keys would run it unchecked). Its mode is fixed when it is claimed;
 - a run whose inventory restricts network egress goes only to a worker that can (its egress
   filter is on and its allowlist self-test passed); that too is fixed when it is claimed;
+- a run with an SSH certificate credential goes only to a worker that loads certificates
+  (an older one would log in with the bare key and fail);
 - a run that refreshes its inventory first waits for that refresh (which then pins its
   snapshot, or fails it).
 Inventory refreshes, playbook checks (lints) and host key scans are claimed the same way, before
@@ -32,7 +34,15 @@ from app import metrics
 from app.config import get_settings
 from app.db import GALAXY_GATE_KEY, LINT_CLAIM_KEY
 from app.jobs import unrunnable_reason
-from app.models import GalaxyInstall, Inventory, InventoryRefresh, Run, RunStatus, Worker
+from app.models import (
+    Credential,
+    GalaxyInstall,
+    Inventory,
+    InventoryRefresh,
+    Run,
+    RunStatus,
+    Worker,
+)
 from app.notifications.events import run_finished
 from app.notifications.ops import worker_seen
 from app.notify import notifier, run_topic
@@ -64,6 +74,9 @@ _CLAIM = text(
           AND (:egress_allowlist OR NOT EXISTS (
               SELECT 1 FROM inventories i
               WHERE i.id = r.inventory_id AND i.egress_restricted))
+          AND (:ssh_certificates OR NOT EXISTS (
+              SELECT 1 FROM credentials c
+              WHERE c.id = r.credential_id AND c.kind = 'ssh_cert'))
           AND NOT EXISTS (
               SELECT 1 FROM runs earlier
               WHERE earlier.inventory_id = r.inventory_id AND earlier.status = 'queued'
@@ -228,6 +241,7 @@ def record_worker(
     egress_filtered: bool | None = None,
     host_keys: bool | None = None,
     egress_allowlist: bool | None = None,
+    ssh_certificates: bool | None = None,
 ) -> None:
     """Marks the worker as seen now (the caller commits)."""
     stmt = insert(Worker).values(
@@ -237,6 +251,7 @@ def record_worker(
         egress_filtered=egress_filtered,
         host_keys=host_keys,
         egress_allowlist=egress_allowlist,
+        ssh_certificates=ssh_certificates,
     )
     db.execute(
         stmt.on_conflict_do_update(
@@ -247,6 +262,7 @@ def record_worker(
                 "egress_filtered": stmt.excluded.egress_filtered,
                 "host_keys": stmt.excluded.host_keys,
                 "egress_allowlist": stmt.excluded.egress_allowlist,
+                "ssh_certificates": stmt.excluded.ssh_certificates,
                 "last_seen_at": func.now(),
             },
         )
@@ -259,16 +275,25 @@ def record_worker(
         logger.exception("could not check worker %s for notifications", worker_id)
 
 
-def online_slots(db: Session, *, host_keys: bool = False, egress_allowlist: bool = False) -> int:
+def online_slots(
+    db: Session,
+    *,
+    host_keys: bool = False,
+    egress_allowlist: bool = False,
+    ssh_certificates: bool = False,
+) -> int:
     """How many runs the workers seen lately can run at once (0: no worker is online); with
     host_keys, only workers that check SSH host keys count, with egress_allowlist only those
-    that can restrict a run's network egress."""
+    that can restrict a run's network egress, with ssh_certificates only those that load SSH
+    certificates."""
     since = func.now() - func.make_interval(0, 0, 0, 0, 0, 0, WORKER_ONLINE_SECONDS)
     query = select(func.coalesce(func.sum(Worker.slots), 0)).where(Worker.last_seen_at > since)
     if host_keys:
         query = query.where(Worker.host_keys.is_(True))
     if egress_allowlist:
         query = query.where(Worker.egress_allowlist.is_(True), Worker.egress_filtered.is_(True))
+    if ssh_certificates:
+        query = query.where(Worker.ssh_certificates.is_(True))
     return db.scalar(query)
 
 
@@ -318,6 +343,13 @@ def wait_reason(db: Session, run: Run) -> str:
             "Waiting for a worker that can restrict network egress (its egress filter must be "
             "on; upgrade your workers)"
         )
+    if (
+        run.credential_id is not None
+        and db.scalar(select(Credential.kind).where(Credential.id == run.credential_id))
+        == "ssh_cert"
+        and online_slots(db, ssh_certificates=True) == 0
+    ):
+        return "Waiting for a worker that supports SSH certificates (upgrade your workers)"
     running = db.scalar(select(func.count()).where(Run.status == RunStatus.RUNNING.value))
     if running >= slots:
         return "Waiting for a free worker (all are busy)"
@@ -330,6 +362,7 @@ def claim_next(
     kinds: tuple[str, ...] = ("run",),
     host_keys: bool = False,
     egress_allowlist: bool = False,
+    ssh_certificates: bool = False,
 ) -> Claim | None:
     """Checks and host key scans first, then refreshes (all short, and someone is waiting for
     them), then runs. A worker gets only the kinds it lists: one from before 4G never gets a
@@ -343,7 +376,7 @@ def claim_next(
         return claim
     if "run" not in kinds:
         return None
-    return _claim_run(db, worker_id, host_keys, egress_allowlist)
+    return _claim_run(db, worker_id, host_keys, egress_allowlist, ssh_certificates)
 
 
 def _claim_lint(db: Session, worker_id: str) -> Claim | None:
@@ -423,7 +456,11 @@ def _claim_refresh(db: Session, worker_id: str) -> Claim | None:
 
 
 def _claim_run(
-    db: Session, worker_id: str, host_keys: bool = False, egress_allowlist: bool = False
+    db: Session,
+    worker_id: str,
+    host_keys: bool = False,
+    egress_allowlist: bool = False,
+    ssh_certificates: bool = False,
 ) -> Claim | None:
     lease = get_settings().run_lease_seconds
     for _ in range(_CLAIM_ATTEMPTS):
@@ -438,6 +475,7 @@ def _claim_run(
                 {
                     "host_keys": host_keys,
                     "egress_allowlist": egress_allowlist,
+                    "ssh_certificates": ssh_certificates,
                     "lease": lease,
                     "worker_id": worker_id[:255],
                     "claim_hash": hash_token(claim_token),

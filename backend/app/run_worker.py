@@ -14,7 +14,8 @@ repository itself, a tar, follows the job line on stdin and is unpacked as the p
 "host_keys" (None, or {"mode": "accept_new" | "strict", "known_hosts": text}: see
 host_key_ssh_args), "env" (variables of the run's environment-variable credentials, set in
 this process's environment, which ansible-runner hands to the playbook; never written to a
-file) and "artifacts" ({"max_bytes", "max_files"}: see collect_artifacts).
+file), "ssh_certificate" (None, or the OpenSSH certificate line for "ssh_key": see
+_place_certificate) and "artifacts" ({"max_bytes", "max_files"}: see collect_artifacts).
 One JSON line per message on the inherited event_fd: {"type": "refused", "reason": ...} alone
 if the run can't be set up (e.g. its repository won't unpack), else {"type": "started",
 "private_data_dir": ...} first, then {"type": "event", "event": {...}} for each
@@ -231,6 +232,29 @@ def _set_up_host_keys(job: dict, pdd: Path, project: Path, own_home: bool) -> No
         _write_hop_config(os.environ["HOME"], pdd, mode)
 
 
+# ansible-runner keeps its ssh-add FIFO at <pdd>/artifacts/<ident>/ssh_key_data
+# (ansible_runner.config._base: prepare_env, wrap_args_with_ssh_agent); a fixed ident tells
+# us where.
+RUNNER_IDENT = "ansideck"
+_CERTIFICATE = re.compile(r"[a-z0-9-]+-cert-v01@openssh\.com [A-Za-z0-9+/]+={0,2}")
+
+
+def _place_certificate(job: dict, pdd: Path) -> None:
+    """Puts the run's SSH certificate where ssh-add looks for one: next to the key, as
+    "<key>-cert.pub". ansible-runner's own ssh-add then loads key and certificate into the
+    run's ssh-agent, which ProxyJump hops use too; no ssh option changes."""
+    certificate = job.pop("ssh_certificate", None)
+    if certificate is None:
+        return
+    certificate = certificate.strip()
+    if not job.get("ssh_key") or not _CERTIFICATE.fullmatch(certificate):
+        raise RuntimeError("the run's SSH certificate is malformed")
+    job["ident"] = RUNNER_IDENT
+    runner_dir = pdd / "artifacts" / RUNNER_IDENT
+    runner_dir.mkdir(mode=0o700, parents=True)
+    _write_private(runner_dir / "ssh_key_data-cert.pub", certificate + "\n")
+
+
 def read_learned(pdd: Path) -> list[str]:
     """The known_hosts lines ssh learned during the run (bounded; untrusted: the playbook can
     write this file too, the API decides what to keep)."""
@@ -365,6 +389,7 @@ def prepare(job: dict) -> str:
         (pdd / "tmp").mkdir(mode=0o700)
         os.environ["TMPDIR"] = str(pdd / "tmp")
     try:
+        _place_certificate(job, pdd)
         _set_up_host_keys(job, pdd, project, own_home)
     except BaseException:
         shutil.rmtree(pdd, ignore_errors=True)

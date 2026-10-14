@@ -9,7 +9,7 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Upgrading
 
-- The API applies database migrations 0017 to 0027 when it starts.
+- The API applies database migrations 0017 to 0028 when it starts.
 - Runs on inventories that restrict network egress (none until a project admin turns it on) wait for a
   worker of this release whose egress filter is on.
 - **Passkeys need `PUBLIC_URL`** set to the address people open AnsiDeck at (`https://`, or `http://localhost`
@@ -41,6 +41,13 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- **Short-lived SSH certificates**: a credential of kind **SSH certificate** stores no key, only the secret
+  store's SSH engine mount, a role and the users it may log in as. Each run gets a new key pair and a
+  certificate the store signs for the run's timeout plus 5 minutes (or the role's maximum, with a warning),
+  loaded into the run's ssh-agent; the run's page shows its serial, and the audit log records each one.
+  Roles are per project (`<SECRETS_STORE_PATH_PREFIX>-<project id>-<role>`); turn it on with
+  `SECRETS_STORE_SSH_MOUNTS`. Runs with such a credential wait for a worker of this release. The dev
+  `openbao` profile's setup script now sets up an SSH CA and a role per project.
 - **Runs limited to their inventory's hosts**: on an inventory set to **Only its hosts** (project admins,
   under **Network**; off by default), a run may reach only its hosts' addresses (any port), the first jump
   host of each, the inventory's extra entries (addresses, networks or names, with ports) and DNS; everything

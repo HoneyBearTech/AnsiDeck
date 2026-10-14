@@ -2,8 +2,8 @@ import { within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { reply } from "@/test/fake-api";
-import { credential, viewerUser } from "@/test/fixtures";
-import { renderApp } from "@/test/render";
+import { credential, sshCertCredential, sshCertificate, viewerUser } from "@/test/fixtures";
+import { choose, renderApp } from "@/test/render";
 
 const STORE = {
   "GET /secret-store/info": {
@@ -11,6 +11,14 @@ const STORE = {
     label: "OpenBao",
     base_path: "secret/ansideck/1/",
     path_rules: "letters, digits, - and _",
+  },
+};
+
+const SSH_STORE = {
+  "GET /secret-store/info": {
+    ...STORE["GET /secret-store/info"],
+    ssh_mounts: ["ssh", "ssh-prod"],
+    ssh_role_prefix: "ansideck-1-",
   },
 };
 
@@ -125,6 +133,67 @@ describe("credentials", () => {
     await user.type(dialog.getByLabelText("Private key (PEM)"), "key");
     await user.click(dialog.getByRole("button", { name: "Create" }));
     expect(await dialog.findByText("A credential with that name exists")).toBeInTheDocument();
+  });
+
+  it("offers SSH certificates only when the secret store has SSH mounts", async () => {
+    const { user, screen } = renderApp("/credentials", { routes: { ...STORE, "GET /credentials": [] } });
+    await user.click(await screen.findByRole("button", { name: "New credential" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByRole("button", { name: "SSH key" })).toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: /SSH certificate/ })).not.toBeInTheDocument();
+  });
+
+  it("creates an SSH certificate credential with its role and principals", async () => {
+    const { api, user, screen } = renderApp("/credentials", {
+      routes: { ...SSH_STORE, "GET /credentials": [], "POST /credentials": sshCertCredential() },
+    });
+    await user.click(await screen.findByRole("button", { name: "New credential" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.type(dialog.getByLabelText("Name"), "web-cert");
+    await user.click(dialog.getByRole("button", { name: "SSH certificate (from OpenBao)" }));
+    expect(dialog.queryByLabelText("Private key (PEM)")).not.toBeInTheDocument();
+    expect(dialog.getByText("ansideck-1-")).toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Create" })).toBeDisabled();
+    await user.type(dialog.getByLabelText("Role in OpenBao"), "web");
+    await user.type(dialog.getByLabelText("Principals"), "deploy, ansible deploy");
+    expect(dialog.getByText("ansible")).toBeInTheDocument();
+    await choose(user, dialog.getByLabelText("SSH engine mount"), "ssh-prod");
+    api.set({ "GET /credentials": [sshCertCredential()] });
+    await user.click(dialog.getByRole("button", { name: "Create" }));
+
+    expect(await screen.findByText("web-cert")).toBeInTheDocument();
+    expect(api.requests("POST /credentials")[0]?.body).toMatchObject({
+      name: "web-cert",
+      kind: "ssh_cert",
+      ssh_mount: "ssh-prod",
+      ssh_role: "web",
+      ssh_principals: ["deploy", "ansible"],
+    });
+  });
+
+  it("shows a certificate credential's role and principals and its test certificate", async () => {
+    const { user, screen } = renderApp("/credentials", {
+      routes: {
+        ...SSH_STORE,
+        "GET /credentials": [sshCertCredential()],
+        "POST /credentials/:id/check": {
+          ok: true,
+          version: null,
+          certificate: sshCertificate({ serial: "42" }),
+          error_kind: null,
+          error: null,
+        },
+      },
+    });
+    expect(await screen.findByText("SSH certificate")).toBeInTheDocument();
+    expect(screen.getByText("ssh/sign/ansideck-1-web")).toBeInTheDocument();
+    expect(screen.getByText("deploy · ansible")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Test" }));
+    expect(
+      await screen.findByText(
+        "Signed a test certificate: serial 42, CA SHA256:SnC9xXbMkPaHgX0yJ8k1aKlfAJ3Bk1aY2HhqLr8yFt8",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("deletes a credential", async () => {

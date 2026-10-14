@@ -69,7 +69,7 @@ In the backend container (`docker compose exec backend python -m app.cli …`):
 | Inventory sources | dynamic inventory (NetBox, clouds, …) | each plugin's API, from the workers | inventory sources |
 | Git remotes | syncing playbooks | HTTPS or SSH, from the API | git sources |
 | Ansible Galaxy | installing roles and collections | HTTPS | the Galaxy page |
-| OpenBao / HashiCorp Vault | reading secrets kept in the store | KV v2 HTTP API over TLS | `SECRETS_STORE_*` settings |
+| OpenBao / HashiCorp Vault | reading secrets kept in the store; signing runs' SSH keys | KV v2 and SSH engine (`<mount>/sign/<role>`) HTTP API over TLS | `SECRETS_STORE_*` settings |
 | OpenID Connect provider, GitHub | single sign-on | OAuth 2.0 / OpenID Connect over HTTPS | `OIDC_*`, `GITHUB_*` settings |
 | Chat, push and webhook services | notifications | HTTPS (JSON) | notification channels |
 | SMTP server | email notifications | SMTP with STARTTLS or TLS | `SMTP_*` settings |

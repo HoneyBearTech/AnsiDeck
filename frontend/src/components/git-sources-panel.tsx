@@ -426,8 +426,8 @@ function SourceDialog({
     setEnabled(source?.enabled ?? true);
     setError(null);
     api
-      .listCredentials()
-      .then((list) => setCredentials(list.filter((c) => c.project_id === projectId)))
+      .listCredentials("ssh")
+      .then((list) => setCredentials(list.filter((c) => c.project_id === projectId && c.kind === "ssh")))
       .catch(() => setCredentials([]));
   }, [open, source, projectId]);
 

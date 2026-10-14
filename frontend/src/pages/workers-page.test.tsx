@@ -10,6 +10,7 @@ function worker(overrides = {}) {
     isolated: true,
     egress_filtered: true,
     host_keys: true,
+    ssh_certificates: true,
     running: 1,
     online: true,
     first_seen_at: "2026-10-05T10:00:00Z",
@@ -79,6 +80,22 @@ describe("workers", () => {
     expect(await screen.findByText("A worker doesn't check SSH host keys")).toBeInTheDocument();
     expect(screen.getAllByText("no host key checks")).toHaveLength(1);
     expect(screen.getByText("worker-old").parentElement).toHaveTextContent("no host key checks");
+  });
+
+  it("marks online workers too old for SSH certificates", async () => {
+    const { screen } = renderApp("/workers", {
+      routes: {
+        "GET /workers": [
+          worker(),
+          worker({ id: "worker-prev", ssh_certificates: false }),
+          worker({ id: "worker-gone", ssh_certificates: false, online: false }),
+        ],
+        "GET /secret-store/status": { enabled: false },
+      },
+    });
+    await screen.findByText("worker-prev");
+    expect(screen.getAllByText("no SSH certificates")).toHaveLength(1);
+    expect(screen.getByText("worker-prev").parentElement).toHaveTextContent("no SSH certificates");
   });
 
   it("warns when no worker is online and keeps polling", async () => {

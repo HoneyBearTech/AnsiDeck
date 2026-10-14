@@ -11,6 +11,10 @@ store redirects to cleaned paths: redirects are never followed). Optionally the 
 projects apart too: SECRETS_STORE_PROJECT_POLICY reads through a short-lived child token
 limited to the project's own store policy.
 
+The store's SSH secrets engine also signs the per-run keys of "SSH certificate" credentials
+(app.ssh_certificates), with the role <path prefix>-<project id>-<role> on a mount listed in
+SECRETS_STORE_SSH_MOUNTS, through the same tokens.
+
 AnsiDeck logs in with a token from a file (an Agent can keep it fresh) or AppRole (secret id
 from a file); tokens and values never reach logs, errors or the database. One job's reads
 share a deadline (SECRETS_STORE_TIMEOUT_SECONDS, at most 10 s): the worker gives up on a job
@@ -58,6 +62,12 @@ _KIND_TEXT = {
     "missing_key": "the secret has no such key",
     "bad_value": "the value is not text",
     "bad_response": "unexpected answer from the secret store",
+    "ssh_disabled": "SSH certificates aren't enabled for that mount (SECRETS_STORE_SSH_MOUNTS)",
+    "no_ssh_role": "no SSH role by that name (or no SSH secrets engine at that mount)",
+    "principal_refused": "the SSH role doesn't allow one of the credential's principals",
+    "ssh_refused": "the SSH role refused to sign the key (check its key types, certificate "
+    "type, extensions and maximum TTL)",
+    "bad_certificate": "the secret store's certificate doesn't match what was asked for",
 }
 # Kinds that mean the store as a whole is unusable (an ops alert), not one bad reference.
 OUTAGE_KINDS = frozenset({"unreachable", "tls", "sealed", "auth_failed"})
@@ -70,6 +80,22 @@ class SecretStoreError(Exception):
     def __init__(self, kind: str, detail: str | None = None) -> None:
         self.kind = kind
         super().__init__(detail or _KIND_TEXT[kind])
+
+
+class TtlTooLong(SecretStoreError):
+    """The SSH role's maximum TTL is shorter than the one asked for (the store refuses
+    rather than caps it): `maximum` is the role's limit in seconds."""
+
+    def __init__(self, maximum: int) -> None:
+        self.maximum = maximum
+        super().__init__("ssh_refused")
+
+
+# OpenBao's (and Vault's) SSH engine answers 400 with these texts (pinned against OpenBao by
+# tests/test_secret_store_openbao.py); anything else is "ssh_refused".
+_TTL_TOO_LONG = re.compile(r"ttl is larger than maximum allowed (\d+)")
+_UNKNOWN_ROLE = "unknown role"
+_BAD_PRINCIPAL = "is not a valid value for valid_principals"
 
 
 def explain(kind: str) -> str:
@@ -86,6 +112,13 @@ PATH_RULES = (
 
 def reference_fields(row) -> dict:
     """The secret store fields of a credential or vault password, for API responses."""
+    if getattr(row, "kind", None) == "ssh_cert":
+        return {
+            "store": "external",
+            "store_path": None,
+            "store_key": None,
+            "store_location": ssh_location(row.project_id, row.ssh_mount, row.ssh_role),
+        }
     if row.store_path is None:
         return {"store": "ansideck", "store_path": None, "store_key": None, "store_location": None}
     return {
@@ -124,6 +157,17 @@ def base_path(project_id: int) -> str:
 def location(project_id: int, path: str, key: str | None) -> str:
     """Where a reference points; without a key, the whole secret (an env credential)."""
     return f"{base_path(project_id)}{path}" + (f"#{key}" if key is not None else "")
+
+
+def ssh_role_name(project_id: int, role: str) -> str:
+    """The store's role for a project-local SSH role name: a project can't name another
+    project's role, whatever AnsiDeck's own store policy allows."""
+    return f"{get_settings().secrets_store_path_prefix}-{int(project_id)}-{role}"
+
+
+def ssh_location(project_id: int, mount: str, role: str) -> str:
+    """Where an SSH certificate credential signs, for display: e.g. ssh/sign/ansideck-7-web."""
+    return f"{mount}/sign/{ssh_role_name(project_id, role)}"
 
 
 def _api_path(*segments: str) -> str:
@@ -325,17 +369,18 @@ class _Client:
             raise SecretStoreError("bad_value")
         return value, version
 
-    def read_data(self, project_id: int, path: str, deadline: float) -> tuple[dict, int]:
-        """(every key of a project's secret, version)."""
+    def _project_request(
+        self,
+        project_id: int,
+        method: str,
+        api_path: str,
+        deadline: float,
+        json: dict | None = None,
+    ) -> httpx.Response:
+        """A request on a project's behalf: with AnsiDeck's token, or a fresh single-use child
+        token limited to the project's store policy (SECRETS_STORE_PROJECT_POLICY). With
+        AppRole, a denial means a revoked or expired token: log in once more."""
         settings = get_settings()
-        segments = check_path(path)
-        api_path = _api_path(
-            settings.secrets_store_kv_mount,
-            "data",
-            settings.secrets_store_path_prefix,
-            str(int(project_id)),
-            *segments,
-        )
         for attempt in range(2):
             relogin = attempt == 0 and settings.secrets_store_auth == "approle"
             token = self.token(deadline)
@@ -349,12 +394,26 @@ class _Client:
                         self.forget_token()
                         continue
                     raise
-            response = self._request("GET", api_path, deadline, token=token)
+            response = self._request(method, api_path, deadline, token=token, json=json)
             if response.status_code == 403 and relogin:
                 # A revoked or expired token looks like a denial: log in once more.
                 self.forget_token()
                 continue
             break
+        return response
+
+    def read_data(self, project_id: int, path: str, deadline: float) -> tuple[dict, int]:
+        """(every key of a project's secret, version)."""
+        settings = get_settings()
+        segments = check_path(path)
+        api_path = _api_path(
+            settings.secrets_store_kv_mount,
+            "data",
+            settings.secrets_store_path_prefix,
+            str(int(project_id)),
+            *segments,
+        )
+        response = self._project_request(project_id, "GET", api_path, deadline)
         if response.status_code != 200:
             raise self._fail(response)
         try:
@@ -368,6 +427,63 @@ class _Client:
         if not isinstance(data, dict):
             raise SecretStoreError("bad_response")
         return data, version
+
+    # --- signing -------------------------------------------------------------------------
+
+    def sign_ssh(
+        self,
+        project_id: int,
+        mount: str,
+        role: str,
+        public_key: str,
+        principals: list[str],
+        ttl: int,
+        deadline: float,
+    ) -> dict:
+        """The SSH engine's answer ({serial_number, signed_key, ...}) for a user certificate of
+        `public_key`, signed with the project's role."""
+        if not SEGMENT.fullmatch(mount or "") or not SEGMENT.fullmatch(role or ""):
+            raise SecretStoreError("invalid")
+        api_path = _api_path(mount, "sign", ssh_role_name(project_id, role))
+        response = self._project_request(
+            project_id,
+            "POST",
+            api_path,
+            deadline,
+            json={
+                "public_key": public_key,
+                "valid_principals": ",".join(principals),
+                "ttl": int(ttl),
+                "cert_type": "user",
+            },
+        )
+        if response.status_code != 200:
+            raise self._sign_fail(response)
+        try:
+            data = response.json()["data"]
+            if not isinstance(data.get("signed_key"), str):
+                raise TypeError
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise SecretStoreError("bad_response") from None
+        return data
+
+    @classmethod
+    def _sign_fail(cls, response: httpx.Response) -> SecretStoreError:
+        if response.status_code == 404:  # no such mount (or not an SSH engine)
+            return SecretStoreError("no_ssh_role")
+        if response.status_code != 400:
+            return cls._fail(response)
+        try:
+            text = " ".join(str(error) for error in response.json()["errors"])
+        except (ValueError, KeyError, TypeError):
+            text = ""
+        if match := _TTL_TOO_LONG.search(text):
+            return TtlTooLong(int(match.group(1)))
+        if _UNKNOWN_ROLE in text.lower():
+            return SecretStoreError("no_ssh_role")
+        if _BAD_PRINCIPAL in text:
+            return SecretStoreError("principal_refused")
+        return SecretStoreError("ssh_refused")
 
     def health(self, deadline: float) -> dict:
         """For the probe: reachable, sealed, version, token TTL (seconds) or the error."""
@@ -441,6 +557,32 @@ def read_all_versioned(
         metrics.secret_store_read(exc.kind)
         raise
     metrics.secret_store_read("ok")
+    return result
+
+
+def sign_ssh_key(
+    project_id: int,
+    mount: str,
+    role: str,
+    public_key: str,
+    principals: list[str],
+    ttl: int,
+    deadline: float | None = None,
+) -> dict:
+    """Has the store sign `public_key` (app.ssh_certificates); SecretStoreError (TtlTooLong
+    when the role's maximum TTL is shorter) when it won't."""
+    if not enabled():
+        raise SecretStoreError("disabled")
+    if mount not in get_settings().secrets_store_ssh_mount_list:
+        raise SecretStoreError("ssh_disabled")
+    try:
+        result = _client.sign_ssh(
+            project_id, mount, role, public_key, principals, ttl, deadline or _deadline()
+        )
+    except SecretStoreError as exc:
+        metrics.ssh_certificate_signed(exc.kind)
+        raise
+    metrics.ssh_certificate_signed("ok")
     return result
 
 
