@@ -146,6 +146,7 @@ def test_pasted_keys_are_previewed_trusted_replaced_and_audited(client) -> None:
     ]
     listed = client.get(url).json()
     assert listed["hosts"][0]["status"] == "trusted"
+    assert client.get(url, params={"untrusted": True}).json()["hosts"] == []
     assert {k["name"]: k["hosts"] for k in listed["keys"]} == {
         "[10.0.0.5]:2222": ["web1"],
         "web1": [],

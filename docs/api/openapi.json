@@ -8697,7 +8697,7 @@
     },
     "/api/inventories/{inventory_id}/host-keys": {
       "get": {
-        "description": "The inventory's trusted keys and, for each host (a page, filtered by `q` on the host or\nits address), whether a run can check it.",
+        "description": "The inventory's trusted keys and, for each host (a page, filtered by `q` on the host or\nits address, and with `untrusted` to those without a confirmed key), whether a run can\ncheck it.",
         "operationId": "list_host_keys_api_inventories__inventory_id__host_keys_get",
         "parameters": [
           {
@@ -8724,6 +8724,16 @@
                 }
               ],
               "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "untrusted",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Untrusted",
+              "type": "boolean"
             }
           },
           {

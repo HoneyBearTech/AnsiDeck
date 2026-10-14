@@ -36,6 +36,11 @@ NOT_HERE = {
     ("POST", "/api/playbooks/lint"),  # a check: stores no content
     ("POST", "/api/playbooks/{playbook_id}/lint"),
     ("PUT", "/api/inventories/{inventory_id}/refresh-settings"),  # inventory sources' router
+    # SSH host keys' router (tests/test_inventory_host_keys.py)
+    ("PUT", "/api/inventories/{inventory_id}/host-keys/mode"),
+    ("POST", "/api/inventories/{inventory_id}/host-keys/paste"),
+    ("POST", "/api/inventories/{inventory_id}/host-keys/confirm"),
+    ("DELETE", "/api/inventories/{inventory_id}/host-keys/{key_id}"),
 }
 
 

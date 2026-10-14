@@ -101,12 +101,14 @@ def list_host_keys(
     inventory_id: int,
     request: Request,
     q: str | None = Query(None, max_length=255),
+    untrusted: bool = Query(False),
     page: int = Query(1, ge=1),
     user: User = Depends(_manage),
     db: Session = Depends(get_db),
 ) -> HostKeysOut:
     """The inventory's trusted keys and, for each host (a page, filtered by `q` on the host or
-    its address), whether a run can check it."""
+    its address, and with `untrusted` to those without a confirmed key), whether a run can
+    check it."""
     inventory = _inventory(db, user, request, inventory_id, Permission.CONTENT_READ)
     addresses = _addresses(db, inventory)
     users = _users(addresses)
@@ -119,7 +121,10 @@ def list_host_keys(
         counts[value] += 1
     needle = (q or "").lower()
     names = sorted(
-        h for h, a in addresses.items() if needle in h.lower() or needle in (a.name or "")
+        h
+        for h, a in addresses.items()
+        if (needle in h.lower() or needle in (a.name or ""))
+        and not (untrusted and statuses[h] == "trusted")
     )
     hosts = [
         HostKeyHost(
