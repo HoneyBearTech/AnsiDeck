@@ -9,6 +9,8 @@ class WorkerOut(BaseModel):
     isolated: bool | None
     egress_filtered: bool | None
     host_keys: bool | None = None
+    # It can limit runs to their inventory's hosts (runs that must wait for such a worker).
+    egress_allowlist: bool | None = None
     running: int
     online: bool
     first_seen_at: datetime

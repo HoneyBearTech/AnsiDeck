@@ -32,6 +32,7 @@ from app.routers import (
     api_keys,
     auth,
     credentials,
+    egress,
     galaxy,
     git_sources,
     health,
@@ -239,6 +240,7 @@ app.include_router(
     inventory_sources.router, prefix="/api/inventories/{inventory_id}", tags=["inventories"]
 )
 app.include_router(host_keys.router, prefix="/api/inventories/{inventory_id}", tags=["inventories"])
+app.include_router(egress.router, prefix="/api/inventories/{inventory_id}", tags=["inventories"])
 app.include_router(credentials.router, prefix="/api/credentials", tags=["credentials"])
 app.include_router(vault_passwords.router, prefix="/api/vault-passwords", tags=["vault-passwords"])
 app.include_router(vault.router, prefix="/api/vault", tags=["vault"])

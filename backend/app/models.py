@@ -376,6 +376,10 @@ class Inventory(Base):
     host_key_checking: Mapped[str] = mapped_column(
         String(16), default="accept_new", server_default="accept_new"
     )
+    # Runs may reach only its hosts, DNS and these extra entries (app.egress_allowlist):
+    # [{"target", "ports": [[lo, hi], ...] | None, "note"}].
+    egress_restricted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    egress_extras: Mapped[list | None] = mapped_column(JSON(none_as_null=True), default=None)
 
     groups: Mapped[list["InventoryGroup"]] = relationship(
         back_populates="inventory", cascade="all, delete-orphan"
@@ -721,6 +725,12 @@ class Run(Base):
     host_key_checking: Mapped[str | None] = mapped_column(String(16), default=None)
     host_key_problems: Mapped[list | None] = mapped_column(JSON(none_as_null=True), default=None)
     host_keys_learned: Mapped[int | None] = mapped_column(Integer, default=None)
+    # Whether its inventory restricted egress when it was claimed, the allowlist the worker
+    # resolved for it (app.worker.egress report) and what its slot was refused
+    # ([{address, protocol, port}], the first 256).
+    egress_restricted: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    egress_allowlist: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
+    egress_refused: Mapped[list | None] = mapped_column(JSON(none_as_null=True), default=None)
     timeout_seconds: Mapped[int] = mapped_column(
         Integer,
         default=DEFAULT_RUN_TIMEOUT_SECONDS,
@@ -913,6 +923,9 @@ class Worker(Base):
     egress_filtered: Mapped[bool | None] = mapped_column(Boolean, default=None)
     # Whether it checks SSH host keys (app.host_keys); runs that must are only given to such.
     host_keys: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    # Whether it can limit runs to their inventory's hosts (egress allowlists that passed its
+    # self-test); restricted runs are only given to such.
+    egress_allowlist: Mapped[bool | None] = mapped_column(Boolean, default=None)
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

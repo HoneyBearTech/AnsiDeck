@@ -75,6 +75,11 @@
       },
       "ClaimIn": {
         "properties": {
+          "egress_allowlist": {
+            "default": false,
+            "title": "Egress Allowlist",
+            "type": "boolean"
+          },
           "egress_filtered": {
             "anyOf": [
               {
@@ -193,6 +198,21 @@
               }
             ]
           },
+          "egress_refused": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/EgressRefusedIn"
+                },
+                "maxItems": 256,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Egress Refused"
+          },
           "host_counts": {
             "anyOf": [
               {
@@ -282,6 +302,213 @@
           "status"
         ],
         "title": "CompleteIn",
+        "type": "object"
+      },
+      "EgressAddressesIn": {
+        "properties": {
+          "address": {
+            "maxLength": 255,
+            "title": "Address",
+            "type": "string"
+          },
+          "addresses": {
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Addresses",
+            "type": "array"
+          },
+          "host": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "maximum": 65535.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          }
+        },
+        "required": [
+          "address",
+          "addresses"
+        ],
+        "title": "EgressAddressesIn",
+        "type": "object"
+      },
+      "EgressExtraIn": {
+        "properties": {
+          "addresses": {
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Addresses",
+            "type": "array"
+          },
+          "ports": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ports"
+          },
+          "target": {
+            "maxLength": 255,
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "addresses"
+        ],
+        "title": "EgressExtraIn",
+        "type": "object"
+      },
+      "EgressRefusedIn": {
+        "properties": {
+          "address": {
+            "maxLength": 64,
+            "title": "Address",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535.0,
+            "minimum": 0.0,
+            "title": "Port",
+            "type": "integer"
+          },
+          "protocol": {
+            "enum": [
+              "tcp",
+              "udp"
+            ],
+            "title": "Protocol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "address",
+          "protocol",
+          "port"
+        ],
+        "title": "EgressRefusedIn",
+        "type": "object"
+      },
+      "EgressReportIn": {
+        "description": "The allowlist the worker resolved for a restricted run (app.worker.egress), before it\nstarted: shown on the run page.",
+        "properties": {
+          "extras": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EgressExtraIn"
+            },
+            "maxItems": 200,
+            "title": "Extras",
+            "type": "array"
+          },
+          "hosts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EgressAddressesIn"
+            },
+            "maxItems": 5000,
+            "title": "Hosts",
+            "type": "array"
+          },
+          "jump_hosts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EgressAddressesIn"
+            },
+            "maxItems": 5000,
+            "title": "Jump Hosts",
+            "type": "array"
+          },
+          "unresolved": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EgressUnresolvedIn"
+            },
+            "maxItems": 5000,
+            "title": "Unresolved",
+            "type": "array"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "maxLength": 500,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "title": "EgressReportIn",
+        "type": "object"
+      },
+      "EgressUnresolvedIn": {
+        "properties": {
+          "address": {
+            "maxLength": 255,
+            "title": "Address",
+            "type": "string"
+          },
+          "host": {
+            "maxLength": 255,
+            "title": "Host",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 300,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "address",
+          "reason"
+        ],
+        "title": "EgressUnresolvedIn",
         "type": "object"
       },
       "EventsIn": {
@@ -403,6 +630,11 @@
       },
       "HeartbeatIn": {
         "properties": {
+          "egress_allowlist": {
+            "default": false,
+            "title": "Egress Allowlist",
+            "type": "boolean"
+          },
           "egress_filtered": {
             "anyOf": [
               {
@@ -1555,6 +1787,66 @@
           }
         },
         "summary": "Complete"
+      }
+    },
+    "/internal/runs/{run_id}/egress": {
+      "post": {
+        "description": "What a restricted run may reach, as the worker resolved it before starting the run.",
+        "operationId": "egress_report_internal_runs__run_id__egress_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-claim-token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "title": "X-Claim-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EgressReportIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Egress Report Internal Runs  Run Id  Egress Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Egress Report"
       }
     },
     "/internal/runs/{run_id}/events": {

@@ -11,6 +11,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.egress_allowlist import job_egress
 from app.env_credentials import env_problem, resolve_env
 from app.git_sync import snapshot_path, vars_texts
 from app.host_key_store import job_host_keys
@@ -161,6 +162,12 @@ def build_job(db: Session, run: Run) -> dict:
         raise RuntimeError(f"run {run.id}: group {run.group_name!r} is not in its inventory")
     inventory_text = render(graph, run.group_name)
     run.inventory_sha256 = hashlib.sha256(inventory_text.encode()).hexdigest()
+    egress = None
+    if run.egress_restricted:  # fixed when the run was claimed (app.queue)
+        try:
+            egress = job_egress(graph, run.group_name, run.extra_vars, inventory.egress_extras)
+        except ValueError as exc:
+            raise JobError(str(exc)) from None
 
     # A synced playbook runs inside its repository: the worker fetches the snapshot (a tar
     # of the commit) and checks it against this size and hash.
@@ -210,6 +217,8 @@ def build_job(db: Session, run: Run) -> dict:
         "secrets": sorted(secrets),
         "project": project,
         "host_keys": job_host_keys(db, run),
+        # The worker limits the run's network to these (app.worker.egress); None: unlimited.
+        "egress": egress,
         "env": env,
         "artifacts": {
             "max_bytes": get_settings().run_artifact_max_mb * 1024 * 1024,
