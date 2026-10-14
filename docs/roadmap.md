@@ -29,8 +29,6 @@ on long runs. The most recent release is the supported version.
 
 **Running playbooks**
 - Showing which inventory snapshot a run used; refreshing dynamic inventory before a run when asked.
-- Scanning hosts' SSH keys from a worker, to trust them before the first run (host keys are checked per
-  inventory since the release after v0.5.0).
 
 **Authoring**
 - More from the editor: completion of module names and options, and ansible-lint's fixes offered as edits.

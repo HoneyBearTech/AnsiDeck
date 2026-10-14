@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -23,8 +24,10 @@ import {
   type HostKey,
   type HostKeyMode,
   type HostKeys,
+  type HostKeyScan,
   type HostKeyStatus,
   type PastedHostKey,
+  type ScannedHostKey,
 } from "@/lib/api";
 
 const MODE_LABELS: Record<HostKeyMode, string> = {
@@ -175,6 +178,194 @@ function PasteDialog({
   );
 }
 
+const SCAN_STATES: Record<ScannedHostKey["state"], { label: string; variant: BadgeProps["variant"] }> = {
+  trusted: { label: "already trusted", variant: "ok" },
+  learned: { label: "matches the learned key", variant: "ok" },
+  new: { label: "new", variant: "outline" },
+  changed: { label: "differs from the trusted key", variant: "failed" },
+};
+
+function keyId(key: { name: string; key_type: string }): string {
+  return `${key.name} ${key.key_type}`;
+}
+
+function ScanDialog({
+  inventoryId,
+  onClose,
+  onSaved,
+}: {
+  inventoryId: number;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [extra, setExtra] = React.useState("");
+  const [scan, setScan] = React.useState<HostKeyScan | null>(null);
+  const [chosen, setChosen] = React.useState<Set<string>>(new Set());
+  const [error, setError] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const running = scan !== null && (scan.status === "queued" || scan.status === "running");
+
+  React.useEffect(() => {
+    if (!running || scan === null) return;
+    const timer = window.setTimeout(() => {
+      api
+        .getHostKeyScan(inventoryId, scan.id)
+        .then(setScan)
+        .catch((err) => setError(errorMessage(err)));
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [inventoryId, running, scan]);
+
+  async function start() {
+    setBusy(true);
+    setError(null);
+    try {
+      const names = extra.split(/[\s,]+/).filter(Boolean);
+      setScan(await api.scanHostKeys(inventoryId, names));
+      setChosen(new Set());
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function trust() {
+    if (!scan) return;
+    const keys = scan.keys.filter((k) => chosen.has(keyId(k)));
+    if (keys.some((k) => k.state === "changed")) {
+      const changed = keys.filter((k) => k.state === "changed").map((k) => k.name);
+      if (
+        !window.confirm(`Replace the trusted key of ${changed.join(", ")}? Only if you know why it changed.`)
+      ) {
+        return;
+      }
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.trustScannedHostKeys(
+        inventoryId,
+        scan.id,
+        keys.map(({ name, key_type }) => ({ name, key_type })),
+      );
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggle(key: ScannedHostKey, on: boolean) {
+    setChosen((current) => {
+      const next = new Set(current);
+      if (on) next.add(keyId(key));
+      else next.delete(keyId(key));
+      return next;
+    });
+  }
+
+  const finished = scan !== null && !running;
+  const choosable = scan?.keys.filter((k) => k.state !== "trusted") ?? [];
+  const learned = choosable.filter((k) => k.state === "learned");
+  return (
+    <Dialog open onOpenChange={(next) => !next && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Scan host keys</DialogTitle>
+          <DialogDescription>
+            A worker asks every host for its SSH keys, from where runs connect. Compare a fingerprint with the
+            host&apos;s own (<code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> on its console)
+            before you trust it: a scan shows what answered, not who.
+          </DialogDescription>
+        </DialogHeader>
+        {scan === null ? (
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="scan-extra">Jump hosts (optional)</Label>
+            <Input
+              id="scan-extra"
+              placeholder="bastion.example.com [10.0.0.1]:2222"
+              value={extra}
+              onChange={(event) => setExtra(event.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Every host of the inventory whose address is known is scanned; add the names of jump hosts to
+              scan them too.
+            </p>
+          </div>
+        ) : running ? (
+          <output className="block text-sm text-muted-foreground">
+            {scan.status === "queued" ? (scan.wait_reason ?? "Waiting for a worker…") : "Scanning…"}
+          </output>
+        ) : null}
+        {finished && scan && (
+          <div className="flex flex-col gap-3">
+            {scan.error && <p className="text-sm text-destructive">{scan.error}</p>}
+            {scan.keys.length > 0 && (
+              <ul className="flex max-h-96 flex-col gap-2 overflow-y-auto text-sm">
+                {scan.keys.map((key) => (
+                  <li key={keyId(key)} className="flex items-start gap-2">
+                    <Checkbox
+                      className="mt-1"
+                      aria-label={`Trust the ${key.key_type} key of ${key.name}`}
+                      disabled={key.state === "trusted"}
+                      checked={chosen.has(keyId(key))}
+                      onCheckedChange={(on) => toggle(key, on === true)}
+                    />
+                    <span className="flex min-w-0 flex-col">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono wrap-anywhere">{key.name}</span>
+                        <Badge variant="outline">{key.key_type}</Badge>
+                        <Badge variant={SCAN_STATES[key.state].variant}>{SCAN_STATES[key.state].label}</Badge>
+                        {key.hosts.length > 0 && (
+                          <span className="text-xs text-muted-foreground wrap-anywhere">
+                            {key.hosts.join(", ")}
+                          </span>
+                        )}
+                      </span>
+                      <span className="font-mono text-xs wrap-anywhere">{key.fingerprint}</span>
+                      {key.previous && (
+                        <span className="font-mono text-xs text-status-failed wrap-anywhere">
+                          trusted now: {key.previous}
+                        </span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {scan.silent.length > 0 && (
+              <p className="text-xs text-muted-foreground wrap-anywhere">
+                No key from {scan.silent.join(", ")} (unreachable, or not ssh).
+              </p>
+            )}
+          </div>
+        )}
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <DialogFooter className="gap-2">
+          {scan === null && (
+            <Button onClick={start} disabled={busy}>
+              Scan
+            </Button>
+          )}
+          {finished && learned.length > 0 && (
+            <Button variant="outline" onClick={() => setChosen(new Set(learned.map(keyId)))}>
+              Select the learned keys that match
+            </Button>
+          )}
+          {finished && choosable.length > 0 && (
+            <Button onClick={trust} disabled={busy || chosen.size === 0}>
+              Trust selected ({chosen.size})
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function KeyRow({
   hostKey,
   canManage,
@@ -240,6 +431,7 @@ export function HostKeysPanel({
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [pasting, setPasting] = React.useState(false);
+  const [scanning, setScanning] = React.useState(false);
   const error = actionError ?? loadError;
 
   const load = React.useCallback(() => {
@@ -328,6 +520,11 @@ export function HostKeysPanel({
               }}
             >
               Confirm learned ({learned.length})
+            </Button>
+          )}
+          {canManage && summary.hosts > 0 && (
+            <Button size="sm" variant="outline" onClick={() => setScanning(true)}>
+              Scan host keys
             </Button>
           )}
           {canManage && (
@@ -450,6 +647,7 @@ export function HostKeysPanel({
           ))}
         </div>
       </CardContent>
+      {scanning && <ScanDialog inventoryId={inventoryId} onClose={() => setScanning(false)} onSaved={load} />}
       {pasting && (
         <PasteDialog inventoryId={inventoryId} open onClose={() => setPasting(false)} onSaved={load} />
       )}

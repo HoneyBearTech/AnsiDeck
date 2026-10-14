@@ -9,7 +9,8 @@ Rules, in this order:
   inventory may be claimed, so a busy inventory's runs can't overtake each other;
 - a run whose inventory checks SSH host keys goes only to a worker that does (one from before
   app.host_keys would run it unchecked). Its mode is fixed when it is claimed.
-Inventory refreshes and playbook checks (lints) are claimed the same way, before runs.
+Inventory refreshes, playbook checks (lints) and host key scans are claimed the same way, before
+runs.
 """
 
 import hashlib
@@ -141,6 +142,36 @@ _CLAIM_LINT = text(
 )
 
 
+# A host key scan: the oldest queued one whose inventory has none running. Scans load no
+# roles or collections, so they don't wait for galaxy installs.
+_CLAIM_KEYSCAN = text(
+    """
+    WITH candidate AS (
+        SELECT s.id FROM host_key_scans s
+        WHERE s.status = 'queued'
+          AND NOT EXISTS (
+              SELECT 1 FROM host_key_scans busy
+              WHERE busy.inventory_id = s.inventory_id AND busy.status = 'running')
+        ORDER BY s.queued_at, s.id
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+    )
+    UPDATE host_key_scans SET
+        status = 'running',
+        claimed_at = now(),
+        heartbeat_at = now(),
+        lease_expires_at = now() + make_interval(secs => :lease),
+        worker_id = :worker_id,
+        claim_token_hash = :claim_hash,
+        job_token_hash = :job_hash,
+        job_token_expires_at = now() + make_interval(secs => :job_ttl)
+    FROM candidate
+    WHERE host_key_scans.id = candidate.id
+    RETURNING host_key_scans.id
+    """
+)
+
+
 @dataclass(frozen=True)
 class Claim:
     """A claimed run, or (kind "refresh" / "lint") a claimed inventory refresh or playbook
@@ -265,11 +296,13 @@ def wait_reason(db: Session, run: Run) -> str:
 def claim_next(
     db: Session, worker_id: str, kinds: tuple[str, ...] = ("run",), host_keys: bool = False
 ) -> Claim | None:
-    """Checks first, then refreshes (both short, and someone is waiting for them), then runs.
-    A worker gets only the kinds it lists: one from before 4G never gets a refresh, one from
-    before 5B never a check, and one that doesn't check SSH host keys only runs whose inventory
-    doesn't ask it to."""
+    """Checks and host key scans first, then refreshes (all short, and someone is waiting for
+    them), then runs. A worker gets only the kinds it lists: one from before 4G never gets a
+    refresh, one from before 5B never a check, one from before scans never a scan, and one that
+    doesn't check SSH host keys only runs whose inventory doesn't ask it to."""
     if "lint" in kinds and (claim := _claim_lint(db, worker_id)) is not None:
+        return claim
+    if "keyscan" in kinds and (claim := _claim_keyscan(db, worker_id)) is not None:
         return claim
     if "refresh" in kinds and (claim := _claim_refresh(db, worker_id)) is not None:
         return claim
@@ -302,6 +335,25 @@ def _claim_lint(db: Session, worker_id: str) -> Claim | None:
         return None
     db.commit()
     return Claim(lint_id, claim_token, job_token, kind="lint")
+
+
+def _claim_keyscan(db: Session, worker_id: str) -> Claim | None:
+    claim_token, job_token = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+    scan_id = db.scalar(
+        _CLAIM_KEYSCAN,
+        {
+            "lease": get_settings().run_lease_seconds,
+            "worker_id": worker_id[:255],
+            "claim_hash": hash_token(claim_token),
+            "job_hash": hash_token(job_token),
+            "job_ttl": JOB_TOKEN_SECONDS,
+        },
+    )
+    if scan_id is None:
+        db.rollback()
+        return None
+    db.commit()
+    return Claim(scan_id, claim_token, job_token, kind="keyscan")
 
 
 def _claim_refresh(db: Session, worker_id: str) -> Claim | None:

@@ -31,6 +31,9 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- **Scan host keys**: a worker runs `ssh-keyscan` against an inventory's hosts (and jump hosts you name),
+  from where runs connect, and a project admin picks which of the presented keys to trust, with keys that
+  differ from the trusted ones marked. Workers must be upgraded to take scans.
 - **SSH host keys** on an inventory's page: its mode, the hosts without a trusted key, and the keys (who
   pasted or which run learned them). Project admins switch the mode, paste known_hosts lines (with a preview
   of what changes), confirm learned keys and remove keys. A run's page names the hosts whose key ssh refused

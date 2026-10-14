@@ -65,7 +65,7 @@ In the backend container (`docker compose exec backend python -m app.cli …`):
 
 | Interface | Used for | Protocol | Configured by |
 | --- | --- | --- | --- |
-| Managed hosts | running playbooks | SSH (Ansible), from the workers | inventories and credentials |
+| Managed hosts | running playbooks, scanning their SSH host keys | SSH (Ansible, ssh-keyscan), from the workers | inventories and credentials |
 | Inventory sources | dynamic inventory (NetBox, clouds, …) | each plugin's API, from the workers | inventory sources |
 | Git remotes | syncing playbooks | HTTPS or SSH, from the API | git sources |
 | Ansible Galaxy | installing roles and collections | HTTPS | the Galaxy page |

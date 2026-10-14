@@ -380,6 +380,28 @@ def lint_in_worker(
     return outcome or None
 
 
+def keyscan_in_worker(
+    job: dict,
+    env: dict[str, str],
+    handle: ExecutionHandle | None = None,
+    identity: RunIdentity | None = None,
+) -> dict | None:
+    """A host key scan in the run process (app.run_worker, mode "keyscan"), as `identity`
+    when given. Returns the "keyscan_result" message, or None if the process died without
+    one. RunRefused if it couldn't be set up."""
+    outcome: dict = {}
+
+    def on_message(message: dict) -> None:
+        if message["type"] == "keyscan_result":
+            outcome.update(message)
+
+    run_in_worker(
+        {**job, "mode": "keyscan"}, env, lambda _event: None, handle, identity,
+        on_message=on_message,
+    )  # fmt: skip
+    return outcome or None
+
+
 class RunRefused(Exception):
     """The run process refused to start the run (its message is safe to show)."""
 

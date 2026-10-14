@@ -13,12 +13,15 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.db import get_db
 from app.hardening import client_ip
+from app.host_key_scans import ScanError, enqueue_scan, scan_targets, wait_reason
 from app.host_key_store import TooManyKeys, trust
-from app.host_keys import HostAddress, host_addresses, parse_known_hosts
+from app.host_keys import HostAddress, KnownHost, host_addresses, parse_known_hosts
 from app.inventory_render import merge, static_data
 from app.inventory_sources import has_sources
-from app.models import Inventory, InventoryHostKey, InventorySnapshot, User
+from app.models import HostKeyScan, Inventory, InventoryHostKey, InventorySnapshot, RunStatus, User
+from app.notify import notifier
 from app.permissions import Permission, Scope, guard
+from app.queue import QUEUE_TOPIC
 from app.schemas.host_keys import (
     ConfirmIn,
     HostKeyHost,
@@ -29,6 +32,10 @@ from app.schemas.host_keys import (
     PastedKey,
     PasteIn,
     PasteOut,
+    ScanIn,
+    ScannedKey,
+    ScanOut,
+    TrustIn,
 )
 from app.scoping import get_scoped
 
@@ -283,3 +290,129 @@ def remove_host_key(
     db.delete(row)
     db.commit()
     _audit(db, "inventory.remove_host_key", user, request, inventory, **detail)
+
+
+def _scan(db: Session, inventory: Inventory, scan_id: int) -> HostKeyScan:
+    scan = db.get(HostKeyScan, scan_id)
+    if scan is None or scan.inventory_id != inventory.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Scan not found")
+    return scan
+
+
+def _scan_out(db: Session, inventory: Inventory, scan: HostKeyScan) -> ScanOut:
+    users = _users(_addresses(db, inventory))
+    existing = {(k.name, k.key_type): k for k in _keys(db, inventory)}
+    keys = []
+    for found in scan.results or []:
+        row = existing.get((found["name"], found["key_type"]))
+        if row is None:
+            state, previous = "new", None
+        elif row.key_b64 != found["key_b64"]:
+            state, previous = "changed", row.fingerprint
+        else:
+            state, previous = ("trusted" if row.confirmed else "learned"), None
+        keys.append(
+            ScannedKey(
+                name=found["name"],
+                key_type=found["key_type"],
+                fingerprint=found["fingerprint"],
+                hosts=users.get(found["name"], [])[:20],
+                state=state,
+                previous=previous,
+            )
+        )
+    answered = {k["name"] for k in scan.results or []}
+    finished = scan.status not in (RunStatus.QUEUED.value, RunStatus.RUNNING.value)
+    return ScanOut(
+        id=scan.id,
+        status=scan.status,
+        wait_reason=wait_reason(db) if scan.status == RunStatus.QUEUED.value else None,
+        error=scan.error,
+        requested_by=scan.requested_by,
+        queued_at=scan.queued_at,
+        finished_at=scan.finished_at,
+        targets=len(scan.targets),
+        keys=keys,
+        silent=[t["name"] for t in scan.targets if t["name"] not in answered] if finished else [],
+    )
+
+
+@router.post("/host-key-scans", response_model=ScanOut, status_code=status.HTTP_202_ACCEPTED)
+def start_scan(
+    inventory_id: int,
+    body: ScanIn,
+    request: Request,
+    user: User = Depends(_manage),
+    db: Session = Depends(get_db),
+) -> ScanOut:
+    """Scans the hosts' SSH keys from a worker (where runs connect from). Returns the
+    inventory's scan already waiting or running instead of starting another."""
+    inventory = _inventory(db, user, request, inventory_id, Permission.SOURCES_MANAGE)
+    try:
+        targets = scan_targets(_addresses(db, inventory), body.hosts, body.extra)
+    except ScanError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    scan, new = enqueue_scan(db, inventory, user, targets)
+    db.commit()
+    if new:
+        notifier.notify(QUEUE_TOPIC)
+        _audit(db, "inventory.host_key_scan", user, request, inventory, targets=len(targets))
+    return _scan_out(db, inventory, scan)
+
+
+@router.get("/host-key-scans/{scan_id}", response_model=ScanOut)
+def get_scan(
+    inventory_id: int,
+    scan_id: int,
+    request: Request,
+    user: User = Depends(_manage),
+    db: Session = Depends(get_db),
+) -> ScanOut:
+    inventory = _inventory(db, user, request, inventory_id, Permission.SOURCES_MANAGE)
+    return _scan_out(db, inventory, _scan(db, inventory, scan_id))
+
+
+@router.post("/host-keys/trust", response_model=list[HostKeyOut])
+def trust_scanned_keys(
+    inventory_id: int,
+    body: TrustIn,
+    request: Request,
+    user: User = Depends(_manage),
+    db: Session = Depends(get_db),
+) -> list[HostKeyOut]:
+    """Trusts keys a scan of this inventory found: the keys come from the scan, never from
+    the request. A key replaces the inventory's key of the same name and type; trusting a
+    learned key confirms it."""
+    inventory = _inventory(db, user, request, inventory_id, Permission.SOURCES_MANAGE)
+    scan = _scan(db, inventory, body.scan_id)
+    found = {(k["name"], k["key_type"]): k for k in scan.results or []}
+    chosen = []
+    for item in body.keys:
+        key = found.get((item.name, item.key_type))
+        if key is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"The scan found no {item.key_type[:64]} key for {item.name[:300]}",
+            )
+        chosen.append(KnownHost(key["name"], key["key_type"], key["key_b64"], key["fingerprint"]))
+    try:
+        changes = trust(db, inventory, chosen, "scan", user.username)
+    except TooManyKeys as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    db.commit()
+    if changes:
+        _audit(
+            db,
+            "inventory.trust_host_key",
+            user,
+            request,
+            inventory,
+            source="scan",
+            scan_id=scan.id,
+            keys=changes[:_AUDITED_KEYS],
+            count=len(changes),
+        )
+    names = {(k.name, k.key_type) for k in chosen}
+    return [
+        HostKeyOut.model_validate(k) for k in _keys(db, inventory) if (k.name, k.key_type) in names
+    ]

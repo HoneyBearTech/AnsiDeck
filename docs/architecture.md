@@ -86,7 +86,8 @@ Inventory refreshes follow the same path, with `ansible-inventory` in place of `
 API validates and normalises the output before storing it as a snapshot. Playbook checks do too, with
 `ansible-lint` over an editor's text or a synced playbook's repository (`app/lint.py`): at most a few run
 at once, each person has one queued, and the findings, private to whoever asked, are pruned after an
-hour.
+hour. Host key scans too, with `ssh-keyscan` (`app/host_key_scans.py`): one at a time per inventory,
+pruned after an hour.
 
 ## Key properties
 

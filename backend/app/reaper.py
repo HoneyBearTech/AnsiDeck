@@ -16,6 +16,10 @@ from app.config import get_settings
 from app.db import get_sessionmaker
 from app.galaxy import try_start_install
 from app.git_sync import prune_snapshots
+from app.host_key_scans import QUEUE_TIMEOUT_SECONDS as SCAN_QUEUE_TIMEOUT_SECONDS
+from app.host_key_scans import TIMEOUT_GRACE_SECONDS as SCAN_TIMEOUT_GRACE_SECONDS
+from app.host_key_scans import end_scan, prune_scans
+from app.host_key_scans import wait_reason as scan_wait_reason
 from app.inventory_sources import due_inventories, end_refresh, enqueue_refresh
 from app.inventory_sources import prune_snapshots as prune_inventory_snapshots
 from app.jobs import UNRUNNABLE, unrunnable_reason
@@ -25,7 +29,15 @@ from app.lint import (
 from app.lint import TIMEOUT_GRACE_SECONDS as LINT_TIMEOUT_GRACE_SECONDS
 from app.lint import end_lint, prune_lint_jobs
 from app.lint import wait_reason as lint_wait_reason
-from app.models import GalaxyInstall, InventoryRefresh, LintJob, Run, RunStatus, Worker
+from app.models import (
+    GalaxyInstall,
+    HostKeyScan,
+    InventoryRefresh,
+    LintJob,
+    Run,
+    RunStatus,
+    Worker,
+)
 from app.notifications import WORKER_OFFLINE, WORKER_UNFILTERED, WORKER_UNISOLATED
 from app.notifications.alerts import clear_alerts
 from app.notifications.dispatch import prune as prune_deliveries
@@ -107,6 +119,46 @@ def reap_refreshes(db: Session) -> list[dict]:
     prune_inventory_snapshots(db)
     db.commit()
     return pending
+
+
+def reap_scans(db: Session) -> bool:
+    """Host key scans: ends those whose worker went away or overran, fails those nobody
+    claimed in time and prunes old ones. Returns whether any ended."""
+    ended = False
+
+    def lock(*where) -> list[HostKeyScan]:
+        return list(
+            db.scalars(
+                select(HostKeyScan)
+                .where(*where)
+                .order_by(HostKeyScan.id)
+                .limit(_BATCH)
+                .with_for_update(skip_locked=True)
+            )
+        )
+
+    running = HostKeyScan.status == RunStatus.RUNNING.value
+    for scan in lock(running, HostKeyScan.lease_expires_at < func.now()):
+        why = f"worker lost: no heartbeat from {scan.worker_id} since {_at(scan.heartbeat_at)}"
+        end_scan(scan, RunStatus.FAILED.value, error=why)
+        ended = True
+    began = func.coalesce(HostKeyScan.started_at, HostKeyScan.claimed_at)
+    limit = func.make_interval(
+        0, 0, 0, 0, 0, 0, HostKeyScan.timeout_seconds + SCAN_TIMEOUT_GRACE_SECONDS
+    )
+    for scan in lock(running, began + limit < func.now()):
+        why = (
+            f"timed out after {format_duration(scan.timeout_seconds)} (its worker did not stop it)"
+        )
+        end_scan(scan, RunStatus.TIMED_OUT.value, error=why)
+        ended = True
+    stale = func.now() - func.make_interval(0, 0, 0, 0, 0, 0, SCAN_QUEUE_TIMEOUT_SECONDS)
+    for scan in lock(HostKeyScan.status == RunStatus.QUEUED.value, HostKeyScan.queued_at < stale):
+        end_scan(scan, RunStatus.FAILED.value, error=f"not scanned: {scan_wait_reason(db)}")
+        ended = True
+    prune_scans(db)
+    db.commit()
+    return ended
 
 
 def reap_lints(db: Session) -> bool:
@@ -219,6 +271,13 @@ def reap_once() -> list[int]:
         except Exception:  # the next pass tries again
             db.rollback()
             logger.exception("could not reap playbook checks")
+
+        try:
+            if reap_scans(db):
+                notifier.notify(QUEUE_TOPIC)
+        except Exception:  # the next pass tries again
+            db.rollback()
+            logger.exception("could not reap host key scans")
 
         retention = func.make_interval(0, 0, 0, 0, 0, 0, WORKER_RETENTION_SECONDS)
         gone = db.scalars(
