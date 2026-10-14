@@ -125,7 +125,9 @@ plain text: a `{{ ... }}` in one is not evaluated during a refresh (it still is 
 1. **Add source** in the inventory's **Dynamic sources** card. Give it a name and the plugin's YAML config;
    the **Examples** buttons fill in a starting point. Don't put tokens in the config (everyone who can see
    the inventory can read it): put them in an **environment variables** credential, pick it under
-   **Credential**, and refer to them with `{{ lookup('env', 'NETBOX_TOKEN') }}`.
+   **Credential**, and refer to them with `{{ lookup('env', 'NETBOX_TOKEN') }}`. The AWS and Proxmox plugins
+   read their credentials from the environment by themselves (`AWS_ACCESS_KEY_ID` and
+   `AWS_SECRET_ACCESS_KEY`; `PROXMOX_TOKEN_ID` and `PROXMOX_TOKEN_SECRET`), so the credential is all they need.
 2. **Refresh now** runs every enabled source in a worker. The result is kept as a **snapshot**: the badge
    shows whether the last refresh worked, when, and how many hosts and groups it found, with any warnings
    (for example host names Ansible would misread, which are skipped).

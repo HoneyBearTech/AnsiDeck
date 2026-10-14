@@ -41,6 +41,9 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- The AWS (`amazon.aws.aws_ec2`) and Proxmox (`community.proxmox.proxmox`) inventory plugins work: the image
+  now ships boto3/botocore, requests and proxmoxer (also used by the AWS and Proxmox modules in playbooks).
+  The source dialog has examples for both. The backend image is larger by about 30 MB.
 - **Short-lived SSH certificates**: a credential of kind **SSH certificate** stores no key, only the secret
   store's SSH engine mount, a role and the users it may log in as. Each run gets a new key pair and a
   certificate the store signs for the run's timeout plus 5 minutes (or the role's maximum, with a warning),
