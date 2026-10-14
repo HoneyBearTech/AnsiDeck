@@ -680,7 +680,16 @@ export interface WorkerInfo {
   last_seen_at: string;
 }
 
-export type ChannelKind = "webhook" | "discord" | "slack" | "teams" | "email" | "pushbullet" | "pushover";
+export type ChannelKind =
+  | "webhook"
+  | "discord"
+  | "slack"
+  | "teams"
+  | "email"
+  | "pushbullet"
+  | "pushover"
+  | "ntfy"
+  | "gotify";
 
 export interface NotificationEvent {
   name: string;

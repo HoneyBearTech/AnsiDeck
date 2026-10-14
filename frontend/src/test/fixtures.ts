@@ -410,7 +410,7 @@ export const CATALOG: NotificationCatalog = {
     { name: "run.recovered", label: "Run recovered", description: "Back to green", project: true, group: "Runs" },
     { name: "worker.offline", label: "Worker offline", description: "No heartbeat", project: false, group: "Operations" },
   ],
-  kinds: ["webhook", "discord", "slack", "teams", "email", "pushbullet", "pushover"],
+  kinds: ["webhook", "discord", "slack", "teams", "email", "pushbullet", "pushover", "ntfy", "gotify"],
   email_available: true,
 };
 

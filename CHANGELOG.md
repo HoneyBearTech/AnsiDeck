@@ -31,6 +31,9 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- **ntfy** and **Gotify** notification channels: an ntfy topic (on ntfy.sh or your own server, with an
+  optional access token) or a Gotify server and application token. Self-hosted servers on your network go in
+  `NOTIFY_ALLOWED_PRIVATE_HOSTS`, as for webhooks.
 - **Scan host keys**: a worker runs `ssh-keyscan` against an inventory's hosts (and jump hosts you name),
   from where runs connect, and a project admin picks which of the presented keys to trust, with keys that
   differ from the trusted ones marked. Workers must be upgraded to take scans.

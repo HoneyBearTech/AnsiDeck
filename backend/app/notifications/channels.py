@@ -24,6 +24,7 @@ _DISCORD_HOSTS = {"discord.com", "discordapp.com", "ptb.discord.com", "canary.di
 PUSHBULLET_URL = "https://api.pushbullet.com/v2/pushes"
 PUSHOVER_URL = "https://api.pushover.net/1/messages.json"
 _TOKEN = re.compile(r"^[A-Za-z0-9._-]{8,200}$")
+_NTFY_TOPIC = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class ConfigError(ValueError):
@@ -62,6 +63,8 @@ def validate(kind: str, config: dict, settings: Settings) -> dict:
             raise ConfigError("Pushover needs an application API token and a user (or group) key")
         return {"token": token, "user_key": user}
     url = (config.get("url") or "").strip()
+    if kind in ("ntfy", "gotify"):
+        return _validate_push_server(kind, url, config, settings)
     if not url or len(url) > 2000:
         raise ConfigError("a webhook URL is required")
     parts = urlsplit(url)
@@ -86,6 +89,37 @@ def validate(kind: str, config: dict, settings: Settings) -> dict:
     return stored
 
 
+def _validate_push_server(kind: str, url: str, config: dict, settings: Settings) -> dict:
+    """ntfy: the topic's URL (https://ntfy.sh/alerts), an optional access token. Gotify: the
+    server's URL and an application token (sent in a header, never in the URL)."""
+    parts = urlsplit(url)
+    if not url or len(url) > 2000 or parts.query or parts.fragment:
+        what = (
+            "the topic's URL (https://ntfy.sh/your-topic)"
+            if kind == "ntfy"
+            else ("the Gotify server's URL")
+        )
+        raise ConfigError(f"{what} is required, without ?query or #fragment")
+    try:
+        safe_http.check(url, settings.notify_allowlist)
+    except DestinationError as exc:
+        raise ConfigError(str(exc)) from exc
+    token = (config.get("token") or "").strip()
+    if kind == "ntfy":
+        topic = parts.path.rstrip("/").rsplit("/", 1)[-1]
+        if not _NTFY_TOPIC.match(topic):
+            raise ConfigError("the URL must end in the topic: letters, digits, - and _")
+        if token and not _TOKEN.match(token):
+            raise ConfigError("an ntfy access token looks like tk_… (letters and digits)")
+        stored = {"url": url.rstrip("/")}
+        if token:
+            stored["token"] = token
+        return stored
+    if not _TOKEN.match(token):
+        raise ConfigError("Gotify needs an application token (Apps > Create Application)")
+    return {"url": url.rstrip("/"), "token": token}
+
+
 def seal(config: dict) -> bytes:
     return encrypt_secret(json.dumps(config).encode())
 
@@ -104,6 +138,18 @@ def describe(kind: str, config: dict) -> dict:
     if kind == "pushover":
         return {"target": "Pushover", "recipients": None, "has_secret": True}
     parts = urlsplit(config["url"])
+    if kind == "ntfy":  # the topic is a password on a public server: never shown
+        return {
+            "target": f"ntfy {parts.scheme}://{parts.netloc}/…",
+            "recipients": None,
+            "has_secret": bool(config.get("token")),
+        }
+    if kind == "gotify":
+        return {
+            "target": f"Gotify {parts.scheme}://{parts.netloc}{parts.path}",
+            "recipients": None,
+            "has_secret": True,
+        }
     tail = (parts.path + (f"?{parts.query}" if parts.query else ""))[-4:]
     return {
         "target": f"{parts.scheme}://{parts.hostname}/…{tail}",
@@ -181,6 +227,15 @@ def send(
     elif channel.kind == "pushover":
         url = PUSHOVER_URL
         body = render.to_json(render.pushover(message, config["token"], config["user_key"]))
+    elif channel.kind == "ntfy":
+        # JSON publishing goes to the server's root, the topic in the body.
+        base, topic = config["url"].rsplit("/", 1)
+        url, body = base + "/", render.to_json(render.ntfy(message, topic))
+        if config.get("token"):
+            headers["Authorization"] = f"Bearer {config['token']}"
+    elif channel.kind == "gotify":
+        url, body = config["url"] + "/message", render.to_json(render.gotify(message))
+        headers["X-Gotify-Key"] = config["token"]
     elif channel.kind == "discord":
         body = render.to_json(render.discord(message))
     elif channel.kind == "slack":

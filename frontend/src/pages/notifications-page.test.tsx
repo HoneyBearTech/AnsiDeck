@@ -1,4 +1,4 @@
-import { within } from "@testing-library/react";
+import { waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { reply } from "@/test/fake-api";
@@ -12,6 +12,10 @@ const PROJECT = "GET /projects/:id/notifications/channels";
 function section(title: string) {
   const heading = [...document.querySelectorAll("h2")].find((h) => h.textContent === title);
   return within(heading!.closest("section")!);
+}
+
+async function waitForDialogToClose(screen: { queryByRole: (role: string) => HTMLElement | null }) {
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 }
 
 describe("notifications", () => {
@@ -99,6 +103,56 @@ describe("notifications", () => {
     await user.click(dialog.getByRole("button", { name: "Save" }));
     await screen.findAllByText(/^No channels yet/);
     expect(api.requests("POST /projects/1/notifications/channels")[1]?.body).toMatchObject({ kind: "pushover", token: "tok", user_key: "usr" });
+  });
+
+  it("creates ntfy and Gotify channels and removes an ntfy access token", async () => {
+    const topic = channel({ id: 4, kind: "ntfy", name: "topic", has_secret: true, target: "ntfy https://ntfy.sh/…" });
+    const { api, user, screen } = renderApp("/notifications", {
+      routes: {
+        "GET /notifications/catalog": CATALOG,
+        [GLOBAL]: [topic],
+        [PROJECT]: [],
+        "POST /projects/:id/notifications/channels": channel(),
+        "PATCH /notifications/channels/:id": topic,
+      },
+    });
+    await screen.findByText("topic");
+    const team = section("Default channels");
+    await user.click(team.getByRole("button", { name: "New channel" }));
+    let dialog = within(await screen.findByRole("dialog"));
+    await user.type(dialog.getByLabelText("Name"), "phone");
+    await choose(user, dialog.getByLabelText("Send to"), "ntfy");
+    expect(dialog.getByText(/NOTIFY_ALLOWED_PRIVATE_HOSTS/)).toBeInTheDocument();
+    await user.type(dialog.getByLabelText("Topic URL"), "https://ntfy.sh/alerts");
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    await waitForDialogToClose(screen);
+    expect(api.requests("POST /projects/1/notifications/channels")[0]?.body).toMatchObject({
+      kind: "ntfy",
+      url: "https://ntfy.sh/alerts",
+    });
+    expect(api.requests("POST /projects/1/notifications/channels")[0]?.body).not.toHaveProperty("token");
+
+    await user.click(team.getByRole("button", { name: "New channel" }));
+    dialog = within(await screen.findByRole("dialog"));
+    await user.type(dialog.getByLabelText("Name"), "gotify");
+    await choose(user, dialog.getByLabelText("Send to"), "Gotify");
+    await user.type(dialog.getByLabelText("Server URL"), "http://gotify.lan");
+    await user.type(dialog.getByLabelText("Application token"), "Abcdefgh123");
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    await waitForDialogToClose(screen);
+    expect(api.requests("POST /projects/1/notifications/channels")[1]?.body).toMatchObject({
+      kind: "gotify",
+      url: "http://gotify.lan",
+      token: "Abcdefgh123",
+    });
+
+    const global = section("Global channels");
+    await user.click(global.getByRole("button", { name: "Edit" }));
+    dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("checkbox", { name: "Remove the access token" }));
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    await waitForDialogToClose(screen);
+    expect(api.requests("PATCH /notifications/channels/4")[0]?.body).toMatchObject({ token: "" });
   });
 
   it("edits a channel, removing its signing secret, and changes recipients", async () => {

@@ -1,7 +1,7 @@
 # Notifications
 
 **Notifications** sends events to Discord, Slack, Microsoft Teams (a Workflows webhook), a generic webhook,
-email, Pushbullet or Pushover. Messages carry names, statuses, counts and failed task and host names, never
+email, Pushbullet, Pushover, ntfy or Gotify. Messages carry names, statuses, counts and failed task and host names, never
 secrets or task output.
 
 ## Channels
@@ -15,6 +15,15 @@ user key, or email recipients, one per line), and the events. A generic webhook 
 secret**: requests then carry `X-AnsiDeck-Timestamp` and `X-AnsiDeck-Signature: sha256=<HMAC of
 "<timestamp>.<body>">`. URLs and tokens are stored encrypted and never shown again: when editing, leave them
 empty to keep them.
+
+- **ntfy**: the topic's URL, such as `https://ntfy.sh/your-topic` or one on your own server, and an access
+  token if the topic is protected. On a public server the topic name is the password: pick one nobody can
+  guess. Failures arrive with high priority.
+- **Gotify**: the server's URL and an application's token (**Apps → Create Application**). Failures arrive
+  with priority 8.
+
+A server on your own network (an address that isn't public) must be listed in `NOTIFY_ALLOWED_PRIVATE_HOSTS`;
+plain `http://` works only for those.
 
 On each channel: a switch turns it off and on, **Send test** sends a test message, **History** shows the
 recent deliveries (with errors and retries), **Edit** and **Delete** (after a confirmation). The last

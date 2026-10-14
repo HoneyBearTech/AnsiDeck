@@ -37,6 +37,8 @@ const KIND_LABELS: Record<ChannelKind, string> = {
   email: "Email",
   pushbullet: "Pushbullet",
   pushover: "Pushover",
+  ntfy: "ntfy",
+  gotify: "Gotify",
 };
 
 const URL_HINTS: Partial<Record<ChannelKind, string>> = {
@@ -44,14 +46,29 @@ const URL_HINTS: Partial<Record<ChannelKind, string>> = {
   slack: "https://hooks.slack.com/services/…",
   teams: "A Teams Workflows webhook URL (“When a Teams webhook request is received”)",
   webhook: "https://example.com/ansideck-hook",
+  ntfy: "https://ntfy.sh/your-topic",
+  gotify: "https://gotify.example.com",
 };
+
+const URL_LABELS: Partial<Record<ChannelKind, string>> = { ntfy: "Topic URL", gotify: "Server URL" };
 
 function errorMessage(err: unknown): string {
   return err instanceof ApiError ? err.message : "Something went wrong";
 }
 
 function usesUrl(kind: ChannelKind): boolean {
-  return kind === "discord" || kind === "slack" || kind === "teams" || kind === "webhook";
+  return ["discord", "slack", "teams", "webhook", "ntfy", "gotify"].includes(kind);
+}
+
+const TOKEN_LABELS: Partial<Record<ChannelKind, string>> = {
+  pushbullet: "Access token",
+  pushover: "Application API token",
+  gotify: "Application token",
+  ntfy: "Access token (optional)",
+};
+
+function usesToken(kind: ChannelKind): boolean {
+  return kind in TOKEN_LABELS;
 }
 
 function deliveryVariant(status: string): "ok" | "failed" | "changed" | "skipped" {
@@ -118,7 +135,8 @@ function ChannelDialog({
       if (removeSecret) out.secret = "";
       else if (secret) out.secret = secret;
     }
-    if ((kind === "pushbullet" || kind === "pushover") && token.trim()) out.token = token.trim();
+    if (kind === "ntfy" && removeSecret) out.token = "";
+    else if (usesToken(kind) && token.trim()) out.token = token.trim();
     if (kind === "pushover" && userKey.trim()) out.user_key = userKey.trim();
     if (kind === "email") {
       const list = recipients
@@ -187,7 +205,7 @@ function ChannelDialog({
           )}
           {usesUrl(kind) && (
             <div className="flex flex-col gap-2">
-              <Label htmlFor="channel-url">Webhook URL</Label>
+              <Label htmlFor="channel-url">{URL_LABELS[kind] ?? "Webhook URL"}</Label>
               <Input
                 id="channel-url"
                 type="password"
@@ -220,19 +238,29 @@ function ChannelDialog({
               )}
             </div>
           )}
-          {(kind === "pushbullet" || kind === "pushover") && (
+          {usesToken(kind) && (
             <div className="flex flex-col gap-2">
-              <Label htmlFor="channel-token">
-                {kind === "pushbullet" ? "Access token" : "Application API token"}
-              </Label>
+              <Label htmlFor="channel-token">{TOKEN_LABELS[kind]}</Label>
               <Input
                 id="channel-token"
                 type="password"
                 autoComplete="off"
                 value={token}
-                placeholder={keep}
+                disabled={kind === "ntfy" && removeSecret}
+                placeholder={kind === "ntfy" && !channel?.has_secret ? "For a protected topic" : keep}
                 onChange={(e) => setToken(e.target.value)}
               />
+              {kind === "ntfy" && channel?.has_secret && (
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Checkbox checked={removeSecret} onCheckedChange={(v) => setRemoveSecret(v === true)} />
+                  Remove the access token
+                </label>
+              )}
+              {(kind === "ntfy" || kind === "gotify") && (
+                <p className="text-xs text-muted-foreground">
+                  A server on your own network needs its name in NOTIFY_ALLOWED_PRIVATE_HOSTS.
+                </p>
+              )}
             </div>
           )}
           {kind === "pushover" && (
@@ -541,7 +569,7 @@ export function NotificationsPage() {
     <div className="flex flex-col gap-8">
       <PageHeader
         title="Notifications"
-        description="Send events to Discord, Slack, Microsoft Teams, a webhook, email, Pushbullet or Pushover. Messages carry run details (names, status, failed task and host names) but never secrets or task output."
+        description="Send events to Discord, Slack, Microsoft Teams, a webhook, email, Pushbullet, Pushover, ntfy or Gotify. Messages carry run details (names, status, failed task and host names) but never secrets or task output."
       />
       {error && <p className="text-sm text-destructive">{error}</p>}
       {catalog && global && (

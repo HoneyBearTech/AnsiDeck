@@ -1,6 +1,6 @@
 """Notifications (Phase 4D): channels (Discord, Slack, Microsoft Teams, a generic webhook,
-email, Pushbullet, Pushover) subscribe to events; app.notifications.events writes one outbox
-row per matching channel in the same transaction as what happened, and
+email, Pushbullet, Pushover, ntfy, Gotify) subscribe to events; app.notifications.events writes
+one outbox row per matching channel in the same transaction as what happened, and
 app.notifications.dispatch sends them from the API process with retries. Workers never
 send anything (they have no key or database).
 
@@ -11,7 +11,9 @@ encrypted, shown masked, never logged or audited.
 
 from dataclasses import dataclass
 
-KINDS = ("webhook", "discord", "slack", "teams", "email", "pushbullet", "pushover")
+KINDS = (
+    "webhook", "discord", "slack", "teams", "email", "pushbullet", "pushover", "ntfy", "gotify"
+)  # fmt: skip
 
 RUN_FAILED = "run.failed"
 RUN_RECOVERED = "run.recovered"
