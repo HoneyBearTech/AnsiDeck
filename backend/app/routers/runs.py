@@ -54,7 +54,7 @@ from app.permissions import (
     two_factor_setup_required,
 )
 from app.queue import QUEUE_TOPIC, fail_run, wait_reason
-from app.schemas.runs import ArtifactsOut, RunCreate, RunOut
+from app.schemas.runs import ArtifactsOut, RunCreate, RunEgressOut, RunOut
 from app.scoping import get_scoped, readable_project_ids
 from app.storage import playbook_path, run_artifacts_path, run_log_path
 
@@ -89,6 +89,12 @@ def _run_out(db: Session, run: Run, user: User) -> RunOut:
     if out.extra_vars and not can_see:
         out.extra_vars = dict.fromkeys(out.extra_vars, HIDDEN)
     out.artifacts_count = len(run.artifacts_files or [])
+    if run.egress_allowlist:
+        out.egress_addresses = sum(
+            len(item.get("addresses") or [])
+            for part in ("hosts", "jump_hosts", "extras")
+            for item in run.egress_allowlist.get(part) or []
+        )
     return out
 
 
@@ -688,6 +694,23 @@ def export_log(
         headers={
             "Content-Disposition": f'attachment; filename="ansideck-run-{run.id}.{extension}"'
         },
+    )
+
+
+@router.get("/{run_id}/egress", response_model=RunEgressOut)
+def run_egress(
+    run_id: int,
+    request: Request,
+    user: User = Depends(_user_guard),
+    db: Session = Depends(get_db),
+) -> RunEgressOut:
+    """What a run on a restricted inventory could reach, as its worker resolved it before the
+    run started, and what it was refused."""
+    run = get_scoped(db, user, request, Run, run_id, Permission.CONTENT_READ, "Run not found")
+    return RunEgressOut(
+        restricted=bool(run.egress_restricted),
+        allowlist=run.egress_allowlist,
+        refused=run.egress_refused or [],
     )
 
 

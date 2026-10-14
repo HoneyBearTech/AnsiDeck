@@ -9,7 +9,9 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Upgrading
 
-- The API applies database migrations 0017 to 0026 when it starts.
+- The API applies database migrations 0017 to 0027 when it starts.
+- Runs on inventories that restrict network egress (none until a project admin turns it on) wait for a
+  worker of this release whose egress filter is on.
 - **Passkeys need `PUBLIC_URL`** set to the address people open AnsiDeck at (`https://`, or `http://localhost`
   to try it out). The production `compose.yaml` now passes `PUBLIC_URL` and `REQUIRE_ADMIN_2FA` on from
   `.env`: replace it with this release's.
@@ -39,6 +41,11 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- **Runs limited to their inventory's hosts**: on an inventory set to **Only its hosts** (project admins,
+  under **Network**; off by default), a run may reach only its hosts' addresses (any port), the first jump
+  host of each, the inventory's extra entries (addresses, networks or names, with ports) and DNS; everything
+  else is refused and listed on the run's page. The worker enforces it per slot with nftables; a run whose
+  hosts' addresses can't be known before it starts doesn't start.
 - **Passkeys** as a second factor beside authenticator apps: add up to ten under **Account** (password,
   then the browser's prompt), rename and remove them, and sign in with **Use a passkey**. Recovery codes
   now stand in for any second factor. Removing a second factor needs the password and a current one.

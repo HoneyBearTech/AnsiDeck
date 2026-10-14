@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -17,10 +18,13 @@ from app.internal_api import internal_app
 from app.models import AuditEvent, Run
 from app.reaper import reap_once
 from app.run_executor import kill_leftovers
+from app.run_isolation import identity_for_slot
+from app.worker import runner
 from app.worker import settings as worker_settings
 from app.worker.__main__ import FORBIDDEN_ENV, load_settings
 from app.worker.client import ApiClient, ApiUnavailable
-from app.worker.runner import MAX_EVENT_BYTES, _bounded
+from app.worker.egress import EgressError, EgressRefused
+from app.worker.runner import MAX_EVENT_BYTES, RunTask, Worker, _bounded
 from tests.conftest import start_worker
 from tests.test_runs import (
     FAILURE_PLAYBOOK,
@@ -381,3 +385,137 @@ def test_run_lists_filter_by_status_and_limit(client, tmp_path) -> None:
     assert {r["id"] for r in both} == {first, second}
     assert client.get("/api/runs", params={"status": "nope"}).status_code == 422
     assert client.get("/api/runs", params={"limit": 0}).status_code == 422
+
+
+# ------------------------------------------------------------------ egress allowlists
+
+
+class _FakeFilter:
+    def __init__(self) -> None:
+        self.healthy = True
+        self.allowlists_ready = True
+        self.calls: list[tuple] = []
+        self.fail_release = 0
+        self.fail_allow = False
+        self.refused_list: list[dict] = []
+
+    def allow(self, identity, allowlist) -> None:
+        if self.fail_allow:
+            raise EgressError("nft broke")
+        self.calls.append(("allow", identity.uid, allowlist))
+
+    def release(self, identity) -> None:
+        if self.fail_release:
+            self.fail_release -= 1
+            raise EgressError("busy")
+        self.calls.append(("release", identity.uid))
+
+    def refused(self, identity) -> list[dict]:
+        return self.refused_list
+
+
+class _FakeClient:
+    def __init__(self, status: int = 200) -> None:
+        self.status = status
+        self.posts: list[tuple[str, dict]] = []
+
+    def post(self, path: str, body: dict, claim_token: str | None = None, timeout=None):
+        self.posts.append((path, body))
+        return types.SimpleNamespace(status_code=self.status)
+
+
+def _egress_worker(status: int = 200) -> tuple[Worker, _FakeFilter, _FakeClient]:
+    egress_filter, fake_client = _FakeFilter(), _FakeClient(status)
+    worker = Worker(fake_client, worker_id="w", egress_filter=egress_filter)
+    return worker, egress_filter, fake_client
+
+
+SPEC = {"hosts": [{"host": "web1", "address": "192.0.2.1", "required": True}]}
+
+
+def test_the_worker_offers_allowlists_only_while_its_filter_is_healthy_and_tested() -> None:
+    worker, egress_filter, _ = _egress_worker()
+    assert worker.egress_allowlist() is True
+    egress_filter.healthy = False
+    assert worker.egress_allowlist() is False
+    egress_filter.healthy, egress_filter.allowlists_ready = True, False
+    assert worker.egress_allowlist() is False
+    assert Worker(_FakeClient(), worker_id="w").egress_allowlist() is False
+
+
+def test_a_restricted_run_is_allowlisted_and_reported_before_it_starts() -> None:
+    worker, egress_filter, fake_client = _egress_worker()
+    slot = identity_for_slot(2)
+    assert worker._restrict(RunTask(7, "claim"), SPEC, slot) is None
+    [(action, uid, allowlist)] = egress_filter.calls
+    assert (action, uid, [str(n) for n in allowlist.hosts]) == ("allow", 20002, ["192.0.2.1/32"])
+    [(path, report)] = fake_client.posts
+    assert path == "/internal/runs/7/egress"
+    assert report["hosts"] == [{"host": "web1", "address": "192.0.2.1", "addresses": ["192.0.2.1"]}]
+    assert slot.uid in worker._allowlisted  # until the slot is swept
+
+
+def test_a_restricted_run_that_cant_be_allowlisted_is_refused(monkeypatch) -> None:
+    worker, egress_filter, _ = _egress_worker()
+    task = RunTask(7, "claim")
+    assert worker._restrict(task, SPEC, None) == "this worker can't restrict network egress"
+    egress_filter.allowlists_ready = False
+    assert worker._restrict(task, SPEC, identity_for_slot(0)) == (
+        "this worker can't restrict network egress"
+    )
+    egress_filter.allowlists_ready = True
+
+    def unresolvable(spec):
+        raise EgressRefused("its inventory restricts network egress, and web3's address ...")
+
+    monkeypatch.setattr(runner, "resolve_allowlist", unresolvable)
+    assert worker._restrict(task, SPEC, identity_for_slot(0)).startswith("its inventory restricts")
+    monkeypatch.undo()
+    egress_filter.fail_allow = True
+    assert worker._restrict(task, SPEC, identity_for_slot(0)) == (
+        "the worker couldn't restrict its network egress"
+    )
+    refused_report, _, _ = _egress_worker(status=410)
+    assert refused_report._restrict(task, SPEC, identity_for_slot(0)) == (
+        "the worker couldn't report its network allowlist"
+    )
+    assert identity_for_slot(0).uid in refused_report._allowlisted  # released after the sweep
+
+
+def test_the_allowlist_is_lifted_only_after_the_sweep(monkeypatch) -> None:
+    worker, egress_filter, _ = _egress_worker()
+    slot = identity_for_slot(1)
+    worker._allowlisted.add(slot.uid)
+    monkeypatch.setattr(
+        runner, "sweep", lambda identity: egress_filter.calls.append(("sweep",)) or True
+    )
+    worker._stopping.set()  # straight to the slot's last clean-up
+    worker._slot(slot)
+    assert egress_filter.calls == [("sweep",), ("release", 20001)]
+    assert worker._allowlisted == set()
+
+
+def test_a_slot_doesnt_claim_until_its_allowlist_is_released(monkeypatch) -> None:
+    worker, egress_filter, _ = _egress_worker()
+    slot = identity_for_slot(1)
+    monkeypatch.setattr(runner, "_DIRTY_SLOT_RETRY_SECONDS", 0.01)
+    assert worker._release_until_done(slot) is True and egress_filter.calls == []  # none
+    worker._allowlisted.add(slot.uid)
+    egress_filter.fail_release = 2
+    assert worker._release_until_done(slot) is True
+    assert egress_filter.calls == [("release", 20001)]
+    worker._allowlisted.add(slot.uid)
+    egress_filter.fail_release = 10**6
+    worker._stopping.set()
+    assert worker._release_until_done(slot) is False  # stopping wins
+
+
+def test_refused_connections_reach_complete() -> None:
+    worker, egress_filter, fake_client = _egress_worker()
+    egress_filter.refused_list = [{"address": "203.0.113.5", "protocol": "tcp", "port": 443}]
+    refused = worker._egress_refused(identity_for_slot(0))
+    worker._complete(RunTask(7, "claim"), 0, "failed", None, 2, {}, egress_refused=refused)
+    [(path, body)] = fake_client.posts
+    assert path == "/internal/runs/7/complete"
+    assert body["egress_refused"] == egress_filter.refused_list
+    assert worker._egress_refused(None) is None

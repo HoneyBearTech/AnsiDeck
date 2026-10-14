@@ -1330,6 +1330,288 @@
         "title": "DeliveryOut",
         "type": "object"
       },
+      "EgressExtra": {
+        "description": "An address, a network (CIDR) or a host name runs may also reach; `ports` like \"443\",\n\"80,443\" or \"8000-8100\" (tcp and udp), empty or None for any port.",
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "ports": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ports"
+          },
+          "target": {
+            "maxLength": 255,
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "title": "EgressExtra",
+        "type": "object"
+      },
+      "EgressExtraOut": {
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "ports": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ports"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "ports"
+        ],
+        "title": "EgressExtraOut",
+        "type": "object"
+      },
+      "EgressExtrasIn": {
+        "properties": {
+          "extras": {
+            "items": {
+              "$ref": "#/components/schemas/EgressExtra"
+            },
+            "maxItems": 200,
+            "title": "Extras",
+            "type": "array"
+          }
+        },
+        "required": [
+          "extras"
+        ],
+        "title": "EgressExtrasIn",
+        "type": "object"
+      },
+      "EgressHost": {
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "connection": {
+            "title": "Connection",
+            "type": "string"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "jump_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jump Host"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "local",
+              "indirect",
+              "unknown"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "connection",
+          "status"
+        ],
+        "title": "EgressHost",
+        "type": "object"
+      },
+      "EgressModeIn": {
+        "properties": {
+          "restricted": {
+            "title": "Restricted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "restricted"
+        ],
+        "title": "EgressModeIn",
+        "type": "object"
+      },
+      "EgressOut": {
+        "properties": {
+          "extras": {
+            "items": {
+              "$ref": "#/components/schemas/EgressExtraOut"
+            },
+            "title": "Extras",
+            "type": "array"
+          },
+          "hosts": {
+            "items": {
+              "$ref": "#/components/schemas/EgressHost"
+            },
+            "title": "Hosts",
+            "type": "array"
+          },
+          "restricted": {
+            "title": "Restricted",
+            "type": "boolean"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/EgressSummary"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "restricted",
+          "extras",
+          "hosts",
+          "total",
+          "summary",
+          "warnings"
+        ],
+        "title": "EgressOut",
+        "type": "object"
+      },
+      "EgressRefused": {
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "port": {
+            "title": "Port",
+            "type": "integer"
+          },
+          "protocol": {
+            "title": "Protocol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "address",
+          "protocol",
+          "port"
+        ],
+        "title": "EgressRefused",
+        "type": "object"
+      },
+      "EgressSummary": {
+        "properties": {
+          "hosts": {
+            "title": "Hosts",
+            "type": "integer"
+          },
+          "indirect": {
+            "title": "Indirect",
+            "type": "integer"
+          },
+          "local": {
+            "title": "Local",
+            "type": "integer"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "integer"
+          },
+          "unknown": {
+            "title": "Unknown",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "hosts",
+          "ok",
+          "local",
+          "indirect",
+          "unknown"
+        ],
+        "title": "EgressSummary",
+        "type": "object"
+      },
       "EventOut": {
         "properties": {
           "description": {
@@ -2707,6 +2989,11 @@
             ],
             "title": "Description"
           },
+          "egress_restricted": {
+            "default": false,
+            "title": "Egress Restricted",
+            "type": "boolean"
+          },
           "groups": {
             "items": {
               "$ref": "#/components/schemas/GroupOut"
@@ -2824,6 +3111,11 @@
               }
             ],
             "title": "Description"
+          },
+          "egress_restricted": {
+            "default": false,
+            "title": "Egress Restricted",
+            "type": "boolean"
           },
           "host_key_checking": {
             "title": "Host Key Checking",
@@ -4370,6 +4662,40 @@
         "title": "RunCreate",
         "type": "object"
       },
+      "RunEgressOut": {
+        "properties": {
+          "allowlist": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowlist"
+          },
+          "refused": {
+            "items": {
+              "$ref": "#/components/schemas/EgressRefused"
+            },
+            "title": "Refused",
+            "type": "array"
+          },
+          "restricted": {
+            "title": "Restricted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "restricted",
+          "allowlist",
+          "refused"
+        ],
+        "title": "RunEgressOut",
+        "type": "object"
+      },
       "RunOut": {
         "properties": {
           "artifacts_bytes": {
@@ -4492,6 +4818,42 @@
           "diff_mode": {
             "title": "Diff Mode",
             "type": "boolean"
+          },
+          "egress_addresses": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Egress Addresses"
+          },
+          "egress_refused": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/EgressRefused"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Egress Refused"
+          },
+          "egress_restricted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Egress Restricted"
           },
           "env_credential_ids": {
             "anyOf": [
@@ -6662,6 +7024,17 @@
       },
       "WorkerOut": {
         "properties": {
+          "egress_allowlist": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Egress Allowlist"
+          },
           "egress_filtered": {
             "anyOf": [
               {
@@ -9884,6 +10257,293 @@
           }
         },
         "summary": "Update Inventory",
+        "tags": [
+          "inventories"
+        ]
+      }
+    },
+    "/api/inventories/{inventory_id}/egress": {
+      "get": {
+        "description": "The setting, its extra entries, and for each host (a page, filtered by `q` on the host\nor its address, and with `problems` to those whose address isn't known) where its\nconnections go. Extra vars a run is started with can change an address.",
+        "operationId": "get_egress_api_inventories__inventory_id__egress_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inventory_id",
+            "required": true,
+            "schema": {
+              "title": "Inventory Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "problems",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Problems",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EgressOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Egress",
+        "tags": [
+          "inventories"
+        ]
+      }
+    },
+    "/api/inventories/{inventory_id}/egress/extras": {
+      "put": {
+        "description": "Replaces the extra entries (addresses, networks or host names, with ports or not).",
+        "operationId": "set_egress_extras_api_inventories__inventory_id__egress_extras_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inventory_id",
+            "required": true,
+            "schema": {
+              "title": "Inventory Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EgressExtrasIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EgressExtraOut"
+                  },
+                  "title": "Response Set Egress Extras Api Inventories  Inventory Id  Egress Extras Put",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Egress Extras",
+        "tags": [
+          "inventories"
+        ]
+      }
+    },
+    "/api/inventories/{inventory_id}/egress/mode": {
+      "put": {
+        "description": "Applies to runs claimed from now on (queued ones included); running runs keep theirs.",
+        "operationId": "set_egress_mode_api_inventories__inventory_id__egress_mode_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inventory_id",
+            "required": true,
+            "schema": {
+              "title": "Inventory Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EgressModeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EgressModeIn"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Egress Mode",
         "tags": [
           "inventories"
         ]
@@ -16631,6 +17291,81 @@
           }
         },
         "summary": "Cancel Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/runs/{run_id}/egress": {
+      "get": {
+        "description": "What a run on a restricted inventory could reach, as its worker resolved it before the\nrun started, and what it was refused.",
+        "operationId": "run_egress_api_runs__run_id__egress_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunEgressOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Egress",
         "tags": [
           "runs"
         ]

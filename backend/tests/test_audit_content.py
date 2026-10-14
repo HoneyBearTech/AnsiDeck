@@ -43,6 +43,9 @@ NOT_HERE = {
     ("DELETE", "/api/inventories/{inventory_id}/host-keys/{key_id}"),
     ("POST", "/api/inventories/{inventory_id}/host-keys/trust"),
     ("POST", "/api/inventories/{inventory_id}/host-key-scans"),  # tests/test_host_key_scans.py
+    # The network egress router (tests/test_inventory_egress.py)
+    ("PUT", "/api/inventories/{inventory_id}/egress/mode"),
+    ("PUT", "/api/inventories/{inventory_id}/egress/extras"),
 }
 
 

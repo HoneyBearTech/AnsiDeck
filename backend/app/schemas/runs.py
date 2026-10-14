@@ -37,12 +37,27 @@ class RunCreate(BaseModel):
         return v or None
 
 
+class EgressRefused(BaseModel):
+    address: str
+    protocol: str
+    port: int
+
+
 class HostKeyProblem(BaseModel):
     host: str
     problem: str  # changed, unknown, failed
     name: str | None = None
     key_type: str | None = None
     presented: str | None = None
+
+
+class RunEgressOut(BaseModel):
+    restricted: bool
+    # As the worker resolved it before the run started (app.worker.egress): hosts,
+    # jump_hosts and extras with their addresses, hosts that didn't resolve (behind a jump
+    # host or a proxy), warnings. None: not restricted, or not started.
+    allowlist: dict | None
+    refused: list[EgressRefused]
 
 
 class ArtifactsOut(BaseModel):
@@ -107,6 +122,12 @@ class RunOut(BaseModel):
     host_key_checking: str | None = None
     host_key_problems: list[HostKeyProblem] | None = None
     host_keys_learned: int | None = None
+    # Whether its network was limited to its inventory's hosts (None before it was claimed),
+    # how many addresses it could reach (GET /runs/{id}/egress lists them) and what it was
+    # refused ([{address, protocol, port}], the first 256).
+    egress_restricted: bool | None = None
+    egress_addresses: int | None = None
+    egress_refused: list[EgressRefused] | None = None
     # Runs of playbooks synced from git: where and at which commit they execute.
     git_source_name: str | None = None
     git_commit: str | None = None

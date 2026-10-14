@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { EgressPanel } from "@/components/egress-panel";
 import { HostKeysPanel } from "@/components/host-keys-panel";
 import { PageHeader } from "@/components/page-header";
 import { InventorySourcesPanel } from "@/components/inventory-sources-panel";
@@ -208,6 +209,13 @@ export function InventoryDetailPage() {
                 </Badge>
               </a>
             )}
+            {inventory.egress_restricted && (
+              <a href="#network-egress" className="no-underline">
+                <Badge variant="outline" title="Runs on this inventory may reach only its hosts">
+                  network restricted
+                </Badge>
+              </a>
+            )}
           </span>
         }
         description={inventory.description}
@@ -298,6 +306,14 @@ export function InventoryDetailPage() {
         projectId={inventory.project_id}
         onModeChanged={(mode) =>
           setInventory((current) => current && { ...current, host_key_checking: mode })
+        }
+      />
+
+      <EgressPanel
+        inventoryId={inventoryId}
+        projectId={inventory.project_id}
+        onChanged={(restricted) =>
+          setInventory((current) => current && { ...current, egress_restricted: restricted })
         }
       />
     </div>

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { reply } from "@/test/fake-api";
 import {
   credential,
+  egressSettings,
   hostKeys,
   inventory,
   inventorySource,
@@ -34,6 +35,11 @@ function detail(overrides = {}) {
     "GET /inventories/:id/targets": targets(),
     "GET /inventories/:id/snapshot": null,
     "GET /inventories/:id/host-keys": hostKeys({ keys: [], hosts: [], total: 0 }),
+    "GET /inventories/:id/egress": egressSettings({
+      hosts: [],
+      total: 0,
+      summary: { hosts: 0, ok: 0, indirect: 0, local: 0, unknown: 0 },
+    }),
     ...overrides,
   };
 }
@@ -475,5 +481,75 @@ describe("SSH host keys", () => {
     for (const name of ["Scan host keys", "Paste known_hosts", "Confirm learned (1)", "Remove"]) {
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     }
+  });
+});
+
+describe("network egress", () => {
+  it("shows where each host connects, and lets project admins restrict runs and add entries", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { api, user, screen } = renderApp("/inventories/1", {
+      routes: detail({
+        "GET /inventories/:id/egress": egressSettings(),
+        "PUT /inventories/:id/egress/mode": { restricted: true },
+        "PUT /inventories/:id/egress/extras": reply(400, { detail: "entry 2: ::/0 is every address" }),
+      }),
+    });
+    expect(await screen.findByText("Network")).toBeInTheDocument();
+    expect(screen.getByText("via bastion.example:22")).toBeInTheDocument();
+    expect(screen.getByText("its address is set by a template")).toBeInTheDocument();
+    expect(screen.getByText("1 address unknown")).toBeInTheDocument();
+
+    await choose(user, screen.getByLabelText("Network access"), "Only its hosts");
+    expect(confirm.mock.calls.at(-1)?.[0]).toMatch(/1 host's address isn't known before a run/);
+    expect(api.requests("PUT /inventories/1/egress/mode")[0]?.body).toEqual({ restricted: true });
+
+    const extras = screen.getByLabelText("Extra entries");
+    await user.type(extras, "pypi.org 443  # packages{Enter}{Enter}::/0");
+    await user.click(screen.getByRole("button", { name: "Save entries" }));
+    // The server numbers entries; the message names the line (blank lines don't count there).
+    expect(await screen.findByText("line 3: ::/0 is every address")).toBeInTheDocument();
+    expect(api.requests("PUT /inventories/1/egress/extras")[0]?.body).toEqual({
+      extras: [
+        { target: "pypi.org", ports: "443", note: "packages" },
+        { target: "::/0", ports: null, note: null },
+      ],
+    });
+
+    api.set({
+      "PUT /inventories/:id/egress/extras": [{ target: "pypi.org", ports: [[443, 443]], note: "packages" }],
+      "GET /inventories/:id/egress": egressSettings({
+        restricted: true,
+        extras: [{ target: "pypi.org", ports: [[443, 443]], note: "packages" }],
+      }),
+    });
+    await user.clear(extras);
+    await user.type(extras, "pypi.org 443 # packages");
+    await user.click(screen.getByRole("button", { name: "Save entries" }));
+    expect(await screen.findByText("Saved.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Extra entries")).toHaveValue("pypi.org 443 # packages");
+
+    confirm.mockReturnValue(false);
+    await choose(user, screen.getByLabelText("Network access"), "Any address");
+    expect(confirm.mock.calls.at(-1)?.[0]).toMatch(/reach any address again/);
+    expect(api.requests("PUT /inventories/1/egress/mode")).toHaveLength(1);
+  });
+
+  it("is read-only for everyone else", async () => {
+    const { screen } = renderApp("/inventories/1", {
+      user: viewerUser(),
+      routes: detail({
+        "GET /inventories/:id": inventory({ egress_restricted: true }),
+        "GET /inventories/:id/egress": egressSettings({
+          restricted: true,
+          extras: [{ target: "10.9.0.0/24", ports: null, note: null }],
+        }),
+      }),
+    });
+    expect(await screen.findByText("Network")).toBeInTheDocument();
+    expect(screen.getByText("network restricted")).toBeInTheDocument();
+    expect(screen.getByText("Only its hosts")).toBeInTheDocument();
+    expect(screen.getByText("10.9.0.0/24 (any port)")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Network access")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Extra entries")).not.toBeInTheDocument();
   });
 });

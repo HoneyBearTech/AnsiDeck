@@ -1,4 +1,5 @@
-"""Keeps runs away from the API and cloud metadata (the worker's egress filter).
+"""Keeps runs away from the API and cloud metadata (the worker's egress filter), and, for
+inventories that ask for it, limits a run to its inventory's hosts (per-slot allowlists).
 
 Runs, inventory refreshes and playbook checks share the worker container's network, but they
 run as the slot users (app.run_isolation), and only the worker itself (uid 0) talks to the API.
@@ -20,10 +21,29 @@ every few seconds and updates the table; it keeps CAP_NET_ADMIN for that, which 
 the container's own network namespace. self_test() checks, before any run, that a slot user
 really is refused while the worker gets through.
 
+Allowlists: a run on an inventory that restricts egress gets a table of its own slot,
+`ansideck_egress_slot<n>`, installed before anything of the run starts and deleted only after
+the slot was swept (until then ssh's ControlPersist masters and whatever the playbook left
+running could still use the network). Its uid may then reach only:
+
+- DNS: Docker's resolver (127.0.0.11, whose port 53 Docker's own nat rule rewrites before this
+  hook, hence `ct original proto-dst`) and the nameservers in /etc/resolv.conf;
+- the inventory's hosts, on any port and protocol (the run controls them anyway);
+- the first jump host, on its ssh port; the inventory's extra entries, on their ports.
+
+Everything else, ICMP included (Docker lets anyone ping), is rejected at once and recorded
+(the first 256 destinations) for the run page. The blocklist above still wins: a reject is
+final, wherever the accept is. The slot's uid is matched positively (`meta skuid N jump`):
+with `!= N accept` the TCP resets the rejects send, which have no socket, would be rejected in
+turn and every refused connection would hang. test_allowlists() checks all of this at startup.
+
 Imports only the standard library, app.run_isolation and app.run_executor (see app.worker).
 """
 
+import concurrent.futures
+import contextlib
 import ipaddress
+import itertools
 import json
 import logging
 import os
@@ -35,6 +55,7 @@ import threading
 import time
 import urllib.parse
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 
 from app.run_executor import run_child
 from app.run_isolation import MAX_SLOTS, RUN_UID_BASE, RunIdentity, effective_caps, wrap
@@ -70,6 +91,12 @@ _METADATA_PROBE = ("169.254.169.254", 80)
 _NFT_TIMEOUT_SECONDS = 10
 _PROBE_TIMEOUT_SECONDS = 3.0
 _PROBE_ATTEMPTS = 3
+SLOT_TABLE = TABLE + "_slot{}"
+MAX_ALLOWED_ADDRESSES = 20000
+REFUSED_SET_SIZE = 256
+_RESOLVE_SECONDS = 60.0
+_RESOLVE_THREADS = 16
+_PROTOCOLS = ("tcp", "udp")
 
 # Run as the worker and as slot users: connects to each target and reports how it went.
 _PROBE = """
@@ -97,6 +124,20 @@ print(json.dumps(out))
 
 class EgressError(Exception):
     """nft refused the table, or could not be run."""
+
+
+class EgressRefused(Exception):
+    """A run's allowlist can't be built (a name doesn't resolve...); the message is shown."""
+
+
+@dataclass(frozen=True)
+class Allowlist:
+    """What one run's slot may reach: `hosts` on any port and protocol, `ports` as
+    (network, protocol, first port, last port); `report` is what the run page shows."""
+
+    hosts: tuple[Network, ...] = ()
+    ports: tuple[tuple[Network, str, int, int], ...] = ()
+    report: dict = field(default_factory=dict)
 
 
 def _unmapped(network: Network) -> Network:
@@ -177,6 +218,356 @@ def ruleset(networks: Iterable[Network], *, ipv6: bool = True) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _lookup_all(names: Iterable[str], resolver, seconds: float) -> dict[str, object]:
+    """Each name's addresses (a frozenset) or why it didn't resolve (a str), in parallel,
+    within `seconds` overall."""
+    names = sorted(set(names))
+    results: dict[str, object] = {}
+    if not names:
+        return results
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=min(_RESOLVE_THREADS, len(names)))
+    try:
+        futures = {pool.submit(resolver, name, 0): name for name in names}
+        try:
+            for future in concurrent.futures.as_completed(futures, timeout=seconds):
+                name = futures[future]
+                try:
+                    results[name] = future.result()
+                except OSError as exc:
+                    results[name] = exc.strerror or str(exc)
+        except concurrent.futures.TimeoutError:
+            slow = sorted(name for future, name in futures.items() if not future.done())
+            raise EgressRefused(
+                f"looking up {len(slow)} names took longer than {seconds:.0f} s "
+                f"({', '.join(slow[:3])}{', ...' if len(slow) > 3 else ''})"
+            ) from None
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    return results
+
+
+def _target_network(target: str) -> Network | None:
+    try:
+        return _unmapped(ipaddress.ip_network(target, strict=False))
+    except ValueError:
+        return None
+
+
+def resolve_allowlist(
+    spec: dict, resolver: Callable[[str, int], frozenset[Address]] = resolve,
+    seconds: float = _RESOLVE_SECONDS,
+) -> Allowlist:  # fmt: skip
+    """The addresses a restricted run may reach, from the job's `egress` (app.egress_allowlist):
+    names are looked up here, as the worker, which sees the same resolv.conf and /etc/hosts as
+    the run. Raises EgressRefused if a host the run connects to directly, a jump host or an
+    extra entry doesn't resolve (a host behind a jump host or a proxy may not)."""
+    hosts = list(spec.get("hosts") or [])
+    jumps = list(spec.get("jump_hosts") or [])
+    extras = list(spec.get("extras") or [])
+    names = [h["address"] for h in hosts] + [j["address"] for j in jumps]
+    names += [e["target"] for e in extras if _target_network(e["target"]) is None]
+    found = _lookup_all(names, resolver, seconds)
+
+    problems: list[str] = []
+    unresolved: list[dict] = []
+    host_networks: list[Network] = []
+    port_entries: list[tuple[Network, str, int, int]] = []
+    report: dict = {
+        "hosts": [],
+        "jump_hosts": [],
+        "extras": [],
+        "unresolved": unresolved,
+        "warnings": list(spec.get("warnings") or []),
+    }
+
+    def addresses_of(name: str) -> list[Address] | str:
+        result = found.get(name)
+        if isinstance(result, frozenset):
+            return sorted(result, key=lambda a: (a.version, a))
+        return str(result or "no address")
+
+    for host in hosts:
+        result = addresses_of(host["address"])
+        if isinstance(result, str):
+            if host.get("required", True):
+                problems.append(
+                    f"{host['host']}'s address {host['address']} doesn't resolve here ({result})"
+                )
+            else:
+                unresolved.append(
+                    {"host": host["host"], "address": host["address"], "reason": result}
+                )
+            continue
+        host_networks += [ipaddress.ip_network(a) for a in result]
+        report["hosts"].append(
+            {"host": host["host"], "address": host["address"], "addresses": list(map(str, result))}
+        )
+    for jump in jumps:
+        result = addresses_of(jump["address"])
+        if isinstance(result, str):
+            problems.append(f"the jump host {jump['address']} doesn't resolve here ({result})")
+            continue
+        port = int(jump.get("port") or 22)
+        port_entries += [(ipaddress.ip_network(a), "tcp", port, port) for a in result]
+        report["jump_hosts"].append(
+            {
+                "host": jump.get("host"),
+                "address": jump["address"],
+                "port": port,
+                "addresses": list(map(str, result)),
+            }
+        )
+    for extra in extras:
+        network = _target_network(extra["target"])
+        if network is not None:
+            networks = [network]
+        else:
+            result = addresses_of(extra["target"])
+            if isinstance(result, str):
+                problems.append(
+                    f"the extra entry {extra['target']} doesn't resolve here ({result})"
+                )
+                continue
+            networks = [ipaddress.ip_network(a) for a in result]
+        ranges = extra.get("ports")
+        if ranges is None:
+            host_networks += networks
+        else:
+            port_entries += [
+                (n, proto, int(lo), int(hi))
+                for n in networks
+                for proto in _PROTOCOLS
+                for lo, hi in ranges
+            ]
+        report["extras"].append(
+            {"target": extra["target"], "ports": ranges, "addresses": list(map(str, networks))}
+        )
+
+    if problems:
+        shown = "; ".join(problems[:3]) + (
+            f"; and {len(problems) - 3} more" if len(problems) > 3 else ""
+        )
+        raise EgressRefused(f"its inventory restricts network egress, and {shown}")
+    count = len(host_networks) + len(port_entries)
+    if count > MAX_ALLOWED_ADDRESSES:
+        raise EgressRefused(
+            f"its inventory restricts network egress to {count} addresses, more than "
+            f"{MAX_ALLOWED_ADDRESSES}"
+        )
+    return Allowlist(hosts=tuple(host_networks), ports=tuple(port_entries), report=report)
+
+
+def read_resolvers(path: str = "/etc/resolv.conf") -> list[Address]:
+    """The nameservers a run asks (besides Docker's, which is always allowed)."""
+    found: list[Address] = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as conf:
+            lines = conf.read().splitlines()
+    except OSError:
+        return found
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == "nameserver":
+            try:
+                address = _unmapped_address(ipaddress.ip_address(parts[1].split("%")[0]))
+            except ValueError:
+                continue
+            if address != _DOCKER_DNS and address not in found:
+                found.append(address)
+    return found
+
+
+def _span(network: Network) -> tuple[int, int]:
+    return int(network.network_address), int(network.broadcast_address)
+
+
+def _merge(ranges: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for lo, hi in sorted(ranges):
+        if merged and lo <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
+        else:
+            merged.append((lo, hi))
+    return merged
+
+
+def _disjoint(
+    hosts: list[Network], ports: list[tuple[Network, str, int, int]], version: int
+) -> list[tuple[tuple[int, int], str, tuple[int, int]]]:
+    """`ports` as non-overlapping (address range, protocol, port range) elements, which nft
+    requires; entries inside a host network are dropped (the host allows every port)."""
+    host_spans = _merge(_span(n) for n in hosts if n.version == version)
+
+    def covered(lo: int, hi: int) -> bool:
+        return any(a <= lo and hi <= b for a, b in host_spans)
+
+    elements: list[tuple[tuple[int, int], str, tuple[int, int]]] = []
+    for protocol in _PROTOCOLS:
+        entries = [
+            (*_span(n), lo, hi)
+            for n, proto, lo, hi in ports
+            if n.version == version and proto == protocol and not covered(*_span(n))
+        ]
+        # Cut the address space at every entry's ends; each piece gets the union of the port
+        # ranges of the entries over it, and neighbouring pieces with the same ports join.
+        cuts = sorted({lo for lo, _, _, _ in entries} | {hi + 1 for _, hi, _, _ in entries})
+        pieces: list[tuple[int, int, tuple[tuple[int, int], ...]]] = []
+        for start, after in itertools.pairwise(cuts):
+            over = _merge(
+                (plo, phi) for lo, hi, plo, phi in entries if lo <= start and after - 1 <= hi
+            )
+            if not over:
+                continue
+            if pieces and pieces[-1][1] + 1 == start and pieces[-1][2] == tuple(over):
+                pieces[-1] = (pieces[-1][0], after - 1, pieces[-1][2])
+            else:
+                pieces.append((start, after - 1, tuple(over)))
+        elements += [((lo, hi), protocol, ports) for lo, hi, ranges in pieces for ports in ranges]
+    return elements
+
+
+def _address_text(value: int, version: int) -> str:
+    return str(ipaddress.ip_address(value) if version == 4 else ipaddress.IPv6Address(value))
+
+
+def _range_text(lo: int, hi: int, version: int) -> str:
+    if lo == hi:
+        return _address_text(lo, version)
+    return f"{_address_text(lo, version)}-{_address_text(hi, version)}"
+
+
+def _port_text(lo: int, hi: int) -> str:
+    return str(lo) if lo == hi else f"{lo}-{hi}"
+
+
+def _slot_of(identity: RunIdentity) -> int:
+    return identity.uid - RUN_UID_BASE
+
+
+def slot_table(slot: int) -> str:
+    return SLOT_TABLE.format(slot)
+
+
+def slot_ruleset(
+    slot: int, uid: int, allowlist: Allowlist, resolvers: Iterable[Address], *, ipv6: bool = True
+) -> str:
+    """The nft script that replaces slot `slot`'s table (and nothing else) with one limiting
+    `uid` to `allowlist` plus DNS. Without IPv6 the table is IPv4 only."""
+    family = "inet" if ipv6 else "ip"
+    table = slot_table(slot)
+    resolvers = [_unmapped_address(a) for a in resolvers]
+    hosts = [_unmapped(n) for n in allowlist.hosts]
+    ports = [(_unmapped(n), proto, lo, hi) for n, proto, lo, hi in allowlist.ports]
+    versions = [(4, "ip", "ipv4_addr")] + ([(6, "ip6", "ipv6_addr")] if ipv6 else [])
+    lines = [
+        f"add table {family} {table}",
+        f"delete table {family} {table}",
+        f"table {family} {table} {{",
+    ]
+    for version, _, kind in versions:
+        dns = [str(a) for a in resolvers if a.version == version]
+        found = [
+            str(n) for n in ipaddress.collapse_addresses(n for n in hosts if n.version == version)
+        ]
+        elements = [
+            f"{_range_text(*span, version)} . {protocol} . {_port_text(*port_range)}"
+            for span, protocol, port_range in _disjoint(hosts, ports, version)
+        ]
+        for name, items, set_kind in (
+            (f"resolvers{version}", dns, kind),
+            (f"hosts{version}", found, kind),
+            (f"ports{version}", elements, f"{kind} . inet_proto . inet_service"),
+        ):
+            listed = f" elements = {{ {', '.join(items)} }};" if items else ""
+            lines.append(f"  set {name} {{ type {set_kind}; flags interval;{listed} }}")
+        lines.append(
+            f"  set refused{version} {{ type {kind} . inet_proto . inet_service; "
+            f"size {REFUSED_SET_SIZE}; flags dynamic; }}"
+        )
+    lines += [
+        "  chain output {",
+        "    type filter hook output priority filter + 10; policy accept;",
+        f"    meta skuid {uid} jump restrict",
+        "  }",
+        "  chain restrict {",
+        f"    ip daddr {_DOCKER_DNS} meta l4proto {{ tcp, udp }} ct original proto-dst 53 accept",
+    ]
+    for version, match, _ in versions:
+        lines += [
+            f"    {match} daddr @resolvers{version} meta l4proto {{ tcp, udp }} th dport 53 accept",
+            f"    {match} daddr @hosts{version} accept",
+            f"    {match} daddr . meta l4proto . th dport @ports{version} accept",
+        ]
+    for version, match, _ in versions:
+        lines.append(
+            f"    meta l4proto {{ tcp, udp }} add @refused{version} "
+            f"{{ {match} daddr . meta l4proto . th dport }}"
+        )
+    other = "icmpx admin-prohibited" if ipv6 else "icmp admin-prohibited"
+    lines += [
+        "    meta l4proto tcp counter reject with tcp reset",
+        f"    counter reject with {other}",
+        "  }",
+        "}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def release_ruleset(slots: Iterable[int], *, ipv6: bool = True) -> str:
+    """Deletes these slots' tables, whether they exist or not."""
+    family = "inet" if ipv6 else "ip"
+    lines = []
+    for slot in slots:
+        lines += [
+            f"add table {family} {slot_table(slot)}",
+            f"delete table {family} {slot_table(slot)}",
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def parse_refused(text: str) -> list[dict]:
+    """{"address", "protocol", "port"} for each element of `nft -j list set` output."""
+    found = []
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return found
+    for item in data.get("nftables", []) if isinstance(data, dict) else []:
+        for element in (item.get("set") or {}).get("elem") or [] if isinstance(item, dict) else []:
+            value = (
+                element.get("elem", {}).get("val")
+                if isinstance(element, dict) and "elem" in element
+                else element
+            )
+            parts = value.get("concat") if isinstance(value, dict) else None
+            if not (isinstance(parts, list) and len(parts) == 3):
+                continue
+            address, protocol, port = parts
+            try:
+                address = str(ipaddress.ip_address(address))
+                port = int(port)
+            except (TypeError, ValueError):
+                continue
+            if protocol in _PROTOCOLS and 0 <= port <= 65535:
+                found.append({"address": address, "protocol": protocol, "port": port})
+    return found
+
+
+def list_set(table: str, name: str, *, ipv6: bool = True) -> str:
+    """`nft -j list set` output ("" if the set or table isn't there)."""
+    nft = nft_path() or NFT_FALLBACK
+    family = "inet" if ipv6 else "ip"
+    try:
+        result = run_child(
+            [nft, "-j", "list", "set", family, table, name],
+            timeout=_NFT_TIMEOUT_SECONDS,
+            env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise EgressError(f"could not run nft: {exc}") from exc
+    return result.stdout if result.returncode == 0 else ""
+
+
 def nft_path() -> str | None:
     found = shutil.which("nft")
     if found is None and os.path.exists(NFT_FALLBACK):
@@ -219,12 +610,16 @@ def apply(script: str) -> None:
         raise EgressError(detail or f"nft exited with {result.returncode}")
 
 
+def has_ipv6() -> bool:
+    return os.path.exists("/proc/net/if_inet6")
+
+
 def install(networks: list[Network]) -> None:
     """Installs the table; IPv4 only if the kernel has no IPv6."""
     try:
         apply(ruleset(networks))
     except EgressError:
-        if os.path.exists("/proc/net/if_inet6"):
+        if has_ipv6():
             raise
         apply(ruleset(networks, ipv6=False))
 
@@ -252,6 +647,9 @@ class EgressFilter:
         resolver: Callable[[str, int], frozenset[Address]] = resolve,
         installer: Callable[[list[Network]], None] = install,
         prober: Callable[[list[str]], dict] = run_probe,
+        applier: Callable[[str], None] = apply,
+        lister: Callable[..., str] = list_set,
+        ipv6: bool | None = None,
     ) -> None:
         self.host, self.port = api_endpoint(api_url)
         self.block_metadata = block_metadata
@@ -262,7 +660,11 @@ class EgressFilter:
         ]
         self.addresses: frozenset[Address] = frozenset()
         self.healthy = False
+        # Whether restricted runs can be given allowlists here (set by test_allowlists()).
+        self.allowlists_ready = False
+        self.ipv6 = has_ipv6() if ipv6 is None else ipv6
         self._resolver, self._installer, self._prober = resolver, installer, prober
+        self._applier, self._lister = applier, lister
         self._lock = threading.Lock()
 
     def networks(self) -> list[Network]:
@@ -277,6 +679,8 @@ class EgressFilter:
             except OSError as exc:
                 logger.info("the API's address %s doesn't resolve yet (%s)", self.host, exc)
             self._install()
+            # Allowlists an earlier worker left in this network namespace.
+            self._applier(release_ruleset(range(MAX_SLOTS), ipv6=self.ipv6))
 
     def refresh(self) -> bool:
         """Looks the API up again and updates the table if its addresses changed (or the last
@@ -368,8 +772,78 @@ class EgressFilter:
             f"got {_list(slot['connect'])} connecting to the API"
         )
 
+    def allow(self, identity: RunIdentity, allowlist: Allowlist) -> None:
+        """Limits the slot's user to `allowlist` (plus DNS), until release(). Raises
+        EgressError."""
+        script = slot_ruleset(
+            _slot_of(identity), identity.uid, allowlist, read_resolvers(), ipv6=self.ipv6
+        )
+        with self._lock:
+            self._applier(script)
+
+    def refused(self, identity: RunIdentity) -> list[dict]:
+        """The destinations the slot's user was refused (the first REFUSED_SET_SIZE)."""
+        table = slot_table(_slot_of(identity))
+        found: list[dict] = []
+        for version in (4, 6) if self.ipv6 else (4,):
+            found += parse_refused(self._lister(table, f"refused{version}", ipv6=self.ipv6))
+        return found
+
+    def release(self, identity: RunIdentity) -> None:
+        """Lifts the slot's allowlist (whether it has one or not). Raises EgressError."""
+        with self._lock:
+            self._applier(release_ruleset([_slot_of(identity)], ipv6=self.ipv6))
+
+    def test_allowlists(self, identity: RunIdentity) -> str | None:
+        """None if an allowlist works for this slot user: an allowed port is reached, another
+        refused and recorded, the API stays refused although allowed (the blocklist wins),
+        names still resolve, a host is reached on any port, and release() lifts it all; else
+        what went wrong. Needs no outside host: the worker listens on two loopback ports.
+        Run it before any run, like self_test()."""
+        if not self.addresses:
+            return f"the API's address ({self.host}) doesn't resolve"
+        loopback = ipaddress.ip_network("127.0.0.1/32")
+        api = [(str(address), self.port) for address in sorted(self.addresses, key=str)]
+        with (
+            socket.create_server(("127.0.0.1", 0)) as one,
+            socket.create_server(("127.0.0.1", 0)) as two,
+        ):
+            open_port, closed_port = one.getsockname()[1], two.getsockname()[1]
+            targets = [("127.0.0.1", open_port), ("127.0.0.1", closed_port), *api]
+            try:
+                self.allow(identity, Allowlist(
+                    hosts=tuple(ipaddress.ip_network(a) for a in self.addresses),
+                    ports=((loopback, "tcp", open_port, open_port),),
+                ))  # fmt: skip
+                slot = self._probe(targets, identity)
+                expected = ["connected", "ECONNREFUSED"] + ["ECONNREFUSED"] * len(api)
+                if slot["connect"] != expected:
+                    return (
+                        f"an allowlist didn't work for {identity.name}: got "
+                        f"{', '.join(slot['connect'])} where {', '.join(expected)} was expected"
+                    )
+                if slot["resolved"] not in (None, "ok"):
+                    problem = slot["resolved"]
+                    return f"{identity.name} can't look up names under an allowlist: {problem}"
+                wanted = {"address": "127.0.0.1", "protocol": "tcp", "port": closed_port}
+                if wanted not in self.refused(identity):
+                    return f"a connection {identity.name} was refused wasn't recorded"
+                self.allow(identity, Allowlist(hosts=(loopback,)))
+                if self._probe(targets[1:2], identity)["connect"] != ["connected"]:
+                    return f"an allowlisted host wasn't reachable on every port for {identity.name}"
+                self.release(identity)
+                if self._probe(targets[1:2], identity)["connect"] != ["connected"]:
+                    return f"releasing {identity.name}'s allowlist didn't lift it"
+            except EgressError as exc:
+                return str(exc)
+            finally:
+                with contextlib.suppress(EgressError):
+                    self.release(identity)
+        return None
+
     def describe(self) -> str:
-        return f"egress filtered (API {_list(self.addresses) or self.host})"
+        allowlists = ", allowlists" if self.allowlists_ready else ""
+        return f"egress filtered (API {_list(self.addresses) or self.host}){allowlists}"
 
 
 def _is_address(host: str) -> bool:

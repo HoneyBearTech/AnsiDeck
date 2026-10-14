@@ -303,6 +303,53 @@ describe("run detail", () => {
     expect(screen.getByText("SSH host keys checked, confirmed keys only")).toBeInTheDocument();
   });
 
+  it("shows what a restricted run could reach and what it was refused", async () => {
+    const { api, user, screen } = renderApp("/runs/7", {
+      routes: {
+        "GET /runs/:id": run({
+          status: "failed",
+          egress_restricted: true,
+          egress_addresses: 3,
+          egress_refused: [
+            { address: "203.0.113.5", protocol: "tcp", port: 443 },
+            { address: "2001:db8::9", protocol: "udp", port: 53 },
+          ],
+        }),
+        "GET /runs/:id/egress": {
+          restricted: true,
+          allowlist: {
+            hosts: [{ host: "web1", address: "web1.lan", addresses: ["192.0.2.1", "2001:db8::1"] }],
+            jump_hosts: [],
+            extras: [{ target: "10.9.0.0/24", ports: [[443, 443]], addresses: ["10.9.0.0/24"] }],
+            unresolved: [{ host: "inner", address: "inner.corp", reason: "Name or service not known" }],
+            warnings: [],
+          },
+          refused: [],
+        },
+      },
+    });
+    expect(
+      await screen.findByText(/Network limited to its inventory's hosts · 3 addresses/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("AnsiDeck refused connections to 2 destinations this run tried"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("203.0.113.5 tcp/443")).toBeInTheDocument();
+    expect(screen.getByText("[2001:db8::9] udp/53")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Edit the inventory's network settings" })).toHaveAttribute(
+      "href",
+      "/inventories/1#network-egress",
+    );
+
+    await user.click(screen.getByRole("button", { name: "show" }));
+    expect(await screen.findByText("web1: 192.0.2.1, 2001:db8::1")).toBeInTheDocument();
+    expect(screen.getByText("extra 10.9.0.0/24 ports 443: 10.9.0.0/24")).toBeInTheDocument();
+    expect(screen.getByText(/inner: inner.corp not resolved here/)).toBeInTheDocument();
+    expect(api.requests("GET /runs/7/egress")).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "hide" }));
+    expect(screen.queryByText("web1: 192.0.2.1, 2001:db8::1")).not.toBeInTheDocument();
+  });
+
   it("shows the run's summary, git commit, extra vars and output", async () => {
     const { screen } = renderApp("/runs/7", {
       routes: {

@@ -9,6 +9,8 @@ Rules, in this order:
   inventory may be claimed, so a busy inventory's runs can't overtake each other;
 - a run whose inventory checks SSH host keys goes only to a worker that does (one from before
   app.host_keys would run it unchecked). Its mode is fixed when it is claimed;
+- a run whose inventory restricts network egress goes only to a worker that can (its egress
+  filter is on and its allowlist self-test passed); that too is fixed when it is claimed;
 - a run that refreshes its inventory first waits for that refresh (which then pins its
   snapshot, or fails it).
 Inventory refreshes, playbook checks (lints) and host key scans are claimed the same way, before
@@ -59,6 +61,9 @@ _CLAIM = text(
           AND (:host_keys OR NOT EXISTS (
               SELECT 1 FROM inventories i
               WHERE i.id = r.inventory_id AND i.host_key_checking <> 'off'))
+          AND (:egress_allowlist OR NOT EXISTS (
+              SELECT 1 FROM inventories i
+              WHERE i.id = r.inventory_id AND i.egress_restricted))
           AND NOT EXISTS (
               SELECT 1 FROM runs earlier
               WHERE earlier.inventory_id = r.inventory_id AND earlier.status = 'queued'
@@ -77,7 +82,9 @@ _CLAIM = text(
         job_token_hash = :job_hash,
         job_token_expires_at = now() + make_interval(secs => :job_ttl),
         host_key_checking = (
-            SELECT i.host_key_checking FROM inventories i WHERE i.id = runs.inventory_id)
+            SELECT i.host_key_checking FROM inventories i WHERE i.id = runs.inventory_id),
+        egress_restricted = (
+            SELECT i.egress_restricted FROM inventories i WHERE i.id = runs.inventory_id)
     FROM candidate
     WHERE runs.id = candidate.id
     RETURNING runs.id
@@ -220,6 +227,7 @@ def record_worker(
     isolated: bool | None = None,
     egress_filtered: bool | None = None,
     host_keys: bool | None = None,
+    egress_allowlist: bool | None = None,
 ) -> None:
     """Marks the worker as seen now (the caller commits)."""
     stmt = insert(Worker).values(
@@ -228,6 +236,7 @@ def record_worker(
         isolated=isolated,
         egress_filtered=egress_filtered,
         host_keys=host_keys,
+        egress_allowlist=egress_allowlist,
     )
     db.execute(
         stmt.on_conflict_do_update(
@@ -237,6 +246,7 @@ def record_worker(
                 "isolated": stmt.excluded.isolated,
                 "egress_filtered": stmt.excluded.egress_filtered,
                 "host_keys": stmt.excluded.host_keys,
+                "egress_allowlist": stmt.excluded.egress_allowlist,
                 "last_seen_at": func.now(),
             },
         )
@@ -249,13 +259,16 @@ def record_worker(
         logger.exception("could not check worker %s for notifications", worker_id)
 
 
-def online_slots(db: Session, *, host_keys: bool = False) -> int:
+def online_slots(db: Session, *, host_keys: bool = False, egress_allowlist: bool = False) -> int:
     """How many runs the workers seen lately can run at once (0: no worker is online); with
-    host_keys, only workers that check SSH host keys count."""
+    host_keys, only workers that check SSH host keys count, with egress_allowlist only those
+    that can restrict a run's network egress."""
     since = func.now() - func.make_interval(0, 0, 0, 0, 0, 0, WORKER_ONLINE_SECONDS)
     query = select(func.coalesce(func.sum(Worker.slots), 0)).where(Worker.last_seen_at > since)
     if host_keys:
         query = query.where(Worker.host_keys.is_(True))
+    if egress_allowlist:
+        query = query.where(Worker.egress_allowlist.is_(True), Worker.egress_filtered.is_(True))
     return db.scalar(query)
 
 
@@ -296,6 +309,15 @@ def wait_reason(db: Session, run: Run) -> str:
         and online_slots(db, host_keys=True) == 0
     ):
         return "Waiting for a worker that checks SSH host keys (upgrade your workers)"
+    if (
+        run.inventory_id is not None
+        and db.scalar(select(Inventory.egress_restricted).where(Inventory.id == run.inventory_id))
+        and online_slots(db, egress_allowlist=True) == 0
+    ):
+        return (
+            "Waiting for a worker that can restrict network egress (its egress filter must be "
+            "on; upgrade your workers)"
+        )
     running = db.scalar(select(func.count()).where(Run.status == RunStatus.RUNNING.value))
     if running >= slots:
         return "Waiting for a free worker (all are busy)"
@@ -303,7 +325,11 @@ def wait_reason(db: Session, run: Run) -> str:
 
 
 def claim_next(
-    db: Session, worker_id: str, kinds: tuple[str, ...] = ("run",), host_keys: bool = False
+    db: Session,
+    worker_id: str,
+    kinds: tuple[str, ...] = ("run",),
+    host_keys: bool = False,
+    egress_allowlist: bool = False,
 ) -> Claim | None:
     """Checks and host key scans first, then refreshes (all short, and someone is waiting for
     them), then runs. A worker gets only the kinds it lists: one from before 4G never gets a
@@ -317,7 +343,7 @@ def claim_next(
         return claim
     if "run" not in kinds:
         return None
-    return _claim_run(db, worker_id, host_keys)
+    return _claim_run(db, worker_id, host_keys, egress_allowlist)
 
 
 def _claim_lint(db: Session, worker_id: str) -> Claim | None:
@@ -396,7 +422,9 @@ def _claim_refresh(db: Session, worker_id: str) -> Claim | None:
     return None
 
 
-def _claim_run(db: Session, worker_id: str, host_keys: bool = False) -> Claim | None:
+def _claim_run(
+    db: Session, worker_id: str, host_keys: bool = False, egress_allowlist: bool = False
+) -> Claim | None:
     lease = get_settings().run_lease_seconds
     for _ in range(_CLAIM_ATTEMPTS):
         claim_token, job_token = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
@@ -409,6 +437,7 @@ def _claim_run(db: Session, worker_id: str, host_keys: bool = False) -> Claim | 
                 _CLAIM,
                 {
                     "host_keys": host_keys,
+                    "egress_allowlist": egress_allowlist,
                     "lease": lease,
                     "worker_id": worker_id[:255],
                     "claim_hash": hash_token(claim_token),

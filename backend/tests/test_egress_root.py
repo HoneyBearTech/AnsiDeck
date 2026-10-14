@@ -196,3 +196,114 @@ def test_a_new_api_address_is_blocked_and_cuts_an_open_connection(port) -> None:
         assert _probe([(API_ADDRESS, port)]) == ["connected"]  # the old address is free again
     finally:
         _delete_table()
+
+
+# ------------------------------------------------------------------ allowlists (restricted runs)
+
+NET = ipaddress.ip_network
+
+
+@pytest.fixture
+def restricted(egress_filter):
+    """Slot 0 limited to 127.0.0.3 (any port) and 127.0.0.4 on one port; released afterwards."""
+    yield egress_filter
+    for slot in range(4):
+        egress_filter.release(identity_for_slot(slot))
+
+
+def _allow(egress_filter, slot: int, *, hosts=(), ports=()) -> None:
+    egress_filter.allow(identity_for_slot(slot), egress.Allowlist(hosts=hosts, ports=ports))
+
+
+def test_a_restricted_slot_reaches_only_its_hosts_and_extras(restricted, port) -> None:
+    other = socket.create_server(("0.0.0.0", 0))  # noqa: S104 - loopback only in practice
+    other_port = other.getsockname()[1]
+    try:
+        _allow(
+            restricted,
+            0,
+            hosts=(NET("127.0.0.3/32"),),
+            ports=((NET("127.0.0.4/32"), "tcp", port, port),),
+        )
+        assert _probe(
+            [("127.0.0.3", port), ("127.0.0.3", other_port), ("127.0.0.4", port),
+             ("127.0.0.4", other_port), ("127.0.0.1", port)]
+        ) == ["connected", "connected", "connected", "ECONNREFUSED", "ECONNREFUSED"]  # fmt: skip
+    finally:
+        other.close()
+
+
+def test_the_blocklist_wins_over_a_slots_allowlist(restricted, port) -> None:
+    _allow(restricted, 0, hosts=(NET(f"{API_ADDRESS}/32"), NET("127.0.0.3/32")))
+    assert _probe([(API_ADDRESS, port), ("127.0.0.3", port)]) == ["ECONNREFUSED", "connected"]
+
+
+def test_other_slots_are_unaffected_and_keep_their_own_allowlists(restricted, port) -> None:
+    _allow(restricted, 0, hosts=(NET("127.0.0.3/32"),))
+    _allow(restricted, 2, hosts=(NET("127.0.0.4/32"),))
+    targets = [("127.0.0.3", port), ("127.0.0.4", port), ("127.0.0.1", port)]
+    assert _probe(targets, slot=0) == ["connected", "ECONNREFUSED", "ECONNREFUSED"]
+    assert _probe(targets, slot=2) == ["ECONNREFUSED", "connected", "ECONNREFUSED"]
+    assert _probe(targets, slot=1) == ["connected"] * 3  # unrestricted
+    assert _probe(targets, slot=None) == ["connected"] * 3  # the worker
+
+
+def test_udp_and_icmp_outside_the_allowlist_are_refused(restricted, port) -> None:
+    _allow(restricted, 0, hosts=(NET("127.0.0.3/32"),))
+    script = (
+        "import socket\n"
+        "for target in ('127.0.0.3', '127.0.0.4'):\n"
+        "    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+        "    try:\n"
+        f"        s.sendto(b'x', (target, {port})); print('sent')\n"
+        "    except OSError as exc:\n"
+        "        print(type(exc).__name__)\n"
+        "try:\n"
+        "    p = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)\n"
+        "    echo = b'\\x08\\x00\\xf7\\xff\\x00\\x00\\x00\\x00'\n"
+        "    p.sendto(echo, ('127.0.0.4', 0)); print('pinged')\n"
+        "except OSError as exc:\n"
+        "    print(type(exc).__name__)\n"
+    )
+    command = wrap([sys.executable, "-I", "-S", "-c", script], identity_for_slot(0))
+    result = run_child(command, timeout=10, env={"PATH": "/usr/bin:/bin"})
+    assert result.stdout.split() == ["sent", "PermissionError", "PermissionError"], result.stderr
+
+
+def test_refused_destinations_are_recorded_and_survive_a_blocklist_refresh(
+    restricted, port
+) -> None:
+    _allow(restricted, 0, hosts=(NET("127.0.0.3/32"),))
+    _probe([("127.0.0.4", port), ("127.0.0.5", 1234)])
+    restricted.healthy = False  # forces a reinstall of the blocklist table
+    assert restricted.refresh() is True
+    refused = restricted.refused(identity_for_slot(0))
+    assert {"address": "127.0.0.4", "protocol": "tcp", "port": port} in refused
+    assert {"address": "127.0.0.5", "protocol": "tcp", "port": 1234} in refused
+    assert restricted.refused(identity_for_slot(1)) == []  # no table
+
+
+def test_a_released_slot_is_unrestricted_again(restricted, port) -> None:
+    _allow(restricted, 0, hosts=(NET("127.0.0.3/32"),))
+    assert _probe([("127.0.0.4", port)]) == ["ECONNREFUSED"]
+    restricted.release(identity_for_slot(0))
+    restricted.release(identity_for_slot(0))  # again: nothing to release, no error
+    assert _probe([("127.0.0.4", port)]) == ["connected"]
+
+
+def test_the_allowlist_self_test_passes(restricted) -> None:
+    for slot in (0, 3):
+        assert restricted.test_allowlists(identity_for_slot(slot)) is None
+    assert restricted.refused(identity_for_slot(0)) == []  # released afterwards
+
+
+def test_a_restricted_playbook_reaches_its_host_but_not_another(restricted, port) -> None:
+    _allow(restricted, 1, hosts=(NET("127.0.0.3/32"),))
+    connect = (
+        'for h in 127.0.0.3 127.0.0.4; do python3 -c "import socket; '
+        f"socket.create_connection(('$h', {port}), 3)\" 2>/dev/null && echo $h ok "
+        "|| echo $h refused; done"
+    )
+    status, stdout = _run(_play(_shell(connect)), slot=1)
+    assert status == "successful"
+    assert "127.0.0.3 ok" in stdout[0] and "127.0.0.4 refused" in stdout[0]

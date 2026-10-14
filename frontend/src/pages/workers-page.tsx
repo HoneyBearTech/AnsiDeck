@@ -185,6 +185,14 @@ export function WorkersPage() {
                     no host key checks
                   </Badge>
                 )}
+                {worker.online && worker.egress_allowlist === false && worker.egress_filtered === true && (
+                  <Badge
+                    variant="outline"
+                    title="Its allowlist self-test failed (see its log): runs on inventories that restrict network egress wait for another worker"
+                  >
+                    no network allowlists
+                  </Badge>
+                )}
                 <span className="font-mono text-sm">{worker.id}</span>
               </div>
               <span className="text-sm text-muted-foreground">

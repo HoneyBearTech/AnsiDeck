@@ -29,6 +29,13 @@ from app.run_isolation import RunIdentity, identity_for_slot
 from app.scrub import Scrubber, build_scrubber, scrub_exact
 from app.subprocess_env import clean_env
 from app.worker.client import ApiClient, ApiRefused, ApiUnavailable
+from app.worker.egress import (
+    REFUSED_SET_SIZE,
+    EgressError,
+    EgressFilter,
+    EgressRefused,
+    resolve_allowlist,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -326,6 +333,7 @@ class Worker:
         galaxy_dir: str | Path = "/data/galaxy",
         isolated: bool = False,
         egress_filtered: Callable[[], bool] = lambda: False,
+        egress_filter: EgressFilter | None = None,
         claim_wait_seconds: float = 25.0,
         heartbeat_seconds: float = 5.0,
         fence_seconds: float = 45.0,
@@ -338,6 +346,9 @@ class Worker:
         self.isolated = isolated
         # Whether its egress filter (app.worker.egress) is in place and up to date, now.
         self.egress_filtered = egress_filtered
+        # The filter itself, which limits restricted runs to their allowlists.
+        self.egress_filter = egress_filter
+        self._allowlisted: set[int] = set()  # slot uids with an allowlist not yet released
         self.claim_wait_seconds = claim_wait_seconds
         self.heartbeat_seconds = heartbeat_seconds
         self.fence_seconds = fence_seconds
@@ -386,6 +397,13 @@ class Worker:
         with self._lock:
             return [run_id for kind, run_id in self._tasks if kind == "run"]
 
+    def egress_allowlist(self) -> bool:
+        """Whether it can limit a run to its inventory's hosts, now."""
+        egress_filter = self.egress_filter
+        return (
+            egress_filter is not None and egress_filter.healthy and egress_filter.allowlists_ready
+        )
+
     def _snapshot(self) -> list[RunTask]:
         with self._lock:
             return list(self._tasks.values())
@@ -407,12 +425,35 @@ class Worker:
                 return False
         return True
 
+    def _release_until_done(self, identity: RunIdentity) -> bool:
+        """Lifts a restricted run's allowlist, only once its slot was swept (until then ssh's
+        ControlPersist masters or whatever the playbook left running would get the open
+        network). Keeps trying, not claiming, until it is gone; False if stopping first."""
+        while identity.uid in self._allowlisted:
+            try:
+                if self.egress_filter is not None:
+                    self.egress_filter.release(identity)
+                self._allowlisted.discard(identity.uid)
+            except EgressError as exc:
+                logger.error(
+                    "could not lift %s's allowlist (%s); not running anything on this slot "
+                    "(retrying in %.0f s)",
+                    identity.name,
+                    exc,
+                    _DIRTY_SLOT_RETRY_SECONDS,
+                )
+                if self._stopping.wait(_DIRTY_SLOT_RETRY_SECONDS):
+                    return False
+        return True
+
     def _slot(self, identity: RunIdentity | None = None, clean: bool = False) -> None:
         delay = 1.0
         dirty = identity is not None and not clean  # whatever an earlier worker left behind
         while not self._stopping.is_set():
             if dirty:
-                if identity is not None and not self._sweep_until_clean(identity):
+                if identity is not None and not (
+                    self._sweep_until_clean(identity) and self._release_until_done(identity)
+                ):
                     break
                 dirty = False
             try:
@@ -426,6 +467,7 @@ class Worker:
                         "wait_seconds": self.claim_wait_seconds,
                         "kinds": ["run", "refresh", "lint", "keyscan"],
                         "host_keys": True,
+                        "egress_allowlist": self.egress_allowlist(),
                     },
                     timeout=self.claim_wait_seconds + 15,
                 )
@@ -462,8 +504,8 @@ class Worker:
                 dirty = True
                 with self._lock:
                     self._tasks.pop(task.key, None)
-        if identity is not None and dirty:
-            sweep(identity)
+        if identity is not None and dirty and sweep(identity):
+            self._release_until_done(identity)
 
     def _fetch_job(self, task: RunTask, job_token: str) -> dict | None:
         path = _JOB_PATHS[task.kind]
@@ -530,6 +572,14 @@ class Worker:
         sender = EventSender(self.client, task)
         recap: dict[str, int] = {}
         host_keys: dict = {"problems": [], "learned": []}
+
+        # On a restricted inventory the run's slot may reach only its allowlist, from before
+        # anything of the run starts until the slot was swept (_slot).
+        restricted = job.get("egress") is not None
+        if restricted and (problem := self._restrict(task, job["egress"], identity)):
+            sender.close()
+            self._complete(task, sender.last_seq, "failed", f"not run: {problem}", None, {})
+            return
 
         # A playbook synced from git runs inside its repository at the run's commit.
         snapshot: bytes | None = None
@@ -619,8 +669,71 @@ class Worker:
         if refused is not None and reason is None:
             outcome, why = "failed", f"not run: {refused}"
         summary = self._upload_artifacts(task, artifacts) if reason is None else None
-        self._complete(task, sender.last_seq, outcome, why, return_code, recap, host_keys, summary)
+        egress_refused = self._egress_refused(identity) if restricted else None
+        self._complete(
+            task,
+            sender.last_seq,
+            outcome,
+            why,
+            return_code,
+            recap,
+            host_keys,
+            summary,
+            egress_refused,
+        )
         artifacts.close()
+
+    def _restrict(self, task: RunTask, spec: dict, identity: RunIdentity | None) -> str | None:
+        """Limits the slot's user to the run's allowlist and reports it; else why not."""
+        egress_filter = self.egress_filter
+        if identity is None or egress_filter is None or not self.egress_allowlist():
+            return "this worker can't restrict network egress"
+        try:
+            allowlist = resolve_allowlist(spec)
+        except EgressRefused as exc:
+            return str(exc)
+        self._allowlisted.add(identity.uid)
+        try:
+            egress_filter.allow(identity, allowlist)
+        except EgressError as exc:
+            logger.error("run %s: could not install its allowlist (%s)", task.run_id, exc)
+            return "the worker couldn't restrict its network egress"
+        if not self._report_egress(task, allowlist.report):
+            return "the worker couldn't report its network allowlist"
+        logger.info(
+            "run %s: network limited to %d addresses",
+            task.run_id,
+            len(allowlist.hosts) + len(allowlist.ports),
+        )
+        return None
+
+    def _report_egress(self, task: RunTask, report: dict) -> bool:
+        for delay in (1, 2, 4, 8, None):
+            try:
+                response = self.client.post(
+                    f"/internal/runs/{task.run_id}/egress", report, claim_token=task.claim_token
+                )
+            except ApiUnavailable as exc:
+                if delay is None or task.handle.stop_reason:
+                    logger.error("run %s: could not report its allowlist (%s)", task.run_id, exc)
+                    return False
+                time.sleep(delay)
+                continue
+            if response.status_code != 200:
+                logger.error(
+                    "run %s: allowlist refused (HTTP %s)", task.run_id, response.status_code
+                )
+            return response.status_code == 200
+        return False
+
+    def _egress_refused(self, identity: RunIdentity | None) -> list[dict] | None:
+        if identity is None or self.egress_filter is None:
+            return None
+        try:
+            return self.egress_filter.refused(identity)[:REFUSED_SET_SIZE] or None
+        except EgressError as exc:  # only shown on the run page
+            logger.warning("could not read %s's refused connections (%s)", identity.name, exc)
+            return None
 
     def _upload_artifacts(self, task: RunTask, artifacts: "_Artifacts") -> dict | None:
         """Sends the run's artifacts tar to the API in chunks; returns what /complete reports
@@ -943,6 +1056,7 @@ class Worker:
         recap: dict[str, int],
         host_keys: dict | None = None,
         artifacts: dict | None = None,
+        egress_refused: list[dict] | None = None,
     ) -> None:
         body = {
             "last_seq": last_seq,
@@ -957,6 +1071,8 @@ class Worker:
             body["host_key_problems"] = host_keys["problems"]
         if artifacts:
             body["artifacts"] = artifacts
+        if egress_refused:
+            body["egress_refused"] = egress_refused
         deadline = time.monotonic() + _FLUSH_TIMEOUT_SECONDS
         delay = 0.5
         while time.monotonic() < deadline:
@@ -1002,6 +1118,7 @@ class Worker:
                     "isolated": self.isolated,
                     "egress_filtered": self.egress_filtered(),
                     "host_keys": True,
+                    "egress_allowlist": self.egress_allowlist(),
                     "runs": [
                         {"run_id": t.run_id, "claim_token": t.claim_token}
                         for t in tasks

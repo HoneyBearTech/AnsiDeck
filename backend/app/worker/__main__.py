@@ -123,7 +123,9 @@ def verify_egress(
     settings: WorkerSettings, egress_filter: egress.EgressFilter | None
 ) -> egress.EgressFilter | None:
     """Once the API answers: its current addresses in the table, and proof that slot users
-    are refused (self_test). Before any run starts."""
+    are refused (self_test). Before any run starts. Then whether allowlists work too (for
+    inventories that restrict their runs' egress): if they don't, those runs wait for another
+    worker, the rest run here."""
     if egress_filter is None:
         return None
     slots = sorted({0, settings.worker_slots - 1})
@@ -132,10 +134,19 @@ def verify_egress(
         reason = egress_filter.self_test(identity_for_slot(slot) for slot in slots)
     except egress.EgressError as exc:
         reason = f"nft failed: {exc}"
-    if reason is None:
-        return egress_filter
-    _without_egress_filter(settings, reason)
-    return None
+    if reason is not None:
+        _without_egress_filter(settings, reason)
+        return None
+    problem = None
+    for slot in slots:
+        problem = problem or egress_filter.test_allowlists(identity_for_slot(slot))
+    egress_filter.allowlists_ready = problem is None
+    if problem is not None:
+        logger.error(
+            "runs on inventories that restrict network egress can't run on this worker: %s",
+            problem,
+        )
+    return egress_filter
 
 
 def wait_for_api(client: ApiClient, timeout: float = _API_WAIT_SECONDS) -> None:
@@ -211,6 +222,7 @@ def main() -> None:
         galaxy_dir=settings.galaxy_dir,
         isolated=isolated,
         egress_filtered=lambda: egress_filter is not None and egress_filter.healthy,
+        egress_filter=egress_filter,
     )
     if os.getpid() == 1:
         threading.Thread(target=reap_orphans, daemon=True).start()

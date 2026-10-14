@@ -10,6 +10,7 @@ gets 410 Gone and must stop.
 import asyncio
 import hashlib
 import hmac
+import ipaddress
 import logging
 import threading
 from pathlib import Path
@@ -17,7 +18,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse, JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
@@ -47,6 +48,7 @@ from app.queue import QUEUE_TOPIC, Claim, claim_next, fail_run, hash_token, reco
 from app.run_log import append_events
 from app.secret_store import OUTAGE_KINDS, SecretStoreError, explain
 from app.storage import inventory_refresh_output_path, run_artifacts_path
+from app.worker.egress import REFUSED_SET_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +157,9 @@ class ClaimIn(BaseModel):
     )
     # It checks SSH host keys (app.host_keys); one that doesn't never gets a run that must.
     host_keys: bool = False
+    # It can limit a run to its inventory's hosts (app.worker.egress allowlists, self-tested);
+    # only counts together with egress_filtered. Runs that must go only to such workers.
+    egress_allowlist: bool = False
 
 
 class ClaimOut(BaseModel):
@@ -201,6 +206,7 @@ class HeartbeatIn(BaseModel):
     isolated: bool | None = None
     egress_filtered: bool | None = None
     host_keys: bool = False
+    egress_allowlist: bool = False
     runs: list[HeartbeatRun] = Field(max_length=256)
     refreshes: list[HeartbeatRefresh] = Field([], max_length=256)
     lints: list[HeartbeatLint] = Field([], max_length=256)
@@ -270,6 +276,57 @@ class ArtifactsIn(BaseModel):
     error: str | None = Field(None, max_length=300)
 
 
+def _ip_networks(values: list[str]) -> list[str]:
+    for value in values:
+        ipaddress.ip_network(value, strict=False)  # ValueError: refused
+    return values
+
+
+_Addresses = Annotated[
+    list[Annotated[str, Field(max_length=64)]], Field(max_length=64), AfterValidator(_ip_networks)
+]
+
+
+class EgressAddressesIn(BaseModel):
+    host: str | None = Field(None, max_length=255)
+    address: str = Field(max_length=255)
+    port: int | None = Field(None, ge=1, le=65535)
+    addresses: _Addresses
+
+
+class EgressExtraIn(BaseModel):
+    target: str = Field(max_length=255)
+    ports: list[tuple[int, int]] | None = Field(None, max_length=20)
+    addresses: _Addresses
+
+
+class EgressUnresolvedIn(BaseModel):
+    host: str = Field(max_length=255)
+    address: str = Field(max_length=255)
+    reason: str = Field(max_length=300)
+
+
+class EgressReportIn(BaseModel):
+    """The allowlist the worker resolved for a restricted run (app.worker.egress), before it
+    started: shown on the run page."""
+
+    hosts: list[EgressAddressesIn] = Field([], max_length=5000)
+    jump_hosts: list[EgressAddressesIn] = Field([], max_length=5000)
+    extras: list[EgressExtraIn] = Field([], max_length=200)
+    unresolved: list[EgressUnresolvedIn] = Field([], max_length=5000)
+    warnings: list[Annotated[str, Field(max_length=500)]] = Field([], max_length=50)
+
+
+def _ip_address(value: str) -> str:
+    return str(ipaddress.ip_address(value))
+
+
+class EgressRefusedIn(BaseModel):
+    address: Annotated[str, Field(max_length=64), AfterValidator(_ip_address)]
+    protocol: Literal["tcp", "udp"]
+    port: int = Field(ge=0, le=65535)
+
+
 class CompleteIn(BaseModel):
     last_seq: int = Field(ge=0)
     status: Literal["success", "failed", "cancelled", "timed_out"]
@@ -283,6 +340,13 @@ class CompleteIn(BaseModel):
     )
     host_key_problems: list[HostKeyProblemIn] | None = Field(None, max_length=MAX_PROBLEMS)
     artifacts: ArtifactsIn | None = None
+    # Destinations a restricted run's slot was refused (the first 256).
+    egress_refused: list[EgressRefusedIn] | None = Field(None, max_length=REFUSED_SET_SIZE)
+
+
+def _egress_allowlist(body: ClaimIn | HeartbeatIn) -> bool:
+    """Allowlists only count on a worker whose egress filter is on."""
+    return body.egress_allowlist and body.egress_filtered is True
 
 
 @router.post("/ping")
@@ -291,11 +355,14 @@ def ping() -> dict[str, bool]:
 
 
 def _claim_once(
-    worker_id: str, kinds: tuple[str, ...] = ("run",), host_keys: bool = False
+    worker_id: str,
+    kinds: tuple[str, ...] = ("run",),
+    host_keys: bool = False,
+    egress_allowlist: bool = False,
 ) -> Claim | None:
     db = get_sessionmaker()()
     try:
-        return claim_next(db, worker_id, kinds, host_keys)
+        return claim_next(db, worker_id, kinds, host_keys, egress_allowlist)
     finally:
         db.close()
 
@@ -304,7 +371,13 @@ def _seen(body: ClaimIn) -> None:
     db = get_sessionmaker()()
     try:
         record_worker(
-            db, body.worker_id, body.slots, body.isolated, body.egress_filtered, body.host_keys
+            db,
+            body.worker_id,
+            body.slots,
+            body.isolated,
+            body.egress_filtered,
+            body.host_keys,
+            _egress_allowlist(body),
         )
         db.commit()
     finally:
@@ -327,7 +400,11 @@ async def claim(body: ClaimIn) -> ClaimOut | Response:
     with notifier.listen(QUEUE_TOPIC) as listener:
         while True:
             claimed = await asyncio.to_thread(
-                _claim_once, body.worker_id, tuple(body.kinds), body.host_keys
+                _claim_once,
+                body.worker_id,
+                tuple(body.kinds),
+                body.host_keys,
+                _egress_allowlist(body),
             )
             if claimed is not None:
                 return ClaimOut(
@@ -479,7 +556,13 @@ def heartbeat(body: HeartbeatIn, db: Session = Depends(get_db)) -> dict[str, lis
     (the claim ended; stop without reporting)."""
     lease = get_settings().run_lease_seconds
     record_worker(
-        db, body.worker_id, body.slots, body.isolated, body.egress_filtered, body.host_keys
+        db,
+        body.worker_id,
+        body.slots,
+        body.isolated,
+        body.egress_filtered,
+        body.host_keys,
+        _egress_allowlist(body),
     )
     answers: list[dict] = []
     for item in body.runs:
@@ -552,6 +635,23 @@ def heartbeat(body: HeartbeatIn, db: Session = Depends(get_db)) -> dict[str, lis
     return {"runs": answers, "refreshes": refreshes, "lints": lints, "keyscans": keyscans}
 
 
+@router.post("/runs/{run_id}/egress")
+def egress_report(
+    run_id: int,
+    body: EgressReportIn,
+    x_claim_token: str = Header(max_length=200),
+    db: Session = Depends(get_db),
+) -> Any:
+    """What a restricted run may reach, as the worker resolved it before starting the run."""
+    run = _locked_run(db, run_id, x_claim_token)
+    if run is None:
+        return _gone()
+    run.egress_allowlist = body.model_dump()
+    db.commit()
+    notifier.notify(run_topic(run_id))
+    return {}
+
+
 @router.post("/runs/{run_id}/complete")
 def complete(
     run_id: int,
@@ -581,6 +681,8 @@ def complete(
     run.claim_token_hash = None
     project_id, worker_id = run.project_id, run.worker_id
     learned, problems = _host_keys(db, run, body)
+    if body.egress_refused:
+        run.egress_refused = [r.model_dump() for r in body.egress_refused]
     if body.artifacts is not None:
         _keep_artifacts(run, body.artifacts)
     run_finished(db, run)

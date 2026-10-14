@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LiveLogViewer } from "@/components/live-log-viewer";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/context/auth-context";
-import { api, ApiError, type Run, type RunArtifacts } from "@/lib/api";
+import { api, ApiError, type Run, type RunArtifacts, type RunEgress } from "@/lib/api";
 import { deletedItems, describeDeleted, formatDuration, STATUS_VARIANT } from "@/lib/runs";
 
 
@@ -96,6 +96,110 @@ function HostKeyProblems({ run }: { run: Run }) {
             </Link>
           ) : (
             "Ask a project admin to review the inventory's host keys."
+          ))}
+      </p>
+    </div>
+  );
+}
+
+// The network a run on a restricted inventory could reach (the full list on request).
+function EgressNote({ run }: { run: Run }) {
+  const [egress, setEgress] = React.useState<RunEgress | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  if (!run.egress_restricted) return null;
+  const count = run.egress_addresses;
+  const allowlist = egress?.allowlist;
+
+  function show() {
+    api
+      .getRunEgress(run.id)
+      .then(setEgress)
+      .catch((err) => setError(err instanceof ApiError ? err.message : "Something went wrong"));
+  }
+
+  return (
+    <div className="flex flex-col gap-1 text-sm text-muted-foreground">
+      <p>
+        Network limited to its inventory&apos;s hosts
+        {count !== null && count !== undefined && ` · ${count} address${count === 1 ? "" : "es"}`}
+        {count ? (
+          <>
+            {" · "}
+            {egress ? (
+              <button type="button" className="underline" onClick={() => setEgress(null)}>
+                hide
+              </button>
+            ) : (
+              <button type="button" className="underline" onClick={show}>
+                show
+              </button>
+            )}
+          </>
+        ) : null}
+      </p>
+      {error && <p className="text-destructive">{error}</p>}
+      {allowlist && (
+        <ul className="flex flex-col gap-0.5 font-mono text-xs">
+          {allowlist.hosts.map((h) => (
+            <li key={`h ${h.host} ${h.address}`} className="wrap-anywhere">
+              {h.host}: {h.addresses.join(", ")}
+            </li>
+          ))}
+          {allowlist.jump_hosts.map((j) => (
+            <li key={`j ${j.address}`} className="wrap-anywhere">
+              jump host {j.address} (port {j.port ?? 22}): {j.addresses.join(", ")}
+            </li>
+          ))}
+          {allowlist.extras.map((e) => (
+            <li key={`e ${e.target}`} className="wrap-anywhere">
+              extra {e.target}
+              {e.ports
+                ? ` ports ${e.ports.map(([lo, hi]) => (lo === hi ? lo : `${lo}-${hi}`)).join(",")}`
+                : ""}
+              : {e.addresses.join(", ")}
+            </li>
+          ))}
+          {allowlist.unresolved.map((u) => (
+            <li key={`u ${u.host}`} className="wrap-anywhere">
+              {u.host}: {u.address} not resolved here ({u.reason}); reached through its jump host or proxy
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// Connections a restricted run's network refused (the first 256 destinations).
+function EgressRefusedCard({ run }: { run: Run }) {
+  const { canInProject } = useAuth();
+  const refused = run.egress_refused ?? [];
+  if (refused.length === 0) return null;
+  const canManage = canInProject(run.project_id, "sources:manage");
+  return (
+    <div className="flex flex-col gap-2 rounded-md bg-status-changed/10 p-4">
+      <p className="text-sm font-medium text-status-changed">
+        AnsiDeck refused{" "}
+        {refused.length === 1 ? "a connection" : `connections to ${refused.length} destinations`} this run
+        tried
+      </p>
+      <ul className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-sm text-status-changed">
+        {refused.map((r) => (
+          <li key={`${r.address} ${r.protocol} ${r.port}`} className="wrap-anywhere">
+            {r.address.includes(":") ? `[${r.address}]` : r.address} {r.protocol}/{r.port}
+          </li>
+        ))}
+      </ul>
+      <p className="text-sm text-status-changed">
+        Its inventory limits runs to its own hosts. If the playbook needs one of these, add it to the
+        inventory&apos;s extra entries.{" "}
+        {run.inventory_id !== null &&
+          (canManage ? (
+            <Link to={`/inventories/${run.inventory_id}#network-egress`} className="underline">
+              Edit the inventory&apos;s network settings
+            </Link>
+          ) : (
+            "Ask a project admin to add it."
           ))}
       </p>
     </div>
@@ -386,10 +490,13 @@ export function RunDetailPage() {
             </p>
           )}
           {hostKeyNote(run) && <p className="text-sm text-muted-foreground">{hostKeyNote(run)}</p>}
+          <EgressNote run={run} />
           <StatusNote run={run} />
       </div>
 
       <HostKeyProblems run={run} />
+
+      <EgressRefusedCard run={run} />
 
       <RunSummary run={run} />
 
