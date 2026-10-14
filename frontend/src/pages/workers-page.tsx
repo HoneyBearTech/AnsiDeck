@@ -79,6 +79,7 @@ export function WorkersPage() {
   const unisolated = online.filter((w) => w.isolated === false);
   // An unisolated worker's runs reach everything anyway: the banner above covers it.
   const unfiltered = online.filter((w) => w.isolated === true && w.egress_filtered === false);
+  const unchecked = online.filter((w) => w.host_keys !== true);
 
   return (
     <div className="flex flex-col gap-6">
@@ -133,6 +134,19 @@ export function WorkersPage() {
         </div>
       )}
 
+      {unchecked.length > 0 && (
+        <div className="rounded-md bg-status-changed/10 p-4">
+          <p className="text-sm font-medium text-status-changed">
+            {unchecked.length === 1 ? "A worker doesn't" : `${unchecked.length} workers don't`} check SSH host
+            keys
+          </p>
+          <p className="text-sm text-status-changed">
+            It is older than the API. Runs on inventories that check host keys wait for an upgraded worker;
+            upgrade the workers to this release.
+          </p>
+        </div>
+      )}
+
       {store?.enabled && <SecretStoreCard status={store} />}
 
       <div className="flex flex-col gap-2">
@@ -161,6 +175,14 @@ export function WorkersPage() {
                 {worker.isolated === true && worker.egress_filtered === false && (
                   <Badge variant="changed" title="Runs can reach the API and cloud metadata">
                     egress open
+                  </Badge>
+                )}
+                {worker.host_keys !== true && (
+                  <Badge
+                    variant="changed"
+                    title="An older worker: it gets no runs that must check SSH host keys"
+                  >
+                    no host key checks
                   </Badge>
                 )}
                 <span className="font-mono text-sm">{worker.id}</span>

@@ -164,6 +164,57 @@ describe("new run", () => {
 });
 
 describe("run detail", () => {
+  it("shows hosts whose SSH host key was refused, and how keys were checked", async () => {
+    const problems = [
+      {
+        host: "web1",
+        problem: "changed" as const,
+        name: "[10.0.0.5]:2222",
+        key_type: "ED25519",
+        presented: "SHA256:lb3T+CbqsTi3pCqDEQBmfHd/c/jIK875yJAZ+F10Eyo",
+      },
+      { host: "web2", problem: "unknown" as const, name: "web2", key_type: "ED25519", presented: null },
+    ];
+    const { screen } = renderApp("/runs/7", {
+      routes: {
+        "GET /runs/:id": run({
+          status: "failed",
+          status_reason: "SSH host key changed for web1, web2",
+          host_key_problems: problems,
+          host_keys_learned: 2,
+        }),
+      },
+    });
+    expect(await screen.findByText("A host presented a different SSH host key")).toBeInTheDocument();
+    expect(screen.getByText("SHA256:lb3T+CbqsTi3pCqDEQBmfHd/c/jIK875yJAZ+F10Eyo")).toBeInTheDocument();
+    expect(screen.getByText(/no trusted key \(strict mode\)/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Review the inventory's host keys" })).toHaveAttribute(
+      "href",
+      "/inventories/1#host-keys",
+    );
+    expect(
+      screen.getByText("SSH host keys checked, new hosts learned · 2 new keys learned"),
+    ).toBeInTheDocument();
+  });
+
+  it("asks a project admin to review host keys when the viewer can't", async () => {
+    const { screen } = renderApp("/runs/7", {
+      user: viewerUser(),
+      routes: {
+        "GET /runs/:id": run({
+          status: "failed",
+          host_key_checking: "strict",
+          host_key_problems: [
+            { host: "web1", problem: "failed", name: null, key_type: null, presented: null },
+          ],
+        }),
+      },
+    });
+    expect(await screen.findByText("ssh refused a host's key")).toBeInTheDocument();
+    expect(screen.getByText(/Ask a project admin to review the inventory's host keys/)).toBeInTheDocument();
+    expect(screen.getByText("SSH host keys checked, confirmed keys only")).toBeInTheDocument();
+  });
+
   it("shows the run's summary, git commit, extra vars and output", async () => {
     const { screen } = renderApp("/runs/7", {
       routes: {

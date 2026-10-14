@@ -31,6 +31,10 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- **SSH host keys** on an inventory's page: its mode, the hosts without a trusted key, and the keys (who
+  pasted or which run learned them). Project admins switch the mode, paste known_hosts lines (with a preview
+  of what changes), confirm learned keys and remove keys. A run's page names the hosts whose key ssh refused
+  and the fingerprint they presented, and the Workers page marks workers too old to check host keys.
 - A run's page shows which refresh of its inventory's sources it used: when it was taken and how many hosts
   the sources had then, kept with the run after the snapshot itself is pruned.
 - **Rotate** for API keys: a new key with the same name, preset and lifetime replaces the old one, which

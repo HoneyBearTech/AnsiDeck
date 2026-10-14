@@ -30,6 +30,78 @@ function StatusNote({ run }: { run: Run }) {
   return <p className={bad ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>{note}</p>;
 }
 
+const HOST_KEY_MODES: Record<NonNullable<Run["host_key_checking"]>, string> = {
+  off: "not checked",
+  accept_new: "checked, new hosts learned",
+  strict: "checked, confirmed keys only",
+};
+
+function hostKeyNote(run: Run): string | null {
+  if (!run.host_key_checking) return null;
+  const learned = run.host_keys_learned
+    ? ` · ${run.host_keys_learned} new key${run.host_keys_learned === 1 ? "" : "s"} learned`
+    : "";
+  return `SSH host keys ${HOST_KEY_MODES[run.host_key_checking]}${learned}`;
+}
+
+// ssh refused these hosts: a key that changed (a reinstalled host, or someone in between) or none known.
+function HostKeyProblems({ run }: { run: Run }) {
+  const { canInProject } = useAuth();
+  const problems = run.host_key_problems ?? [];
+  if (problems.length === 0) return null;
+  const canManage = canInProject(run.project_id, "sources:manage");
+  const changed = problems.some((p) => p.problem === "changed");
+  return (
+    <div className="flex flex-col gap-2 rounded-md bg-destructive/10 p-4">
+      <p className="text-sm font-medium text-destructive">
+        {changed ? "A host presented a different SSH host key" : "ssh refused a host's key"}
+      </p>
+      <ul className="flex flex-col gap-1 text-sm text-destructive">
+        {problems.map((problem) => (
+          <li key={problem.host} className="wrap-anywhere">
+            <span className="font-medium">{problem.host}</span>
+            {problem.name && problem.name !== problem.host && (
+              <span className="font-mono"> ({problem.name})</span>
+            )}
+            {": "}
+            {problem.problem === "changed" && (
+              <>
+                its {problem.key_type ?? ""} key changed
+                {problem.presented && (
+                  <>
+                    , it now presents <span className="font-mono">{problem.presented}</span>
+                  </>
+                )}
+              </>
+            )}
+            {problem.problem === "unknown" && "no trusted key (strict mode)"}
+            {problem.problem === "failed" && "host key verification failed"}
+          </li>
+        ))}
+      </ul>
+      <p className="text-sm text-destructive">
+        {changed ? (
+          <>
+            If the host was reinstalled, compare that fingerprint with the host&apos;s own (on its console:{" "}
+            <code className="wrap-anywhere">ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code>), then trust
+            the new key. If nothing changed on the host, don&apos;t: something else answered at its address.
+          </>
+        ) : (
+          "Trust or confirm a key for it first."
+        )}{" "}
+        {run.inventory_id !== null &&
+          (canManage ? (
+            <Link to={`/inventories/${run.inventory_id}#host-keys`} className="underline">
+              Review the inventory&apos;s host keys
+            </Link>
+          ) : (
+            "Ask a project admin to review the inventory's host keys."
+          ))}
+      </p>
+    </div>
+  );
+}
+
 function RunSummary({ run }: { run: Run }) {
   const waited = formatDuration(run.queued_at, run.started_at);
   const ran = formatDuration(run.started_at, run.finished_at);
@@ -244,8 +316,11 @@ export function RunDetailPage() {
               )}
             </p>
           )}
+          {hostKeyNote(run) && <p className="text-sm text-muted-foreground">{hostKeyNote(run)}</p>}
           <StatusNote run={run} />
       </div>
+
+      <HostKeyProblems run={run} />
 
       <RunSummary run={run} />
 

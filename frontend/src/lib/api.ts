@@ -177,6 +177,64 @@ export interface InventorySummary {
   name: string;
   description: string | null;
   project_id: number;
+  // How runs treat SSH host keys (project admins change it under Host keys).
+  host_key_checking: HostKeyMode;
+}
+
+export type HostKeyMode = "off" | "accept_new" | "strict";
+
+/** A key an inventory's runs trust for one known_hosts name (`host` or `[host]:port`). */
+export interface HostKey {
+  id: number;
+  name: string;
+  key_type: string;
+  fingerprint: string;
+  source: "scan" | "paste" | "learned";
+  // Learned keys stay unconfirmed until a project admin confirms them; strict runs ignore those.
+  confirmed: boolean;
+  run_id: number | null;
+  created_by: string;
+  created_at: string;
+  confirmed_by: string | null;
+  confirmed_at: string | null;
+  // The inventory's hosts that connect to this name (the first 20).
+  hosts: string[];
+}
+
+export type HostKeyStatus = "trusted" | "learned" | "missing" | "unknown" | "not_checked";
+
+export interface HostKeyHost {
+  host: string;
+  name: string | null;
+  connection: string;
+  status: HostKeyStatus;
+  reason: string | null;
+}
+
+export interface HostKeys {
+  mode: HostKeyMode;
+  keys: HostKey[];
+  hosts: HostKeyHost[];
+  total: number;
+  summary: { hosts: number } & Record<HostKeyStatus, number>;
+}
+
+export interface PastedHostKey {
+  name: string;
+  key_type: string;
+  fingerprint: string;
+  change: "new" | "replace" | "confirm" | "same";
+  previous: string | null;
+  hosts: string[];
+}
+
+/** A host whose key ssh refused in a run. */
+export interface HostKeyProblem {
+  host: string;
+  problem: "changed" | "unknown" | "failed";
+  name: string | null;
+  key_type: string | null;
+  presented: string | null;
 }
 
 export interface InventoryGroup {
@@ -424,6 +482,11 @@ export interface Run {
   // Runs on an inventory with sources: when the snapshot it used was refreshed, and its hosts.
   inventory_snapshot_at: string | null;
   inventory_snapshot_hosts: number | null;
+  // How it treated SSH host keys (null before it was claimed), the hosts whose key ssh refused, and
+  // how many keys it learned.
+  host_key_checking: HostKeyMode | null;
+  host_key_problems: HostKeyProblem[] | null;
+  host_keys_learned: number | null;
   // Runs of playbooks synced from git: the commit they execute and a link to it.
   git_source_name: string | null;
   git_commit: string | null;
@@ -583,6 +646,8 @@ export interface WorkerInfo {
   isolated: boolean | null;
   // Whether its runs can't reach the API or cloud metadata; null: a worker too old to say.
   egress_filtered: boolean | null;
+  // Whether it checks SSH host keys; runs on inventories that do wait for such a worker.
+  host_keys: boolean | null;
   running: number;
   online: boolean;
   first_seen_at: string;
@@ -880,6 +945,29 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ refresh_interval_seconds: seconds }),
     }),
+
+  /** The keys, and a page of hosts: those without a trusted key with `untrusted`, filtered by `q`. */
+  getHostKeys: (id: number, q = "", untrusted = true, page = 1) =>
+    request<HostKeys>(
+      `/inventories/${id}/host-keys?page=${page}&untrusted=${untrusted}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+    ),
+  setHostKeyMode: (id: number, mode: HostKeyMode) =>
+    request<{ mode: HostKeyMode }>(`/inventories/${id}/host-keys/mode`, {
+      method: "PUT",
+      body: JSON.stringify({ mode }),
+    }),
+  pasteHostKeys: (id: number, knownHosts: string, dryRun: boolean) =>
+    request<{ keys: PastedHostKey[]; warnings: string[] }>(`/inventories/${id}/host-keys/paste`, {
+      method: "POST",
+      body: JSON.stringify({ known_hosts: knownHosts, dry_run: dryRun }),
+    }),
+  confirmHostKeys: (id: number, ids: number[]) =>
+    request<HostKey[]>(`/inventories/${id}/host-keys/confirm`, {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
+  removeHostKey: (id: number, keyId: number) =>
+    request<void>(`/inventories/${id}/host-keys/${keyId}`, { method: "DELETE" }),
 
   createGroup: (inventoryId: number, name: string) =>
     request<InventoryGroup>(`/inventories/${inventoryId}/groups`, {

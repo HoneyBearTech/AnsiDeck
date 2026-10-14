@@ -22,6 +22,46 @@ A run sees the inventory's **whole group tree**, so a play with `hosts: web` run
 picking a group as a run's target narrows the run to that group's hosts. A run uses the inventory as it was
 when the run was started: edits made while it waits in the queue don't change it.
 
+## SSH host keys
+
+A run checks that each host is the machine it talked to before: ssh compares the key the host presents
+with the one the inventory trusts, and refuses the host if they differ. The **SSH host keys** card on an
+inventory's page shows how runs treat host keys (its **Mode**), each host without a trusted key, and the
+keys.
+
+- **Learn new hosts** (new inventories): a host's key is learned on its first run and trusted from then
+  on. A run fails for a host whose key changed. Learned keys show as **unconfirmed**.
+- **Strict: confirmed keys only**: only keys a project admin pasted or confirmed are trusted; a run fails
+  for a host without one. Use it when a host must never be trusted on first contact.
+- **Off: not checked**: runs talk to whatever answers at a host's address. Inventories created before
+  AnsiDeck checked host keys start here, with a "host keys not checked" badge; switch them to **Learn new
+  hosts** once you're ready.
+
+Project admins manage the keys:
+
+- **Paste known_hosts** trusts keys from known_hosts lines, for example the output of
+  `ssh-keyscan -p 2222 10.0.0.5` run from a machine you trust, or a host's
+  `/etc/ssh/ssh_host_ed25519_key.pub` with its name put in front. **Preview** shows which keys are new,
+  which replace a trusted key (with the old fingerprint), and which lines can't be used (hashed names,
+  wildcards and `@cert-authority` lines). A key replaces the one of the same type for the same name.
+- **Confirm learned** confirms every unconfirmed key, so strict runs trust them too. Compare the
+  fingerprints with the hosts' own first if it matters.
+- **Remove** forgets a key: in **Learn new hosts** mode the host's next run learns whatever key it is
+  shown, in strict mode its runs fail until a key is trusted.
+
+Keys are kept by the name ssh looks a host up by: its `ansible_host` (or its host name) in lower case, with
+the port in brackets when it isn't 22 (`[10.0.0.5]:2222`). A host whose address is set by a template, or
+only in a git repository's `group_vars`, can't be matched before a run ("address unknown"); keys its runs
+learn aren't kept, so paste its key instead. Jump hosts (ProxyJump) are checked too: paste their keys
+under the name you reach them by (a jump host's own key is never kept from what a run learns, and when
+ssh refuses one, the run only shows "Connection closed" for the host behind it). Hosts that don't connect with ssh (`local`, `winrm`, `network_cli`) are
+listed as "not ssh" and aren't checked.
+
+Inventory and playbook variables can't turn the checks off (`ansible_host_key_checking`, or
+`-o StrictHostKeyChecking=no` in `ansible_ssh_common_args`): AnsiDeck's ssh options come first. Put other
+ssh options in `ansible_ssh_common_args`; `ansible_ssh_args` is AnsiDeck's on these inventories. When a run
+fails on a host key, see [Runs](runs.md#when-ssh-refuses-a-host-key).
+
 ## Group graph
 
 **Group graph** on an inventory's page shows how its groups nest, including the groups its dynamic sources

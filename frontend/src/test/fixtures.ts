@@ -2,6 +2,8 @@ import type {
   AdminUser,
   Credential,
   GitSource,
+  HostKey,
+  HostKeys,
   InventoryDetail,
   InventoryGraph,
   InventoryRefresh,
@@ -94,6 +96,7 @@ export function inventory(overrides: Partial<InventoryDetail> = {}): InventoryDe
     name: "lab",
     description: "The lab",
     project_id: 1,
+    host_key_checking: "accept_new",
     groups: [{ id: 1, name: "web" }],
     hosts: [{ id: 1, hostname: "web1.example", vars: { ansible_user: "deploy" }, group_ids: [1] }],
     ...overrides,
@@ -242,10 +245,45 @@ export function run(overrides: Partial<Run> = {}): Run {
     waiting_reason: null,
     inventory_snapshot_at: null,
     inventory_snapshot_hosts: null,
+    host_key_checking: "accept_new",
+    host_key_problems: null,
+    host_keys_learned: null,
     git_source_name: null,
     git_commit: null,
     playbook_path: null,
     commit_url: null,
+    ...overrides,
+  };
+}
+
+export function hostKey(overrides: Partial<HostKey> = {}): HostKey {
+  return {
+    id: 1,
+    name: "[10.0.0.5]:2222",
+    key_type: "ssh-ed25519",
+    fingerprint: "SHA256:lb3T+CbqsTi3pCqDEQBmfHd/c/jIK875yJAZ+F10Eyo",
+    source: "learned",
+    confirmed: false,
+    run_id: 7,
+    created_by: "run #7",
+    created_at: NOW,
+    confirmed_by: null,
+    confirmed_at: null,
+    hosts: ["web1.example"],
+    ...overrides,
+  };
+}
+
+export function hostKeys(overrides: Partial<HostKeys> = {}): HostKeys {
+  return {
+    mode: "accept_new",
+    keys: [hostKey()],
+    hosts: [
+      { host: "web1.example", name: "[10.0.0.5]:2222", connection: "ssh", status: "learned", reason: null },
+      { host: "db1", name: "db1", connection: "ssh", status: "missing", reason: null },
+    ],
+    total: 2,
+    summary: { hosts: 3, trusted: 1, learned: 1, missing: 1, unknown: 0, not_checked: 0 },
     ...overrides,
   };
 }
