@@ -109,6 +109,12 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 - The web UI is built with Node.js 26 (the LTS line from 28 October 2026), up from 24. Only the build
   uses Node; the shipped frontend image is nginx.
 
+### Fixed
+
+- Stopping or restarting the API no longer waits up to 25 seconds for the workers' pending claim requests
+  (longer than Docker's 10-second stop timeout, so the API could be killed before it finished). In
+  development a hot reload left the API unreachable for that long; now it is back as soon as it has started.
+
 ## [0.5.0] - 2026-10-07
 
 The rest of the security review's findings: API keys that outlived their creator, what playbooks can reach

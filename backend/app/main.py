@@ -21,7 +21,7 @@ from app.config import get_settings
 from app.db import get_sessionmaker, init_db
 from app.git_sync import LOOP_SECONDS, SYNC_TOPIC, due_sources, sync_source
 from app.hardening import OriginCheckMiddleware, allowed_hosts
-from app.internal_api import internal_app
+from app.internal_api import accept_long_polls, end_long_polls, internal_app
 from app.metrics_api import metrics_app
 from app.notifications.dispatch import dispatch_forever
 from app.notifications.ops import secret_store_failed, secret_store_ok
@@ -170,6 +170,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     galaxy_collections_dir()
     galaxy_roles_dir()
 
+    accept_long_polls()
     reaper = asyncio.create_task(_reap_forever())
     dispatcher = asyncio.create_task(dispatch_forever())
     syncer = asyncio.create_task(_git_sync_forever())
@@ -189,6 +190,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         dispatcher.cancel()
         syncer.cancel()
         prober.cancel()
+        end_long_polls()  # within a recheck (2 s), not after the poll's 25 s
         for server in servers:
             server.should_exit = True  # graceful: in-flight worker calls finish
         await asyncio.gather(reaper, dispatcher, syncer, prober, *serving, return_exceptions=True)

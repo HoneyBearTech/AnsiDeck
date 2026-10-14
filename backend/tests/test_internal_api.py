@@ -130,6 +130,37 @@ def test_claim_returns_204_when_there_is_nothing_to_run(client) -> None:
     assert response.status_code == 204
 
 
+def test_a_waiting_claim_ends_when_the_api_shuts_down(client) -> None:
+    """Otherwise each worker's long poll holds the API's shutdown (and a dev server's reload,
+    which serves nothing meanwhile) for up to 25 s."""
+    import threading
+    import time
+
+    results: list[tuple[int, float]] = []
+
+    def wait() -> None:
+        started = time.monotonic()
+        response = internal_client().post(
+            "/internal/claim", json={"worker_id": "w", "wait_seconds": 25}
+        )
+        results.append((response.status_code, time.monotonic() - started))
+
+    poller = threading.Thread(target=wait)
+    poller.start()
+    time.sleep(0.5)
+    try:
+        internal_api.end_long_polls()
+        poller.join(timeout=10)
+    finally:
+        internal_api.accept_long_polls()
+    assert results and results[0][0] == 204
+    assert results[0][1] < 5  # one recheck (2 s), not the 25 s asked for
+    # A new lifespan takes long polls again.
+    started = time.monotonic()
+    waited = internal_client().post("/internal/claim", json={"worker_id": "w", "wait_seconds": 1})
+    assert waited.status_code == 204 and time.monotonic() - started >= 1
+
+
 @pytest.mark.parametrize("isolated", [False, None])
 def test_a_production_api_gives_no_work_to_a_worker_that_doesnt_isolate(
     client, monkeypatch, isolated
