@@ -31,6 +31,8 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- **API key limits**: a key can be limited to source addresses (CIDRs) and to the playbooks and inventories
+  it may start runs of; limits can be changed without a new token (audited) and survive rotation.
 - **Environment credentials for runs**: a run (or template) can get up to five environment-variable
   credentials in the playbook's environment, for cloud modules (AWS keys, API tokens); their values are
   removed from the output. Credentials may no longer set `SSH_*` or `SUDO_*` variables.

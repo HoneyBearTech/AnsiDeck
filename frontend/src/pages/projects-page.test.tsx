@@ -2,7 +2,7 @@ import { within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { reply } from "@/test/fake-api";
-import { adminUser, project, viewerUser } from "@/test/fixtures";
+import { adminUser, inventory, playbook, project, viewerUser } from "@/test/fixtures";
 import { choose, renderApp } from "@/test/render";
 
 function summary(overrides = {}) {
@@ -29,6 +29,9 @@ function apiKey(overrides = {}) {
     last_used_ip: null,
     revoked_at: null,
     status: "active",
+    allowed_networks: null,
+    allowed_playbooks: null,
+    allowed_inventories: null,
     ...overrides,
   };
 }
@@ -181,6 +184,59 @@ describe("projects", () => {
     api.set({ "DELETE /projects/:id/api-keys/:kid": reply(404, { detail: "Already revoked" }) });
     await user.click(screen.getByRole("button", { name: "Revoke" }));
     expect(await screen.findByText("Already revoked")).toBeInTheDocument();
+  });
+
+  it("limits an API key to addresses, playbooks and inventories", async () => {
+    const limited = apiKey({
+      allowed_networks: ["203.0.113.0/24"],
+      allowed_playbooks: [{ id: 1, name: "site.yml" }],
+      allowed_inventories: null,
+    });
+    const { api, user, screen } = renderApp("/projects", {
+      routes: {
+        "GET /projects": [summary()],
+        "GET /projects/:id/api-keys": [limited],
+        "GET /playbooks": [playbook(), playbook({ id: 2, name: "deploy.yml" }), playbook({ id: 9, name: "foreign.yml", project_id: 2 })],
+        "GET /inventories": [inventory()],
+        "POST /projects/:id/api-keys": { ...apiKey({ id: 3 }), token: "ansd_1a2b3c4d_secret" },
+        "PATCH /projects/:id/api-keys/:kid": limited,
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "API keys" }));
+    expect(await screen.findByText("Only from 203.0.113.0/24 · playbooks: site.yml")).toBeInTheDocument();
+
+    // At creation.
+    await user.type(screen.getByLabelText("New API key"), "ci");
+    await user.type(screen.getByLabelText("Current password"), "pw");
+    await user.click(screen.getByRole("button", { name: "Add limits" }));
+    await user.type(screen.getByLabelText("Allowed addresses (optional, one per line)"), "198.51.100.7");
+    const playbooks = within(screen.getByRole("group", { name: "Playbooks it may run" }));
+    await user.click(playbooks.getByRole("checkbox", { name: "Only some" }));
+    await user.click(screen.getByRole("button", { name: "Create key" }));
+    expect(await screen.findByText(/Pick the playbooks it may run/)).toBeInTheDocument(); // none picked
+    await user.click(await playbooks.findByRole("checkbox", { name: "deploy.yml" }));
+    expect(playbooks.queryByText("foreign.yml")).not.toBeInTheDocument(); // another project's
+    await user.click(screen.getByRole("button", { name: "Create key" }));
+    await screen.findByRole("dialog");
+    expect(api.requests("POST /projects/1/api-keys")[0]?.body).toMatchObject({
+      allowed_networks: ["198.51.100.7"],
+      allowed_playbook_ids: [2],
+      allowed_inventory_ids: null,
+    });
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Done" }));
+
+    // Later, without a new token.
+    await user.click(screen.getByRole("button", { name: "Limits" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    const inventories = within(dialog.getByRole("group", { name: "Inventories it may run against" }));
+    await user.click(inventories.getByRole("checkbox", { name: "Only some" }));
+    await user.click(await inventories.findByRole("checkbox", { name: "lab" }));
+    await user.click(dialog.getByRole("button", { name: "Save limits" }));
+    expect(api.requests("PATCH /projects/1/api-keys/1")[0]?.body).toEqual({
+      allowed_networks: ["203.0.113.0/24"],
+      allowed_playbook_ids: [1],
+      allowed_inventory_ids: [1],
+    });
   });
 
   it("shows API key errors and a failed copy", async () => {

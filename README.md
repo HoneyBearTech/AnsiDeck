@@ -424,6 +424,9 @@ once, and expire (30 days, 90 days or 1 year) or can be revoked at any time. The
   project. Never runs as root, never edits anything.
 - `read-only` — read run status and output only.
 
+A key can also be limited to the addresses it may be used from and to the playbooks and inventories it may
+run (**Limits** on the key; changeable later without a new key).
+
 Send the key as a bearer token, over HTTPS only:
 
 ```sh

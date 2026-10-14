@@ -6,10 +6,14 @@ SHA-256 is the right hash — a slow one would only add latency to every request
 A verified key becomes a transient `User` that is never added to a session: never a
 global admin, with exactly one project role, so every existing permission helper sees
 only that project and only the preset's permissions (see permissions.KEY_ROLE_PERMISSIONS).
+
+A key may also be limited to some source addresses (checked here, for every request) and to
+some playbooks and inventories (checked where runs start, app.routers.runs.queue_run).
 """
 
 import hashlib
 import hmac
+import ipaddress
 import secrets
 from datetime import UTC, datetime, timedelta
 
@@ -24,6 +28,44 @@ KEY_ROLE_PREFIX = "key:"
 MAX_TOKEN_LENGTH = 200
 _LAST_USED_GRANULARITY = timedelta(minutes=1)
 _DUMMY_HASH = hashlib.sha256(b"ansideck-dummy-api-key").hexdigest()
+MAX_NETWORKS = 20
+MAX_ALLOWED_ITEMS = 100
+
+
+def parse_networks(values: list[str]) -> list[str]:
+    """Addresses or CIDRs as stored (normalised), or ValueError naming the bad one."""
+    networks: list[str] = []
+    for raw in values:
+        try:
+            network = ipaddress.ip_network(raw.strip(), strict=False)
+        except ValueError:
+            raise ValueError(f"{raw[:60]!r} is not an IP address or CIDR") from None
+        if str(network) not in networks:
+            networks.append(str(network))
+    return networks
+
+
+def address_allowed(key: ApiKey, ip: str | None) -> bool:
+    if not key.allowed_networks:
+        return True
+    try:
+        address = ipaddress.ip_address(ip or "")
+    except ValueError:
+        return False
+    if address.version == 6 and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return any(address in ipaddress.ip_network(n) for n in key.allowed_networks)
+
+
+def run_limit_problem(principal: User, playbook_id: int, inventory_id: int) -> str | None:
+    """Why an API key may not start this run, or None (also for people)."""
+    playbooks = getattr(principal, "_allowed_playbook_ids", None)
+    inventories = getattr(principal, "_allowed_inventory_ids", None)
+    if playbooks is not None and playbook_id not in playbooks:
+        return "This API key may not run this playbook"
+    if inventories is not None and inventory_id not in inventories:
+        return "This API key may not run against this inventory"
+    return None
 
 
 def hash_token(token: str) -> str:
@@ -84,6 +126,8 @@ def principal_for(key: ApiKey) -> User:
     )
     principal._project_roles = {key.project_id: f"{KEY_ROLE_PREFIX}{key.preset}"}  # type: ignore[attr-defined]
     principal._api_key_id = key.id  # type: ignore[attr-defined]
+    principal._allowed_playbook_ids = key.allowed_playbook_ids  # type: ignore[attr-defined]
+    principal._allowed_inventory_ids = key.allowed_inventory_ids  # type: ignore[attr-defined]
     return principal
 
 
@@ -108,6 +152,8 @@ def authenticate_api_key(
         return None, state, prefix
     if problem := creator_problem(db, key):
         return None, f"suspended: {problem}", prefix
+    if not address_allowed(key, ip):
+        return None, "address not allowed", prefix
 
     principal = principal_for(key)
     last_used = key.last_used_at

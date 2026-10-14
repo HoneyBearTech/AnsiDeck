@@ -22,6 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit, git_sync, metrics
+from app.api_keys import run_limit_problem
 from app.db import get_db, get_sessionmaker
 from app.dependencies import SESSION_COOKIE_NAME, RateLimited, authenticate_request
 from app.hardening import client_ip
@@ -300,6 +301,18 @@ def queue_run(
         "Inventory not found",
     )
     _require_same_project(inventory, project_id, "Inventory")
+    if limited := run_limit_problem(current_user, playbook.id, inventory.id):
+        audit.record(
+            db,
+            "permission.denied",
+            outcome="denied",
+            actor=current_user,
+            target_type="run",
+            ip=client_ip(request),
+            project_id=project_id,
+            detail={"reason": limited, "playbook": playbook.name, "inventory": inventory.name},
+        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, limited)
 
     group = None
     if payload.group_id is not None:

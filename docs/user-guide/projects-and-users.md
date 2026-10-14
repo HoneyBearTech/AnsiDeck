@@ -89,9 +89,17 @@ without a user account.
 2. Copy the key from the dialog: it's shown **once**. Send it as `Authorization: Bearer <key>`, over HTTPS.
 3. The list shows each key's status, when it was last used, and when it expires. **Revoke** (after a
    confirmation) stops a key at once.
-4. **Rotate** replaces a key with a new one of the same name, preset and lifetime, created by you (it asks
-   for your password, like creating one). The old key stops working at once, so update the pipeline that
-   uses it straight away.
+4. **Rotate** replaces a key with a new one of the same name, preset, lifetime and limits, created by you (it
+   asks for your password, like creating one). The old key stops working at once, so update the pipeline
+   that uses it straight away.
+5. **Limits** (or **Add limits** when creating one) narrows what a key can do, and can be changed later
+   without a new key (every change is in the audit log):
+   - **Allowed addresses**: addresses or CIDRs it may be used from, as AnsiDeck sees them: behind a reverse
+     proxy, that proxy must be listed in `TRUSTED_PROXIES` (see [installing](../installing.md)), or every
+     request seems to come from the proxy. Check **last used** on the key. From anywhere else the key is
+     refused like a wrong one.
+   - **Playbooks it may run** and **Inventories it may run against**: it can start runs (directly or from a
+     template) of those only. A read-only key's reading isn't limited by these.
 
 A revoked key's name can be used again. Keys revoked or expired more than `API_KEY_RETENTION_DAYS` ago
 (90 by default; 0 keeps them) are deleted from the list; runs they started still show who started them, and

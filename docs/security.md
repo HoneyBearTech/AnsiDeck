@@ -31,7 +31,8 @@ exposed directly to the public internet. The rest of this page assumes that depl
 - The web app is served with a strict Content-Security-Policy and other browser hardening headers
   (no framing, no MIME sniffing, no referrer). HSTS is up to your TLS-terminating proxy.
 - API keys carry 256 bits of entropy, are stored only as hashes, belong to exactly one project with a fixed
-  preset (trigger or read-only), can expire, and are never global admins. A trigger key can run commands
+  preset (trigger or read-only), can expire, and are never global admins. A key can be limited to source
+  addresses (checked on every request) and to the playbooks and inventories it may start runs of. A trigger key can run commands
   through its runs' extra vars (Ansible templates them), like an operator, though never with become. A key
   works only while its creator is active and may still manage that project's keys, and creating one needs
   the current password (or an SSO sign-in within 15 minutes).
