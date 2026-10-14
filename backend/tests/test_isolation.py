@@ -526,11 +526,13 @@ def test_an_isolated_slot_sweeps_its_user_before_claiming(monkeypatch, tmp_path)
         client, worker_id="w", slots=2, galaxy_dir=tmp_path, isolated=True, claim_wait_seconds=0
     )
     worker.start()
+    # Swept before start() returns (the worker says it is ready after that), and only once.
+    assert sorted(identity.name for identity in sweeps) == ["ansideck-run0", "ansideck-run1"]
     deadline = time.monotonic() + 5
     while len(client.claims) < 2 and time.monotonic() < deadline:
         time.sleep(0.01)
     worker.stop()
-    assert {identity.name for identity in sweeps} == {"ansideck-run0", "ansideck-run1"}
+    assert sorted(identity.name for identity in sweeps) == ["ansideck-run0", "ansideck-run1"]
     assert client.claims[0]["isolated"] is True
     assert client.claims[0]["egress_filtered"] is False  # no filter given
 

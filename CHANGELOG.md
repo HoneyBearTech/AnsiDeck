@@ -72,6 +72,8 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Changed
 
+- A worker logs that it is ready only after it has emptied every slot's user of leftovers from an earlier
+  worker. Before, a slot could still be sweeping, and whatever ran as that user just then was killed.
 - The web UI is built with Node.js 26 (the LTS line from 28 October 2026), up from 24. Only the build
   uses Node; the shipped frontend image is nginx.
 
