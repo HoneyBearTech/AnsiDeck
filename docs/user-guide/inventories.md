@@ -106,7 +106,10 @@ More about sources:
 - **Refresh** sets a schedule (every 5 minutes to every day); "when something changes" refreshes after a
   source or the inventory's own hosts change. A refresh fails as a whole when any source fails, and runs
   keep using the last good snapshot. Admins can be notified (**Inventory refresh failed**).
-- A run uses the snapshot current when it starts, and a run can't start until the first refresh worked.
+- A run uses the snapshot current when it starts, and a run can't start until the first refresh worked,
+  unless it refreshes the sources first: tick that on **New run** (or in a template, or send
+  `"refresh_first": true` with the API), or switch on **Refresh before every run** next to the schedule to
+  make it the default. Such a run waits for its own refresh and fails if the refresh does.
 - Turn a source off with its switch, **Edit** it, or **Delete** it (after a confirmation).
 - A source can say where and as whom to connect to a host, but not how: of Ansible's own variables it may
   only set `ansible_host`, `ansible_port`, `ansible_user` (and their `ansible_ssh_` forms),

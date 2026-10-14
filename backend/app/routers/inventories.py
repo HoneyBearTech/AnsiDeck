@@ -82,6 +82,7 @@ def _to_inventory_detail(inventory: Inventory, masked: bool = False) -> Inventor
         description=inventory.description,
         project_id=inventory.project_id,
         host_key_checking=inventory.host_key_checking,
+        refresh_before_run=inventory.refresh_before_run,
         groups=list(inventory.groups),
         hosts=[_to_host_out(h, masked) for h in inventory.hosts],
     )

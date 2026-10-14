@@ -11,7 +11,9 @@
 - **Playbook**: synced playbooks show their git source; playbooks removed upstream aren't offered.
 - **Inventory**, and a **Target**: all hosts, or one group (groups from dynamic sources are marked).
   For an inventory with dynamic sources, the form says how fresh its snapshot is, or that it needs a first
-  refresh.
+  refresh. **Refresh the dynamic sources first** makes the run wait for a refresh started with it and run
+  with what that refresh finds; the run fails (without running) if the refresh fails, or if its target
+  group isn't in what the refresh found. It is ticked when the inventory says **Refresh before every run**.
 - **Credential**: the SSH key to connect with.
 - **Vault password** (optional): needed if the playbook or extra vars contain vault-encrypted values.
 

@@ -293,7 +293,8 @@ export function RunDetailPage() {
           </p>
           {run.inventory_snapshot_at && (
             <p className="text-sm text-muted-foreground">
-              Inventory sources as of {new Date(run.inventory_snapshot_at).toLocaleString()}
+              {run.refresh_first ? "Inventory sources refreshed for this run: " : "Inventory sources as of "}
+              {new Date(run.inventory_snapshot_at).toLocaleString()}
               {run.inventory_snapshot_hosts !== null &&
                 ` · ${run.inventory_snapshot_hosts} host${run.inventory_snapshot_hosts === 1 ? "" : "s"} from them`}
             </p>

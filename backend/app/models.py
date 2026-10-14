@@ -315,6 +315,8 @@ class Inventory(Base):
     # Dynamic sources (Phase 4G): refreshed every this many seconds (0: only on demand), and
     # the snapshot runs use now (the newest good refresh).
     refresh_interval_seconds: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Runs refresh the sources first unless whoever starts one unticks it.
+    refresh_before_run: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     current_snapshot_id: Mapped[int | None] = mapped_column(
         ForeignKey("inventory_snapshots.id", ondelete="SET NULL", use_alter=True), default=None
     )
@@ -651,6 +653,12 @@ class Run(Base):
         DateTime(timezone=True), default=None
     )
     inventory_snapshot_hosts: Mapped[int | None] = mapped_column(Integer, default=None)
+    # Started with "refresh the inventory first": it waits for this refresh (queued when it
+    # was triggered), then runs with the snapshot that refresh made, or fails with it.
+    refresh_first: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    waiting_refresh_id: Mapped[int | None] = mapped_column(
+        ForeignKey("inventory_refreshes.id", ondelete="SET NULL"), default=None
+    )
     playbook_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
     # Its inventory's host key mode when it was claimed (app.host_keys), what ssh refused
     # ([{host, problem, name, key_type, presented}]) and how many keys it learned.
@@ -746,6 +754,8 @@ class RunTemplate(Base):
     limit: Mapped[str | None] = mapped_column(String(500), default=None)
     extra_vars: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=DEFAULT_RUN_TIMEOUT_SECONDS)
+    # Refresh the inventory's sources before each launch; None: as the inventory says.
+    refresh_first: Mapped[bool | None] = mapped_column(Boolean, default=None)
     created_by: Mapped[str] = mapped_column(String(150))
     updated_by: Mapped[str] = mapped_column(String(150))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

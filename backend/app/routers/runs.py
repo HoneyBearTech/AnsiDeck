@@ -26,7 +26,7 @@ from app.db import get_db, get_sessionmaker
 from app.dependencies import SESSION_COOKIE_NAME, RateLimited, authenticate_request
 from app.hardening import client_ip
 from app.inventory_render import merge, static_data, static_problems
-from app.inventory_sources import has_sources
+from app.inventory_sources import enqueue_refresh, has_sources
 from app.models import (
     FINISHED_STATUSES,
     MAX_RUN_TIMEOUT_SECONDS,
@@ -35,6 +35,7 @@ from app.models import (
     GitSource,
     Inventory,
     InventoryGroup,
+    InventoryRefresh,
     InventorySnapshot,
     Playbook,
     Run,
@@ -149,14 +150,19 @@ def pin_snapshot(db: Session, playbook: Playbook) -> dict:
 
 
 def _pin_inventory(
-    db: Session, inventory: Inventory, group: InventoryGroup | None, group_name: str | None
+    db: Session,
+    inventory: Inventory,
+    group: InventoryGroup | None,
+    group_name: str | None,
+    refreshing: bool = False,
 ) -> tuple[dict, str | None, InventorySnapshot | None]:
     """The inventory's own hosts and groups as they are now and its sources' current snapshot
     (what the queued run will see, whatever is edited or refreshed meanwhile), and the target
     group's name, checked against the merged tree. The snapshot row is share-locked until the
-    run is committed, so pruning can't remove it in between."""
+    run is committed, so pruning can't remove it in between. A run that refreshes the sources
+    first gets its snapshot (and its target group checked) when that refresh ends."""
     snapshot = None
-    if has_sources(db, inventory.id):
+    if has_sources(db, inventory.id) and not refreshing:
         if inventory.current_snapshot_id is not None:
             snapshot = db.scalars(
                 select(InventorySnapshot)
@@ -181,11 +187,27 @@ def _pin_inventory(
         )
     target = group.name if group is not None else group_name
     merged = merge(static, snapshot.data if snapshot is not None else None)
-    if target is not None and target not in merged["groups"]:
+    if target is not None and target not in merged["groups"] and not refreshing:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, f"No group named {target!r} in this inventory"
         )
     return static, target, snapshot
+
+
+def _refresh_for_run(db: Session, inventory: Inventory, username: str) -> int:
+    """A refresh of the inventory's sources that starts after now: a new one, or the one
+    already waiting in the queue (it hasn't read anything yet)."""
+    refresh_id = enqueue_refresh(db, inventory, "run", username)
+    if refresh_id is None:
+        refresh_id = db.scalar(
+            select(InventoryRefresh.id).where(
+                InventoryRefresh.inventory_id == inventory.id,
+                InventoryRefresh.status == RunStatus.QUEUED.value,
+            )
+        )
+    if refresh_id is None:  # has_sources said yes: not reachable
+        raise HTTPException(status.HTTP_409_CONFLICT, "Could not queue a refresh of the inventory")
+    return refresh_id
 
 
 def _require_same_project(obj, project_id: int, label: str) -> None:
@@ -276,8 +298,11 @@ def queue_run(
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "group_id and group_name name different groups"
             )
+    refresh_first = (
+        inventory.refresh_before_run if payload.refresh_first is None else payload.refresh_first
+    ) and has_sources(db, inventory.id)
     inventory_static, group_name, snapshot = _pin_inventory(
-        db, inventory, group, payload.group_name
+        db, inventory, group, payload.group_name, refreshing=refresh_first
     )
     if group is None and group_name is not None:
         # A static group picked by name: keep the link, for history.
@@ -347,6 +372,9 @@ def queue_run(
         playbook_sha256=hashlib.sha256(playbook_text).hexdigest(),
         **(git["columns"] if git else {}),
     )
+    if refresh_first:
+        run.refresh_first = True
+        run.waiting_refresh_id = _refresh_for_run(db, inventory, current_user.username)
     db.add(run)
     db.commit()
     db.refresh(run)
@@ -366,6 +394,7 @@ def queue_run(
             "group": group_name,
             "become": payload.become,
             "check_mode": payload.check_mode,
+            **({"refresh_first": True} if run.refresh_first else {}),
             **({"commit": run.git_commit} if run.git_commit else {}),
             **(audit_detail or {}),
         },
@@ -434,6 +463,7 @@ def rerun(
         limit=run.limit,
         extra_vars=run.extra_vars,
         timeout_seconds=min(run.timeout_seconds, MAX_RUN_TIMEOUT_SECONDS),
+        refresh_first=run.refresh_first,
     )
     new_run = queue_run(db, current_user, request, payload, audit_detail={"rerun_of": run.id})
     return _run_out(db, new_run, current_user)

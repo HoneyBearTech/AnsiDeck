@@ -22,6 +22,9 @@ class RunCreate(BaseModel):
     extra_vars: dict[str, Any] | None = None
     # The run is stopped (status timed_out) once it has run this long.
     timeout_seconds: int = Field(DEFAULT_RUN_TIMEOUT_SECONDS, ge=1, le=MAX_RUN_TIMEOUT_SECONDS)
+    # Refresh the inventory's dynamic sources first, and run with what they find (the run
+    # fails if the refresh does). None: as the inventory's "refresh before every run" says.
+    refresh_first: bool | None = None
 
     @field_validator("limit")
     @classmethod
@@ -79,6 +82,8 @@ class RunOut(BaseModel):
     hosts_changed: int | None
     hosts_failed: int | None
     hosts_unreachable: int | None
+    # It refreshed its inventory's sources first (and waits for that refresh while queued).
+    refresh_first: bool = False
     # Runs on an inventory with sources: when the snapshot it used was refreshed, and how
     # many hosts the sources found then.
     inventory_snapshot_at: datetime | None = None

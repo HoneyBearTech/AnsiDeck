@@ -31,6 +31,9 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- **Refresh the inventory before a run**: a run (or template, or API request with `"refresh_first": true`)
+  can wait for a fresh refresh of its inventory's dynamic sources and run with what it finds; it fails if the
+  refresh does. An inventory's **Refresh before every run** makes that the default.
 - **ntfy** and **Gotify** notification channels: an ntfy topic (on ntfy.sh or your own server, with an
   optional access token) or a Gotify server and application token. Self-hosted servers on your network go in
   `NOTIFY_ALLOWED_PRIVATE_HOSTS`, as for webhooks.

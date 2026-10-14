@@ -129,6 +129,7 @@ def _apply(template: RunTemplate, payload: RunTemplateIn, extra_vars: dict | Non
         "diff_mode",
         "limit",
         "timeout_seconds",
+        "refresh_first",
     ):
         setattr(template, field, getattr(payload, field))
     template.uses_vault_password = payload.vault_password_id is not None
@@ -289,9 +290,9 @@ def launch_template(
     user: User = Depends(_launch_guard),
     db: Session = Depends(get_db),
 ) -> RunOut:
-    """Starts a run from the template, as its items are now. `limit` and `check_mode` may be
-    changed for this run only. The caller needs the same permissions as for starting the run
-    directly (become included)."""
+    """Starts a run from the template, as its items are now. `limit`, `check_mode` and
+    `refresh_first` may be changed for this run only. The caller needs the same permissions as
+    for starting the run directly (become included)."""
     template = get_scoped(
         db, user, request, RunTemplate, template_id, Permission.RUNS_TRIGGER, "Template not found"
     )
@@ -310,6 +311,9 @@ def launch_template(
         limit=template.limit if overrides.limit is None else overrides.limit,
         extra_vars=template.extra_vars,
         timeout_seconds=template.timeout_seconds,
+        refresh_first=(
+            template.refresh_first if overrides.refresh_first is None else overrides.refresh_first
+        ),
     )
     run = queue_run(
         db,

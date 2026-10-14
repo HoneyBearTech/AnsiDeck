@@ -43,7 +43,8 @@ function SnapshotNote({ targets }: { targets: InventoryTargets }) {
   if (!targets.snapshot_at) {
     return (
       <p className="text-xs text-destructive">
-        This inventory&apos;s dynamic sources haven&apos;t been refreshed yet: refresh it on its page first.
+        This inventory&apos;s dynamic sources haven&apos;t been refreshed yet: refresh them first (below), or on
+        its page.
       </p>
     );
   }
@@ -142,6 +143,8 @@ export function RunTriggerPage() {
   const [becomeConfirmed, setBecomeConfirmed] = React.useState(false);
   const [checkMode, setCheckMode] = React.useState(false);
   const [diffMode, setDiffMode] = React.useState(false);
+  // null: as the inventory's "refresh before every run" says, until someone ticks or unticks it.
+  const [refreshFirst, setRefreshFirst] = React.useState<boolean | null>(null);
   const [limit, setLimit] = React.useState("");
   const [timeoutMinutes, setTimeoutMinutes] = React.useState(String(DEFAULT_TIMEOUT_MINUTES));
   const [extraVarsText, setExtraVarsText] = React.useState("{}");
@@ -193,6 +196,7 @@ export function RunTriggerPage() {
       setVaultPasswordId(from.vault_password_id === null ? NO_VAULT : String(from.vault_password_id));
       setCheckMode(from.check_mode);
       setDiffMode(from.diff_mode);
+      setRefreshFirst(from.refresh_first);
       setLimit(from.limit ?? "");
       setTimeoutMinutes(String(Math.max(1, Math.ceil(from.timeout_seconds / 60))));
       setExtraVarsText(from.extra_vars ? JSON.stringify(from.extra_vars, null, 2) : "{}");
@@ -279,6 +283,7 @@ export function RunTriggerPage() {
       limit: limit.trim() || null,
       extra_vars: extraVars,
       timeout_seconds: minutes * 60,
+      refresh_first: refreshFirst,
     };
   }
 
@@ -411,6 +416,15 @@ export function RunTriggerPage() {
             </SelectContent>
           </Select>
           <SnapshotNote targets={selectedInventory} />
+          {selectedInventory.has_sources && (
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={refreshFirst ?? selectedInventory.refresh_before_run}
+                onCheckedChange={(checked) => setRefreshFirst(checked === true)}
+              />
+              Refresh the dynamic sources first (the run waits for it, and fails if the refresh does)
+            </label>
+          )}
         </div>
       )}
 
