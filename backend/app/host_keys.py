@@ -204,11 +204,10 @@ def address_of(inventory_hostname: str, host_vars: dict) -> HostAddress:
     return HostAddress(name, "ssh", True)
 
 
-def host_addresses(graph: dict) -> dict[str, HostAddress]:
-    """Every host of a merged inventory (app.inventory_render.merge) with its address. Group
-    and host vars are combined by ansible's own rules (child groups over parents, host vars
-    over group vars); nothing is templated. Vars from a repository's group_vars/host_vars
-    aren't seen here."""
+def merged_host_vars(graph: dict) -> dict[str, dict]:
+    """Every host of a merged inventory (app.inventory_render.merge) with its variables,
+    combined by ansible's own rules (child groups over parents, host vars over group vars);
+    nothing is templated. Vars from a repository's group_vars/host_vars aren't seen here."""
     from ansible.errors import AnsibleError
     from ansible.inventory.data import InventoryData
     from ansible.inventory.helpers import get_group_vars
@@ -235,11 +234,16 @@ def host_addresses(graph: dict) -> dict[str, HostAddress]:
             if host_name in data.hosts:
                 data.add_child(group_name, host_name)
     data.reconcile_inventory()
-    result = {}
-    for host_name, host in data.hosts.items():
-        merged = combine_vars(get_group_vars(host.get_groups()), host.get_vars())
-        result[host_name] = address_of(host_name, merged)
-    return result
+    return {
+        host_name: combine_vars(get_group_vars(host.get_groups()), host.get_vars())
+        for host_name, host in data.hosts.items()
+    }
+
+
+def host_addresses(graph: dict) -> dict[str, HostAddress]:
+    """Every host of a merged inventory (app.inventory_render.merge) with its address (see
+    merged_host_vars())."""
+    return {name: address_of(name, merged) for name, merged in merged_host_vars(graph).items()}
 
 
 # What ssh says when it refuses a host key (OpenSSH 8-10), in ansible's unreachable message.
