@@ -1,5 +1,6 @@
 import type {
   AdminUser,
+  EgressSettings,
   Credential,
   GitSource,
   HostKey,
@@ -453,6 +454,36 @@ export function passkey(overrides: Partial<Passkey> = {}): Passkey {
     created_at: NOW,
     last_used_at: null,
     synced: false,
+    ...overrides,
+  };
+}
+
+export function egressSettings(overrides: Partial<EgressSettings> = {}): EgressSettings {
+  return {
+    restricted: false,
+    extras: [],
+    hosts: [
+      { host: "web1", connection: "ssh", status: "ok", address: "10.0.0.5", jump_host: null, reason: null },
+      {
+        host: "inner",
+        connection: "ssh",
+        status: "indirect",
+        address: "inner.corp",
+        jump_host: "bastion.example:22",
+        reason: null,
+      },
+      {
+        host: "templated",
+        connection: "ssh",
+        status: "unknown",
+        address: null,
+        jump_host: null,
+        reason: "its address is set by a template",
+      },
+    ],
+    total: 3,
+    summary: { hosts: 3, ok: 1, indirect: 1, local: 0, unknown: 1 },
+    warnings: [],
     ...overrides,
   };
 }

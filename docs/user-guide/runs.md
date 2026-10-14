@@ -68,6 +68,15 @@ run learn it). If nothing changed on the host, don't. Admins can be notified (**
 
 The run's page also says how it checked host keys and how many new keys it learned.
 
+## When the network refuses a connection
+
+On an inventory whose runs may reach **only its hosts** (see [Inventories](inventories.md#network)), the
+run's page says so, with how many addresses it could reach (**show** lists them), and lists the connections
+AnsiDeck refused: an address, a protocol and a port, such as `203.0.113.5 tcp/443`. A playbook that needs one
+of them needs an extra entry on the inventory. A run that doesn't start with "not run: its inventory restricts
+network egress, and ..." names the hosts whose address isn't known before the run, or the names that don't
+resolve on the worker.
+
 ## Artifacts
 
 Files a run produces (reports, backups, collected configs) can be kept with it: put them in the run's
@@ -94,7 +103,8 @@ the list stays.
 
 Runs wait in a queue until a worker slot is free. A queued run's page says what it waits for: a free
 worker, the run ahead of it on the same inventory, a Galaxy install, no worker being online at all, or a
-worker new enough to check SSH host keys (the Workers page marks older ones "no host key checks").
+worker new enough to check SSH host keys (the Workers page marks older ones "no host key checks"), or one
+that can limit a run's network (for inventories whose runs may reach only their hosts).
 
 - Runs against the same inventory go one at a time, in the order they were started.
 - While a Galaxy install waits or runs, no new run starts.

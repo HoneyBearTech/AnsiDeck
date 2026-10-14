@@ -67,10 +67,14 @@ flowchart TB
    inventory (static hosts plus the latest dynamic-inventory snapshot) and, for a synced playbook, the git
    commit, then inserts a `queued` run.
 2. A worker slot claims the oldest claimable run (one whose inventory checks SSH host keys only goes to a
-   worker that does, and the inventory's host key mode is fixed on the run). The API returns a job
+   worker that does, and one whose inventory restricts network egress to a worker whose allowlists passed
+   their self-test; both settings are fixed on the run). The API returns a job
    description with exactly that run's secrets: the SSH key, vault password and the inventory rendered for
    the run, with strings from inventory sources marked `!unsafe`, plus the host keys the run trusts
-   (`app/host_keys.py`, `app/host_key_store.py`).
+   (`app/host_keys.py`, `app/host_key_store.py`), and on a restricted inventory where each host connects,
+   its jump hosts and extra entries (`app/egress_allowlist.py`). The worker resolves those names and
+   installs the slot's allowlist table before anything of the run starts (`app/worker/egress.py`), and
+   reports what it resolved.
 3. The slot's child process (as the slot user) writes the job into its private directory, unpacks a git
    snapshot if there is one, writes the run's known_hosts and puts its host key options first on ssh's
    command line (the `ansible_ssh_args` extra var), and runs `ansible-playbook` through ansible-runner.

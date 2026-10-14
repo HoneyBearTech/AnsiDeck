@@ -7,6 +7,7 @@ import {
   adminUser,
   CATALOG,
   credential,
+  egressSettings,
   graph,
   gitSource,
   hostKey,
@@ -50,6 +51,16 @@ export const PAGE_ROUTES: Routes = {
   "GET /inventories/:id/targets": targets(),
   "GET /inventories/:id/snapshot": null,
   // Long names and fingerprints must wrap, not scroll the page sideways.
+  "GET /inventories/:id/egress": egressSettings({
+    restricted: true,
+    extras: [
+      {
+        target: "a-very-long-mirror-host-name-for-wrapping-checks.packages.example.com",
+        ports: [[443, 443]],
+        note: "mirror",
+      },
+    ],
+  }),
   "GET /inventories/:id/host-keys": hostKeys({
     keys: [
       hostKey(),

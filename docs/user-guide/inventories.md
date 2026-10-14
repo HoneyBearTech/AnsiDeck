@@ -68,6 +68,38 @@ Inventory and playbook variables can't turn the checks off (`ansible_host_key_ch
 ssh options in `ansible_ssh_common_args`; `ansible_ssh_args` is AnsiDeck's on these inventories. When a run
 fails on a host key, see [Runs](runs.md#when-ssh-refuses-a-host-key).
 
+## Network
+
+By default a run may connect anywhere except AnsiDeck's own API and cloud metadata services. Under
+**Network** on an inventory's page, a project admin can set **Runs may reach** to **Only its hosts**. Its
+runs may then reach only:
+
+- its hosts' addresses, on any port: the hosts of the run's target group (all of them, whatever **Limit**
+  says, since `delegate_to` often reaches hosts outside the limit), at the address each one's connection
+  uses (`ansible_host`, `ansible_ssh_host`, `ansible_winrm_host`, ...; extra vars count);
+- the first jump host each one names (`-J` or `ProxyJump` in `ansible_ssh_common_args`,
+  `ansible_ssh_extra_args` or `ansible_ssh_args`), on its ssh port. Hosts behind a jump host are reached
+  through it and needn't resolve on the worker;
+- the **extra entries**: one per line, an address, a network (CIDR) or a host name, then ports such as `443`,
+  `80,443` or `8000-8100` (any port without), then `#` and a note. Use them for what a playbook reaches that
+  isn't in the inventory: package mirrors, `delegate_to` or `add_host` targets, a `ProxyCommand`'s proxy;
+- DNS.
+
+Everything else (TCP, UDP and ping) is refused at once, and the run's page lists what was refused. AnsiDeck's
+API and cloud metadata stay blocked even if listed. The setting applies to runs that start from then on,
+queued ones included.
+
+The worker looks the names up just before the run starts, as the run would, and the run's page lists what
+they resolved to. A run doesn't start when its limits can't be known in advance: a host whose address is
+set by a template, or that connects with a plugin AnsiDeck can't read (such as `community.docker.docker`;
+the panel marks these "address unknown"), or a name that doesn't resolve. Names whose addresses rotate (a
+service behind a CDN) may resolve differently a moment later: list their networks instead. A
+`ProxyCommand`, ssh arguments AnsiDeck can't read and a repository's own `group_vars`, `host_vars` and
+`ansible.cfg` aren't read: connections they make are refused unless their targets are extra entries.
+
+Restricted runs need a worker of this release with its egress filter on (Linux 5.6 or later); the Workers
+page marks a worker whose check failed "no network allowlists", and restricted runs wait for another.
+
 ## Group graph
 
 **Group graph** on an inventory's page shows how its groups nest, including the groups its dynamic sources

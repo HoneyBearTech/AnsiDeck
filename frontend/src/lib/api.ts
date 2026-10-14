@@ -219,9 +219,60 @@ export interface InventorySummary {
   // How runs treat SSH host keys (project admins change it under Host keys).
   host_key_checking: HostKeyMode;
   refresh_before_run: boolean;
+  // Runs may reach only its hosts, DNS and its extra entries (project admins, under Network).
+  egress_restricted?: boolean;
 }
 
 export type HostKeyMode = "off" | "accept_new" | "strict";
+
+// An address, network (CIDR) or host name runs on a restricted inventory may also reach;
+// ports as [first, last] ranges, null for any port.
+export interface EgressExtra {
+  target: string;
+  ports: [number, number][] | null;
+  note: string | null;
+}
+
+// ok: its address is allowed; local: no network; indirect: through a jump host or a proxy;
+// unknown: its address isn't known before a run, so restricted runs are refused.
+export type EgressHostStatus = "ok" | "local" | "indirect" | "unknown";
+
+export interface EgressHost {
+  host: string;
+  connection: string;
+  status: EgressHostStatus;
+  address: string | null;
+  jump_host: string | null;
+  reason: string | null;
+}
+
+export interface EgressSettings {
+  restricted: boolean;
+  extras: EgressExtra[];
+  hosts: EgressHost[];
+  total: number;
+  summary: { hosts: number } & Record<EgressHostStatus, number>;
+  warnings: string[];
+}
+
+export interface EgressRefused {
+  address: string;
+  protocol: string;
+  port: number;
+}
+
+// What a restricted run could reach, as its worker resolved it before it started.
+export interface RunEgress {
+  restricted: boolean;
+  allowlist: {
+    hosts: { host: string | null; address: string; addresses: string[] }[];
+    jump_hosts: { host: string | null; address: string; port: number | null; addresses: string[] }[];
+    extras: { target: string; ports: [number, number][] | null; addresses: string[] }[];
+    unresolved: { host: string; address: string; reason: string }[];
+    warnings: string[];
+  } | null;
+  refused: EgressRefused[];
+}
 
 /** A key an inventory's runs trust for one known_hosts name (`host` or `[host]:port`). */
 export interface HostKey {
@@ -565,6 +616,11 @@ export interface Run {
   host_key_checking: HostKeyMode | null;
   host_key_problems: HostKeyProblem[] | null;
   host_keys_learned: number | null;
+  // Whether its network was limited to its inventory's hosts (null before it was claimed), how
+  // many addresses it could reach (getRunEgress lists them) and what it was refused.
+  egress_restricted?: boolean | null;
+  egress_addresses?: number | null;
+  egress_refused?: EgressRefused[] | null;
   // Runs of playbooks synced from git: the commit they execute and a link to it.
   git_source_name: string | null;
   git_commit: string | null;
@@ -743,6 +799,8 @@ export interface WorkerInfo {
   egress_filtered: boolean | null;
   // Whether it checks SSH host keys; runs on inventories that do wait for such a worker.
   host_keys: boolean | null;
+  // Whether it can limit runs to their inventory's hosts; restricted runs wait for such a worker.
+  egress_allowlist?: boolean | null;
   running: number;
   online: boolean;
   first_seen_at: string;
@@ -1093,6 +1151,22 @@ export const api = {
     request<HostKeys>(
       `/inventories/${id}/host-keys?page=${page}&untrusted=${untrusted}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
     ),
+  /** The network setting, its extra entries and a page of hosts (`problems`: only unknown addresses). */
+  getEgress: (id: number, q = "", problems = false, page = 1) =>
+    request<EgressSettings>(
+      `/inventories/${id}/egress?page=${page}&problems=${problems}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+    ),
+  setEgressMode: (id: number, restricted: boolean) =>
+    request<{ restricted: boolean }>(`/inventories/${id}/egress/mode`, {
+      method: "PUT",
+      body: JSON.stringify({ restricted }),
+    }),
+  setEgressExtras: (id: number, extras: { target: string; ports: string | null; note: string | null }[]) =>
+    request<EgressExtra[]>(`/inventories/${id}/egress/extras`, {
+      method: "PUT",
+      body: JSON.stringify({ extras }),
+    }),
+  getRunEgress: (id: number) => request<RunEgress>(`/runs/${id}/egress`),
   setHostKeyMode: (id: number, mode: HostKeyMode) =>
     request<{ mode: HostKeyMode }>(`/inventories/${id}/host-keys/mode`, {
       method: "PUT",
