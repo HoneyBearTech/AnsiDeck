@@ -101,6 +101,7 @@ describe("new run", () => {
       extra_vars: { release: "1.2" },
       timeout_seconds: 1800,
       refresh_first: null,
+      env_credential_ids: [],
     });
   });
 
@@ -129,6 +130,31 @@ describe("new run", () => {
     await user.click(screen.getByRole("button", { name: "Start run" }));
     expect(await screen.findByText(/^Inventory sources refreshed for this run: /)).toBeInTheDocument();
     expect(api.requests("POST /runs")[0]?.body).toMatchObject({ refresh_first: true });
+  });
+
+  it("gives the run environment credentials of its project", async () => {
+    const { api, user, screen } = renderApp("/runs/new", {
+      routes: {
+        ...TRIGGER,
+        "GET /credentials": [
+          credential(),
+          credential({ id: 5, name: "aws", kind: "env", env_names: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"] }),
+          credential({ id: 6, name: "foreign-env", kind: "env", project_id: 2 }),
+        ],
+        "POST /runs": run({ id: 42, env_credential_ids: [5], env_credential_names: ["aws"] }),
+        "GET /runs/:id": run({ id: 42, env_credential_ids: [5], env_credential_names: ["aws"] }),
+      },
+    });
+    await screen.findByRole("heading", { name: "New run" });
+    await choose(user, screen.getByLabelText("Playbook"), "site.yml");
+    await choose(user, screen.getByLabelText("Inventory"), "lab");
+    await choose(user, screen.getByLabelText("Credential"), "deploy-key");
+    expect(screen.getByText("(AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)")).toBeInTheDocument();
+    expect(screen.queryByText("foreign-env")).not.toBeInTheDocument(); // another project's
+    await user.click(screen.getByRole("checkbox", { name: /^aws/ }));
+    await user.click(screen.getByRole("button", { name: "Start run" }));
+    expect(await screen.findByText(/· environment: aws/)).toBeInTheDocument();
+    expect(api.requests("POST /runs")[0]?.body).toMatchObject({ env_credential_ids: [5] });
   });
 
   it("checks extra vars and the timeout, and shows refusals", async () => {

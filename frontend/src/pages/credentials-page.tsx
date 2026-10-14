@@ -86,9 +86,10 @@ function EnvRows({ rows, onChange }: { rows: EnvRow[]; onChange: (rows: EnvRow[]
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        Stored encrypted and given only to inventory sources that use this credential (for example a NetBox
-        token as NETBOX_TOKEN); values are never shown again. Put settings that aren&apos;t secret in the
-        source&apos;s config instead.
+        Stored encrypted and given only to the inventory sources and runs that use this credential (for example
+        a NetBox token as NETBOX_TOKEN, or AWS keys for cloud modules); values are never shown again, and are
+        removed from output. Put settings that aren&apos;t secret in the source&apos;s config or the playbook
+        instead.
       </p>
     </div>
   );
@@ -281,7 +282,7 @@ export function CredentialsPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Credentials"
-        description="SSH keys that runs connect with, and environment variables for inventory plugins. Stored values are never shown again."
+        description="SSH keys that runs connect with, and environment variables for inventory plugins and playbooks. Stored values are never shown again."
         actions={canManage && <CreateCredentialDialog onCreated={refresh} store={store} />}
       />
 

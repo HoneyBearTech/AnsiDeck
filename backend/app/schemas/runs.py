@@ -25,6 +25,8 @@ class RunCreate(BaseModel):
     # Refresh the inventory's dynamic sources first, and run with what they find (the run
     # fails if the refresh does). None: as the inventory's "refresh before every run" says.
     refresh_first: bool | None = None
+    # Environment-variable credentials (cloud keys, API tokens) for the playbook's environment.
+    env_credential_ids: list[int] = Field([], max_length=5)
 
     @field_validator("limit")
     @classmethod
@@ -57,6 +59,9 @@ class RunOut(BaseModel):
     inventory_name: str
     group_name: str | None
     credential_name: str
+    # The environment-variable credentials it got (names as when it was triggered).
+    env_credential_ids: list[int] | None = None
+    env_credential_names: list[str] | None = None
     vault_password_name: str | None
     become: bool
     check_mode: bool

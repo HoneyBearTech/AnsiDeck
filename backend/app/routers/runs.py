@@ -194,6 +194,20 @@ def _pin_inventory(
     return static, target, snapshot
 
 
+def _check_env_names(credentials: list[Credential]) -> None:
+    """Two credentials may not set the same variable (secret store ones are checked when the
+    job is built: their names are only known then)."""
+    seen: dict[str, str] = {}
+    for credential in credentials:
+        for name in credential.env_names or []:
+            if name in seen:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"{credential.name} and {seen[name]} both set {name}: pick one of them",
+                )
+            seen[name] = credential.name
+
+
 def _refresh_for_run(db: Session, inventory: Inventory, username: str) -> int:
     """A refresh of the inventory's sources that starts after now: a new one, or the one
     already waiting in the queue (it hasn't read anything yet)."""
@@ -334,6 +348,26 @@ def queue_run(
         )
         _require_same_project(vault_password, project_id, "Vault password")
 
+    env_credentials = []
+    for env_id in dict.fromkeys(payload.env_credential_ids):
+        env_credential = get_scoped(
+            db,
+            current_user,
+            request,
+            Credential,
+            env_id,
+            Permission.SECRETS_LIST,
+            "Credential not found",
+        )
+        _require_same_project(env_credential, project_id, "Credential")
+        if env_credential.kind != "env":
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"{env_credential.name} is not an environment-variable credential",
+            )
+        env_credentials.append(env_credential)
+    _check_env_names(env_credentials)
+
     # The run executes the playbook as it is now, whatever happens to it while queued; a
     # synced one inside its repository at the commit current now (see pin_snapshot).
     playbook_text = git["text"].encode() if git else playbook_path(playbook.id).read_bytes()
@@ -357,6 +391,8 @@ def queue_run(
         inventory_snapshot_hosts=snapshot.host_count if snapshot is not None else None,
         credential_id=credential.id,
         credential_name=credential.name,
+        env_credential_ids=[c.id for c in env_credentials] or None,
+        env_credential_names=[c.name for c in env_credentials] or None,
         vault_password_id=vault_password.id if vault_password else None,
         vault_password_name=vault_password.name if vault_password else None,
         become=payload.become,
@@ -395,6 +431,7 @@ def queue_run(
             "become": payload.become,
             "check_mode": payload.check_mode,
             **({"refresh_first": True} if run.refresh_first else {}),
+            **({"env_credentials": run.env_credential_names} if env_credentials else {}),
             **({"commit": run.git_commit} if run.git_commit else {}),
             **(audit_detail or {}),
         },
@@ -464,6 +501,7 @@ def rerun(
         extra_vars=run.extra_vars,
         timeout_seconds=min(run.timeout_seconds, MAX_RUN_TIMEOUT_SECONDS),
         refresh_first=run.refresh_first,
+        env_credential_ids=run.env_credential_ids or [],
     )
     new_run = queue_run(db, current_user, request, payload, audit_detail={"rerun_of": run.id})
     return _run_out(db, new_run, current_user)

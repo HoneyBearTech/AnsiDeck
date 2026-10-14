@@ -516,6 +516,7 @@ class Worker:
                     "limit": job["limit"],
                     "extravars": job["extravars"],
                     "host_keys": job.get("host_keys"),
+                    "env": job.get("env") or None,
                     "passwords": (
                         {r"Vault password:\s*?$": vault_password}
                         if vault_password is not None

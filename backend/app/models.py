@@ -590,6 +590,10 @@ class Run(Base):
         ForeignKey("credentials.id", ondelete="SET NULL")
     )
     credential_name: Mapped[str] = mapped_column(String(150))
+    # Environment-variable credentials (cloud keys, API tokens) the playbook gets in its
+    # environment, by id, and their names when the run was triggered.
+    env_credential_ids: Mapped[list | None] = mapped_column(JSON(none_as_null=True), default=None)
+    env_credential_names: Mapped[list | None] = mapped_column(JSON(none_as_null=True), default=None)
 
     vault_password_id: Mapped[int | None] = mapped_column(
         ForeignKey("vault_passwords.id", ondelete="SET NULL")
@@ -756,6 +760,8 @@ class RunTemplate(Base):
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=DEFAULT_RUN_TIMEOUT_SECONDS)
     # Refresh the inventory's sources before each launch; None: as the inventory says.
     refresh_first: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    # Environment-variable credentials for the playbook, by id.
+    env_credential_ids: Mapped[list | None] = mapped_column(JSON(none_as_null=True), default=None)
     created_by: Mapped[str] = mapped_column(String(150))
     updated_by: Mapped[str] = mapped_column(String(150))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

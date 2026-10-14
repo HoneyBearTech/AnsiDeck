@@ -33,7 +33,15 @@ _launch_guard = guard(
 )
 
 
-def _missing(template: RunTemplate) -> list[str]:
+def _env_names(db: Session, template: RunTemplate) -> dict[int, str | None]:
+    """The template's environment-variable credentials by id: their names, None if deleted."""
+    return {
+        env_id: (credential.name if (credential := db.get(Credential, env_id)) else None)
+        for env_id in template.env_credential_ids or []
+    }
+
+
+def _missing(template: RunTemplate, db: Session) -> list[str]:
     missing = [
         label
         for label, ref in (
@@ -45,6 +53,8 @@ def _missing(template: RunTemplate) -> list[str]:
     ]
     if template.uses_vault_password and template.vault_password_id is None:
         missing.append("vault password")
+    if None in _env_names(db, template).values():
+        missing.append("environment credential")
     return missing
 
 
@@ -59,7 +69,8 @@ def _out(db: Session, template: RunTemplate, user: User) -> RunTemplateOut:
     out.inventory_name = _name(db, Inventory, template.inventory_id)
     out.credential_name = _name(db, Credential, template.credential_id)
     out.vault_password_name = _name(db, VaultPassword, template.vault_password_id)
-    out.missing = _missing(template)
+    out.env_credential_names = [n for n in _env_names(db, template).values() if n is not None]
+    out.missing = _missing(template, db)
     can_see = Permission.RUNS_READ_EXTRA_VARS in project_permissions(db, user, template.project_id)
     if out.extra_vars and not can_see:
         out.extra_vars = dict.fromkeys(out.extra_vars, HIDDEN)
@@ -106,6 +117,15 @@ def _check_references(
             )
         if model is Credential and obj.kind != "ssh":
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "A run needs an SSH key credential")
+    for env_id in payload.env_credential_ids:
+        env = get_scoped(
+            db, user, request, Credential, env_id, Permission.SECRETS_LIST, "Credential not found"
+        )
+        if env.project_id != project_id or env.kind != "env":
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"{env.name} is not an environment-variable credential of the playbook's project",
+            )
     if (payload.become or become_vars(payload.extra_vars)) and Permission.RUNS_BECOME not in (
         project_permissions(db, user, project_id)
     ):
@@ -132,6 +152,7 @@ def _apply(template: RunTemplate, payload: RunTemplateIn, extra_vars: dict | Non
         "refresh_first",
     ):
         setattr(template, field, getattr(payload, field))
+    template.env_credential_ids = list(dict.fromkeys(payload.env_credential_ids)) or None
     template.uses_vault_password = payload.vault_password_id is not None
     template.extra_vars = extra_vars
 
@@ -296,7 +317,7 @@ def launch_template(
     template = get_scoped(
         db, user, request, RunTemplate, template_id, Permission.RUNS_TRIGGER, "Template not found"
     )
-    if missing := _missing(template):
+    if missing := _missing(template, db):
         raise deleted_items_conflict(f"Template {template.name!r}", missing)
     overrides = payload or RunTemplateLaunch()
     run_request = RunCreate(
@@ -314,6 +335,7 @@ def launch_template(
         refresh_first=(
             template.refresh_first if overrides.refresh_first is None else overrides.refresh_first
         ),
+        env_credential_ids=template.env_credential_ids or [],
     )
     run = queue_run(
         db,

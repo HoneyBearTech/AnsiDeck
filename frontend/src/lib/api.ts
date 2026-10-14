@@ -480,6 +480,9 @@ export interface Run {
   inventory_name: string;
   group_name: string | null;
   credential_name: string;
+  // Environment-variable credentials it got (names as when it was triggered).
+  env_credential_ids: number[] | null;
+  env_credential_names: string[] | null;
   vault_password_name: string | null;
   become: boolean;
   check_mode: boolean;
@@ -541,6 +544,8 @@ export interface RunRequest {
   // Refresh the inventory's dynamic sources first (the run fails if that refresh does); null: as
   // the inventory's "refresh before every run" says.
   refresh_first?: boolean | null;
+  // Environment-variable credentials (cloud keys, API tokens) for the playbook's environment.
+  env_credential_ids?: number[];
 }
 
 export interface RunTemplateInput extends RunRequest {
@@ -570,6 +575,8 @@ export interface RunTemplate {
   extra_vars: Record<string, unknown> | null;
   timeout_seconds: number;
   refresh_first: boolean | null;
+  env_credential_ids: number[] | null;
+  env_credential_names: string[];
   missing: string[];
   created_by: string;
   updated_by: string;

@@ -33,6 +33,7 @@ class RunTemplateIn(BaseModel):
     timeout_seconds: int = Field(DEFAULT_RUN_TIMEOUT_SECONDS, ge=1, le=MAX_RUN_TIMEOUT_SECONDS)
     # Refresh the inventory's sources before each launch; None: as the inventory says.
     refresh_first: bool | None = None
+    env_credential_ids: list[int] = Field([], max_length=5)
 
     @field_validator("name")
     @classmethod
@@ -79,6 +80,8 @@ class RunTemplateOut(BaseModel):
     extra_vars: dict[str, Any] | None
     timeout_seconds: int
     refresh_first: bool | None = None
+    env_credential_ids: list[int] | None = None
+    env_credential_names: list[str] = []
     created_by: str
     updated_by: str
     created_at: datetime

@@ -16,6 +16,9 @@
   group isn't in what the refresh found. It is ticked when the inventory says **Refresh before every run**.
 - **Credential**: the SSH key to connect with.
 - **Vault password** (optional): needed if the playbook or extra vars contain vault-encrypted values.
+- **Environment credentials** (optional, up to 5): environment-variable credentials whose variables the
+  playbook gets in its environment, for cloud modules (AWS keys, API tokens). Two of them may not set the
+  same variable. Their values are removed from the output.
 
 Only the playbook's project's inventories, credentials and vault passwords are offered: a run lives in one
 project. Optionally:
