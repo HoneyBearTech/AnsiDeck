@@ -343,8 +343,11 @@ by where it came from. **New run** offers the sources' groups as targets and say
 Project admins manage sources (through the API too: `POST /api/inventories/{id}/sources`,
 `PATCH`/`DELETE …/sources/{source id}`, `PUT …/refresh-settings`); operators can refresh (`POST …/refresh`);
 anyone who can see the inventory can read `…/sources`, `…/refreshes`, `…/snapshot`, `…/hosts` and `…/targets`.
-The image includes what the NetBox plugin needs; plugins that need other Python packages (AWS needs boto3,
-Proxmox needs requests) don't work yet.
+The image includes the Python packages the NetBox, AWS (`amazon.aws.aws_ec2`: boto3) and Proxmox
+(`community.proxmox.proxmox`: requests) plugins need, and proxmoxer for the Proxmox modules in playbooks; their
+credentials come from environment-variables credentials (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`,
+`PROXMOX_TOKEN_ID`/`PROXMOX_TOKEN_SECRET`). Runs and refreshes can't reach cloud metadata, so a plugin can't use
+the host's instance role unless `WORKER_ALLOW_CLOUD_METADATA=true`.
 
 ## Notifications
 

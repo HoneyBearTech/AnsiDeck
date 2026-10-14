@@ -61,6 +61,32 @@ group_by:
 `,
   },
   {
+    label: "AWS EC2",
+    config: `plugin: amazon.aws.aws_ec2
+# Credentials: an environment-variables credential with AWS_ACCESS_KEY_ID and
+# AWS_SECRET_ACCESS_KEY.
+regions:
+  - eu-central-1
+filters:
+  instance-state-name: running
+hostnames:
+  - private-ip-address
+keyed_groups:
+  - key: tags.Role
+    prefix: role
+`,
+  },
+  {
+    label: "Proxmox",
+    config: `plugin: community.proxmox.proxmox
+url: https://pve.example.com:8006
+user: ansible@pve
+# Credentials: an environment-variables credential with PROXMOX_TOKEN_ID and
+# PROXMOX_TOKEN_SECRET (an API token of that user).
+want_facts: true
+`,
+  },
+  {
     label: "generator",
     config: `plugin: ansible.builtin.generator
 hosts:
