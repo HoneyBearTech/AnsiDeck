@@ -91,8 +91,10 @@ flowchart TB
    notifications, and the slot is swept: everything its user still runs is killed and its files are
    deleted.
 
-Inventory refreshes follow the same path, with `ansible-inventory` in place of `ansible-playbook`; the
-API validates and normalises the output before storing it as a snapshot. Playbook checks do too, with
+Inventory refreshes follow the same path, with `ansible-inventory` in place of `ansible-playbook`, once per
+source; the API validates each source's output and keeps it, then combines the latest outputs with the
+inventory's own hosts into a snapshot (itself, or with one more worker call when `constructed` sources must run
+over the combination). Playbook checks do too, with
 `ansible-lint` over an editor's text or a synced playbook's repository (`app/lint.py`): at most a few run
 at once, each person has one queued, and the findings, private to whoever asked, are pruned after an
 hour. Host key scans too, with `ssh-keyscan` (`app/host_key_scans.py`): one at a time per inventory,

@@ -215,6 +215,43 @@ describe("dynamic inventory sources", () => {
     expect(api.calls.some((c) => c.path === "/inventories/1/hosts" && c.query.get("q") === "zzz")).toBe(true);
   });
 
+  it("shows what each source found, and a source that failed keeping its last output", async () => {
+    const { screen } = renderApp("/inventories/1", {
+      routes: detail({
+        "GET /inventories/:id/sources": [
+          inventorySource({ output_refreshed_at: "2026-10-05T12:00:00Z", output_host_count: 12, output_group_count: 3 }),
+          inventorySource({
+            id: 2,
+            name: "aws",
+            plugin: "amazon.aws.aws_ec2",
+            last_error: "10-src2.aws_ec2.yml: Could not connect to the endpoint URL\nmore",
+            last_finished_at: "2026-10-05T13:00:00Z",
+            output_refreshed_at: "2026-10-05T12:00:00Z",
+            output_host_count: 40,
+            output_group_count: 5,
+          }),
+          inventorySource({ id: 3, name: "groups", plugin: "ansible.builtin.constructed" }),
+          inventorySource({ id: 4, name: "new" }),
+        ],
+        "GET /inventories/:id/targets": targets({
+          has_sources: true,
+          snapshot_id: 2,
+          snapshot_at: "2026-10-05T13:00:00Z",
+          last_refresh: refresh({ status: "failed", snapshot_id: 2, error: "source 'aws': 10-src2.aws_ec2.yml: Could not connect" }),
+        }),
+        "GET /inventories/:id/snapshot": SNAPSHOT,
+      }),
+    });
+    expect(await screen.findByText(/^12 hosts, 3 groups as of/)).toBeInTheDocument();
+    expect(screen.getByText(/^Failed .*: 10-src2\.aws_ec2\.yml: Could not connect to the endpoint URL$/)).toBeInTheDocument();
+    expect(screen.getByText(/keeps 40 hosts, 5 groups as of/)).toBeInTheDocument();
+    expect(screen.getByText("Applied in every refresh")).toBeInTheDocument();
+    expect(screen.getByText("Not refreshed yet")).toBeInTheDocument();
+    expect(
+      screen.getByText("The other sources were updated; a source that failed keeps what it found last."),
+    ).toBeInTheDocument();
+  });
+
   it("lets project admins make runs refresh the sources first", async () => {
     const { api, user, screen } = renderApp("/inventories/1", {
       routes: detail({
@@ -246,7 +283,7 @@ describe("dynamic inventory sources", () => {
       expect(await screen.findByRole("button", { name: "Refreshing…" })).toBeDisabled();
 
       api.set({
-        "GET /inventories/:id/targets": targets({ has_sources: true, snapshot_id: 1, snapshot_at: "2026-10-05T12:00:00Z", last_refresh: refresh({ status: "failed", error: "netbox: 401 Unauthorized" }) }),
+        "GET /inventories/:id/targets": targets({ has_sources: true, snapshot_id: 1, snapshot_at: "2026-10-05T12:00:00Z", last_refresh: refresh({ status: "failed", error: "netbox: 401 Unauthorized", snapshot_id: null }) }),
         "GET /inventories/:id/snapshot": { ...SNAPSHOT, warnings: [], groups: [] },
         "GET /inventories/:id/hosts": { total: 0, hosts: [] },
       });

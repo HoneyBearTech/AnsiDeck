@@ -4,7 +4,7 @@ Usage: python3 smoke_inventory.py <api url> <admin password> <path to an OpenSSH
 
 A static host plus generator and constructed sources; the refresh must succeed, a run must
 reach the host through a group only constructed made, and a broken source must fail the
-refresh with its reason while runs keep the last good snapshot.
+refresh with its reason while the other sources' hosts stay (each source runs on its own).
 Standard library only (it runs on the CI host, not in the image).
 """
 
@@ -120,8 +120,12 @@ def main() -> None:
         failed["error"] or ""
     ):
         sys.exit(f"the broken source didn't fail the refresh with its reason: {failed}")
-    if call("GET", f"/inventories/{inv}/targets")["snapshot_id"] != targets["snapshot_id"]:
-        sys.exit("a failed refresh replaced the snapshot")
+    results = {r["name"]: (r["ran"], r["status"]) for r in failed["source_results"]}
+    if results != {"gen": (True, "success"), "groups": (False, None), "nb": (True, "failed")}:
+        sys.exit(f"unexpected per-source results: {results}")
+    after = call("GET", f"/inventories/{inv}/targets")
+    if after["hosts"] != 3 or {g["name"]: g["hosts"] for g in after["groups"]} != groups:
+        sys.exit(f"the working sources' hosts didn't stay: {after}")
     print("dynamic inventory smoke passed")
 
 

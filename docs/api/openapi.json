@@ -4491,6 +4491,14 @@
             ],
             "title": "Snapshot Id"
           },
+          "source_results": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RefreshSourceOut"
+            },
+            "title": "Source Results",
+            "type": "array"
+          },
           "started_at": {
             "anyOf": [
               {
@@ -4567,6 +4575,77 @@
           }
         },
         "title": "RefreshSettings",
+        "type": "object"
+      },
+      "RefreshSourceOut": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "host_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Count"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "plugin": {
+            "title": "Plugin",
+            "type": "string"
+          },
+          "ran": {
+            "title": "Ran",
+            "type": "boolean"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "source_id",
+          "name",
+          "plugin",
+          "ran",
+          "status",
+          "error",
+          "host_count"
+        ],
+        "title": "RefreshSourceOut",
         "type": "object"
       },
       "RemovePasskeyRequest": {
@@ -6276,9 +6355,74 @@
             "title": "Inventory Id",
             "type": "integer"
           },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Finished At"
+          },
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "output_group_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Group Count"
+          },
+          "output_host_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Host Count"
+          },
+          "output_refreshed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Refreshed At"
+          },
+          "output_warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Output Warnings",
+            "type": "array"
           },
           "plugin": {
             "title": "Plugin",

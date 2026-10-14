@@ -426,20 +426,27 @@ def _own_home() -> str:
 # quietly see fewer hosts), reads plugin configs and YAML only, and never asks a cloud
 # metadata service for the worker host's own identity.
 INVENTORY_ENV = {
-    "ANSIBLE_INVENTORY_ENABLED": "auto,yaml",
     "ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED": "True",
     "ANSIBLE_INVENTORY_UNPARSED_FAILED": "True",
     "AWS_EC2_METADATA_DISABLED": "true",
 }
+# The inventory plugins each kind of call may use (never taken from the job's text): a source
+# is a plugin config (`auto` loads the plugin it names); the combine reads the sources' outputs
+# and the inventory's own hosts as YAML inventories, and the constructed configs.
+INVENTORY_PLUGINS = {"plugin": "auto", "combine": "auto,yaml"}
+_CALL_KEY = re.compile(r"s[0-9]{1,12}|combined")
 _OUTPUT_CHUNK = 512 * 1024
 _STDERR_TAIL = 16 * 1024
 
 
 def run_inventory(job: dict, emit) -> None:
-    """An inventory refresh: ansible-inventory --list --export over the job's files (sources,
-    the inventory's own hosts, constructed sources), its output sent back in "output"
-    messages, then {"type": "inventory_result", "rc", "stderr" (the end of it)} and the usual
-    "result". The plugins run in a grandchild that can't reach the message pipe."""
+    """An inventory refresh's calls: ansible-inventory --list --export once per call (a source,
+    or the combine), each in a directory of its own (its cwd, HOME, ANSIBLE_HOME and TMPDIR,
+    with an empty ansible.cfg) with only its own credential's variables. Per call: "output"
+    messages, then {"type": "inventory_result", "key", "rc", "stderr" (the end of it)}; then the
+    usual "result". On isolated workers whatever an earlier call (or the stage before) left
+    running is killed first, so one source can't watch or change the next. The plugins run in a
+    grandchild that can't reach the message pipe."""
     import subprocess
 
     base = "/tmp" if os.path.isdir("/tmp") else None  # noqa: S108 - short socket paths; mkdtemp is private
@@ -447,48 +454,63 @@ def run_inventory(job: dict, emit) -> None:
     emit({"type": "started", "private_data_dir": str(pdd)})
     try:
         if job.get("own_home"):
-            os.environ["HOME"] = _own_home()
-        inventory = pdd / "inventory"
-        inventory.mkdir(mode=0o700)
-        paths = []
-        for item in job["files"]:
-            name = item["name"]
-            if "/" in name or name.startswith("."):
-                raise RuntimeError(f"invalid file name {name!r}")
-            path = inventory / name
-            path.write_text(item["text"])
-            path.chmod(0o600)
-            paths.append(str(path))
-        (pdd / "tmp").mkdir(mode=0o700)
-        env = {
-            **os.environ,
-            "ANSIBLE_HOME": str(pdd / "ansible"),
-            "TMPDIR": str(pdd / "tmp"),
-            **job.get("env", {}),
-            **INVENTORY_ENV,
-        }
-        output, stderr = pdd / "out.json", pdd / "stderr.txt"
-        command = [str(Path(sys.executable).parent / "ansible-inventory")]
-        for path in paths:
-            command += ["-i", path]
-        command += ["--list", "--export", "--output", str(output)]
-        with open(stderr, "wb") as err:
-            rc = subprocess.run(  # noqa: S603 - argument list, no shell
-                command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
-                env=env, cwd=pdd, check=False,
-            ).returncode  # fmt: skip
-        with open(stderr, "rb") as err:
-            err.seek(max(0, err.seek(0, os.SEEK_END) - _STDERR_TAIL))
-            tail = err.read().decode("utf-8", "replace")
-        size = output.stat().st_size if rc == 0 and output.exists() else 0
-        if size > job.get("max_output_bytes", 32 * 1024 * 1024):
-            rc, tail = 1, f"the output is larger than {job['max_output_bytes']} bytes"
-        elif rc == 0:
-            with open(output, encoding="utf-8") as out:
-                while chunk := out.read(_OUTPUT_CHUNK):
-                    emit({"type": "output", "data": chunk})
-        emit({"type": "inventory_result", "rc": rc, "stderr": tail})
-        emit({"type": "result", "status": "successful" if rc == 0 else "failed", "rc": rc})
+            _own_home()  # checked, as for runs; each call gets a home of its own below
+        isolated = os.getuid() >= _RUN_UID_BASE
+        base_env = {k: v for k, v in os.environ.items() if k != "HOME"}
+        failed = False
+        for number, call in enumerate(job["calls"]):
+            key, kind = call["key"], call["kind"]
+            if not _CALL_KEY.fullmatch(key) or kind not in INVENTORY_PLUGINS:
+                raise RuntimeError(f"invalid inventory call {key!r} ({kind!r})")
+            if isolated:  # nothing an earlier call (or stage) started may see this one
+                kill_own_processes()
+            root = pdd / f"c{number}"
+            for sub in ("", "inventory", "home", "ansible", "tmp"):
+                (root / sub).mkdir(mode=0o700)
+            (root / "ansible.cfg").write_text("")
+            paths = []
+            for item in call["files"]:
+                name = item["name"]
+                if "/" in name or name.startswith("."):
+                    raise RuntimeError(f"invalid file name {name!r}")
+                path = root / "inventory" / name
+                path.write_text(item["text"])
+                path.chmod(0o600)
+                paths.append(str(path))
+            env = {
+                **base_env,
+                **call.get("env", {}),
+                "HOME": str(root / "home"),
+                "ANSIBLE_HOME": str(root / "ansible"),
+                "ANSIBLE_CONFIG": str(root / "ansible.cfg"),
+                "TMPDIR": str(root / "tmp"),
+                **INVENTORY_ENV,
+                "ANSIBLE_INVENTORY_ENABLED": INVENTORY_PLUGINS[kind],
+            }
+            output, stderr = root / "out.json", root / "stderr.txt"
+            command = [str(Path(sys.executable).parent / "ansible-inventory")]
+            for path in paths:
+                command += ["-i", path]
+            command += ["--list", "--export", "--output", str(output)]
+            with open(stderr, "wb") as err:
+                rc = subprocess.run(  # noqa: S603 - argument list, no shell
+                    command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
+                    env=env, cwd=root, check=False,
+                ).returncode  # fmt: skip
+            with open(stderr, "rb") as err:
+                err.seek(max(0, err.seek(0, os.SEEK_END) - _STDERR_TAIL))
+                tail = err.read().decode("utf-8", "replace")
+            size = output.stat().st_size if rc == 0 and output.exists() else 0
+            if size > job.get("max_output_bytes", 32 * 1024 * 1024):
+                rc, tail = 1, f"the output is larger than {job['max_output_bytes']} bytes"
+            elif rc == 0:
+                with open(output, encoding="utf-8") as out:
+                    while chunk := out.read(_OUTPUT_CHUNK):
+                        emit({"type": "output", "key": key, "data": chunk})
+            emit({"type": "inventory_result", "key": key, "rc": rc, "stderr": tail})
+            failed = failed or rc != 0
+            shutil.rmtree(root, ignore_errors=True)
+        emit({"type": "result", "status": "failed" if failed else "successful", "rc": int(failed)})
     finally:
         shutil.rmtree(pdd, ignore_errors=True)
 

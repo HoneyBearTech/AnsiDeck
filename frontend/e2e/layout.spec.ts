@@ -9,6 +9,7 @@ import {
   credential,
   graph,
   inventory,
+  inventorySource,
   mergedHost,
   playbook,
   run,
@@ -39,6 +40,19 @@ const LONG_ROUTES: Routes = {
     hosts: [{ id: 1, hostname: `web1.${LONG}.example.com`, vars: { ansible_user: "deploy" }, group_ids: [1, 2] }],
   }),
   "GET /inventories/:id/targets": targets({ groups: [{ name: `${LONG}-webservers`, hosts: 1, origin: "static" }] }),
+  "GET /inventories/:id/sources": [
+    inventorySource({ name: `${LONG}-netbox`, output_refreshed_at: "2026-10-05T12:00:00Z", output_host_count: 1200, output_group_count: 40 }),
+    inventorySource({
+      id: 2,
+      name: `${LONG}-aws`,
+      plugin: "amazon.aws.aws_ec2",
+      last_error: `10-src2.aws_ec2.yml: Could not connect to the endpoint URL: "https://ec2.${LONG}.amazonaws.com/"`,
+      last_finished_at: "2026-10-05T13:00:00Z",
+      output_refreshed_at: "2026-10-05T12:00:00Z",
+      output_host_count: 40,
+      output_group_count: 5,
+    }),
+  ],
   "GET /inventories/:id/graph": graph({
     name: `${LONG}-inventory`,
     groups: [

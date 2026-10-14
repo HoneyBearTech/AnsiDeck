@@ -38,6 +38,14 @@ class SourceOut(BaseModel):
     created_by: str
     created_at: datetime
     updated_at: datetime
+    # Why it failed the last time it ran (None: it worked) and when that was; what its last good
+    # output held, which refreshes keep using until it works again.
+    last_error: str | None = None
+    last_finished_at: datetime | None = None
+    output_refreshed_at: datetime | None = None
+    output_host_count: int | None = None
+    output_group_count: int | None = None
+    output_warnings: list[str] = []
 
 
 class RefreshSettings(BaseModel):
@@ -55,6 +63,19 @@ class RefreshSettings(BaseModel):
         return value
 
 
+class RefreshSourceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    source_id: int | None
+    name: str
+    plugin: str
+    ran: bool
+    # None while it runs; success | failed | stale (it was edited meanwhile: discarded).
+    status: str | None
+    error: str | None
+    host_count: int | None
+
+
 class RefreshOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -68,6 +89,8 @@ class RefreshOut(BaseModel):
     worker_id: str | None
     error: str | None
     snapshot_id: int | None
+    # What each source did (the constructed ones don't run on their own: ran false).
+    source_results: list[RefreshSourceOut] = []
 
 
 class SnapshotGroup(BaseModel):

@@ -33,21 +33,43 @@ from app.host_key_store import record_learned, record_problems
 from app.host_keys import MAX_LEARNED_LINES, MAX_PROBLEMS
 from app.inventory_sources import (
     SourceError,
+    build_combine_job,
     build_refresh_job,
+    combine_here,
+    combine_warnings,
     end_refresh,
+    keep_current_snapshot,
+    needs_combine_job,
     normalise,
+    record_source_failure,
+    refresh_rows,
+    sources_outcome,
     store_snapshot,
+    store_source_output,
 )
 from app.jobs import JobError, build_job
 from app.lint import LintJobError, build_lint_job, end_lint
-from app.models import GitSnapshot, HostKeyScan, InventoryRefresh, LintJob, Run, RunStatus
+from app.models import (
+    GitSnapshot,
+    HostKeyScan,
+    Inventory,
+    InventoryRefresh,
+    InventorySourceOutput,
+    LintJob,
+    Run,
+    RunStatus,
+)
 from app.notifications.events import run_finished
 from app.notifications.ops import host_key_changed, secret_store_failed
 from app.notify import notifier, run_topic
 from app.queue import QUEUE_TOPIC, Claim, claim_next, fail_run, hash_token, record_worker
 from app.run_log import append_events
 from app.secret_store import OUTAGE_KINDS, SecretStoreError, explain
-from app.storage import inventory_refresh_output_path, run_artifacts_path
+from app.storage import (
+    inventory_refresh_output_path,
+    remove_inventory_refresh_outputs,
+    run_artifacts_path,
+)
 from app.worker.egress import REFUSED_SET_SIZE
 
 logger = logging.getLogger(__name__)
@@ -163,6 +185,9 @@ class ClaimIn(BaseModel):
     # Its runs load an SSH certificate next to their key (app.ssh_certificates); runs with a
     # certificate credential go only to such workers.
     ssh_certificates: bool = False
+    # It runs each source of a refresh on its own (app.inventory_sources); refreshes go only to
+    # such workers.
+    partial_refreshes: bool = False
 
 
 class ClaimOut(BaseModel):
@@ -249,12 +274,31 @@ class LintCompleteIn(BaseModel):
 
 
 class RefreshCompleteIn(BaseModel):
+    """The end of a refresh: the combine's output (stage "combine"), or why the worker stopped
+    (either stage)."""
+
     status: Literal["success", "failed", "timed_out"]
     bytes: int = Field(0, ge=0)
     sha256: str | None = Field(None, max_length=64)
     error: str | None = Field(None, max_length=1000)
     # The worker redacted a credential's value somewhere in the output.
     scrubbed: bool = False
+
+
+class RefreshSourceResultIn(BaseModel):
+    """What one source's ansible-inventory call did: its uploaded output (X-Part s<id>), or
+    why it failed (scrubbed by the worker)."""
+
+    source_id: int
+    status: Literal["success", "failed"]
+    bytes: int = Field(0, ge=0)
+    sha256: str | None = Field(None, max_length=64)
+    error: str | None = Field(None, max_length=1000)
+    scrubbed: bool = False
+
+
+class RefreshSourcesIn(BaseModel):
+    results: list[RefreshSourceResultIn] = Field(max_length=1000)
 
 
 class HostKeyProblemIn(BaseModel):
@@ -364,9 +408,12 @@ def _claim_once(
     host_keys: bool = False,
     egress_allowlist: bool = False,
     ssh_certificates: bool = False,
+    partial_refreshes: bool = False,
 ) -> Claim | None:
     db = get_sessionmaker()()
     try:
+        if not partial_refreshes:
+            kinds = tuple(kind for kind in kinds if kind != "refresh")
         return claim_next(db, worker_id, kinds, host_keys, egress_allowlist, ssh_certificates)
     finally:
         db.close()
@@ -412,6 +459,7 @@ async def claim(body: ClaimIn) -> ClaimOut | Response:
                 body.host_keys,
                 _egress_allowlist(body),
                 body.ssh_certificates,
+                body.partial_refreshes,
             )
             if claimed is not None:
                 return ClaimOut(
@@ -887,7 +935,7 @@ def _end_refresh(db: Session, refresh: InventoryRefresh, status: str, error: str
     refresh_id = refresh.id
     pending_audit = end_refresh(db, refresh, status, error)
     db.commit()
-    inventory_refresh_output_path(refresh_id).unlink(missing_ok=True)
+    remove_inventory_refresh_outputs(refresh_id)
     if pending_audit:
         audit.record(db, **pending_audit)
     notifier.notify(QUEUE_TOPIC)
@@ -953,20 +1001,37 @@ async def refresh_output(
     request: Request,
     x_claim_token: str = Header(max_length=200),
     x_offset: int = Header(ge=0),
+    x_part: str = Header(max_length=20, pattern=r"^(s[0-9]{1,12}|combined)$"),
 ) -> Any:
-    """Appends a chunk of the refresh's output at X-Offset (a resent chunk is accepted again;
-    a gap is refused with the offset to resend from)."""
+    """Appends a chunk of one of the refresh's outputs (X-Part: a source's "s<id>" in stage
+    "sources", "combined" in stage "combine") at X-Offset (a resent chunk is accepted again; a
+    gap is refused with the offset to resend from)."""
     chunk = await request.body()
-    return await asyncio.to_thread(_append_output, refresh_id, x_claim_token, x_offset, chunk)
+    return await asyncio.to_thread(
+        _append_output, refresh_id, x_claim_token, x_offset, x_part, chunk
+    )
 
 
-def _append_output(refresh_id: int, claim_token: str, offset: int, chunk: bytes) -> Any:
+def _ran_rows(db: Session, refresh: InventoryRefresh) -> dict[int, Any]:
+    """The sources this refresh's job ran, by source id."""
+    return {row.source_id: row for row in refresh_rows(db, refresh) if row.ran and row.source_id}
+
+
+def _part_allowed(db: Session, refresh: InventoryRefresh, part: str) -> bool:
+    if part == "combined":
+        return refresh.stage == "combine"
+    return refresh.stage == "sources" and int(part[1:]) in _ran_rows(db, refresh)
+
+
+def _append_output(refresh_id: int, claim_token: str, offset: int, part: str, chunk: bytes) -> Any:
     db = get_sessionmaker()()
     try:
         refresh = _locked_refresh(db, refresh_id, claim_token)
         if refresh is None:
             return _gone()
-        path = inventory_refresh_output_path(refresh.id)  # the row's id, not the request's
+        if not _part_allowed(db, refresh, part):
+            return JSONResponse({"detail": "Not an output of this refresh now"}, 409)
+        path = inventory_refresh_output_path(refresh.id, part)  # the row's id
         size = path.stat().st_size if path.exists() else 0
         if offset > size:
             return JSONResponse({"expected_offset": size}, status.HTTP_409_CONFLICT)
@@ -983,6 +1048,107 @@ def _append_output(refresh_id: int, claim_token: str, offset: int, chunk: bytes)
         db.close()
 
 
+def _read_part(refresh: InventoryRefresh, part: str, size: int, sha256: str | None) -> bytes | None:
+    """An uploaded output, if it matches the worker's size and hash."""
+    path = inventory_refresh_output_path(refresh.id, part)  # the row's id
+    raw = path.read_bytes() if path.exists() else b""
+    if len(raw) != size or hashlib.sha256(raw).hexdigest() != sha256:
+        return None
+    return raw
+
+
+_SCRUBBED = "a credential's value appeared in the output and was redacted"
+
+
+def _finish_refresh(
+    db: Session,
+    refresh: InventoryRefresh,
+    inventory: Inventory,
+    snapshot: dict,
+    warnings: list[str],
+) -> None:
+    """Stores the combined snapshot (unless the current one is to be kept) and ends the
+    refresh with what its sources did."""
+    rows = refresh_rows(db, refresh)
+    if not keep_current_snapshot(db, inventory, rows):
+        store_snapshot(db, refresh, snapshot, warnings)
+    status_, error = sources_outcome(rows)
+    _end_refresh(db, refresh, status_, error)
+
+
+@router.post("/refreshes/{refresh_id}/sources")
+def refresh_sources(
+    refresh_id: int,
+    body: RefreshSourcesIn,
+    x_claim_token: str = Header(max_length=200),
+    db: Session = Depends(get_db),
+) -> Any:
+    """What each source's call did. Their outputs become the sources' last good outputs; then
+    the API combines them into the snapshot itself ({"done": true}), or hands out the combine
+    job for the inventory's constructed sources ({"combine": job}; asked again, the same)."""
+    refresh = _locked_refresh(db, refresh_id, x_claim_token)
+    if refresh is None:
+        return _gone()
+    inventory = db.get(Inventory, refresh.inventory_id)
+    if inventory is None:
+        _end_refresh(db, refresh, RunStatus.FAILED.value, "the inventory was deleted")
+        return _gone()
+    if refresh.stage == "sources":
+        stored = _store_results(db, refresh, body)
+        if stored is not None:
+            return stored
+    elif refresh.stage != "combine":  # asked again after the sources: the same combine job
+        return JSONResponse({"detail": "The refresh isn't running its sources"}, 409)
+    db.flush()
+    try:
+        if needs_combine_job(inventory):
+            job = build_combine_job(db, refresh, inventory)
+            db.commit()
+            return {"combine": job}
+        snapshot, warnings = combine_here(db, refresh, inventory)
+    except SecretStoreError as exc:
+        label = get_settings().secrets_store_label
+        subject = getattr(exc, "subject", "a secret")
+        _end_refresh(
+            db,
+            refresh,
+            RunStatus.FAILED.value,
+            f"could not read {subject} from {label}: {explain(exc.kind)}",
+        )
+        return _gone()
+    except SourceError as exc:
+        _end_refresh(db, refresh, RunStatus.FAILED.value, str(exc))
+        return _gone()
+    _finish_refresh(db, refresh, inventory, snapshot, warnings)
+    return {"done": True}
+
+
+def _store_results(db: Session, refresh: InventoryRefresh, body: RefreshSourcesIn) -> Any:
+    """Records what each source did; a response to send instead when the report is wrong."""
+    rows = _ran_rows(db, refresh)
+    reported = {result.source_id: result for result in body.results}
+    if set(reported) - set(rows):
+        return JSONResponse({"detail": "Results for sources this refresh didn't run"}, 409)
+    for source_id, row in rows.items():
+        result = reported.get(source_id)
+        if result is None:
+            record_source_failure(db, row, "the worker reported no result")
+        elif result.status != RunStatus.SUCCESS.value:
+            record_source_failure(db, row, result.error or "ansible-inventory failed")
+        else:
+            raw = _read_part(refresh, f"s{source_id}", result.bytes, result.sha256)
+            if raw is None:
+                return JSONResponse(
+                    {"detail": f"The output of source {source_id} doesn't match its size and hash"},
+                    409,
+                )
+            store_source_output(db, refresh, row, raw)
+            if result.scrubbed and row.status == "success":
+                output = db.get(InventorySourceOutput, source_id)
+                output.warnings = [_SCRUBBED, *(output.warnings or [])]
+    return None
+
+
 @router.post("/refreshes/{refresh_id}/complete")
 def refresh_complete(
     refresh_id: int,
@@ -990,28 +1156,36 @@ def refresh_complete(
     x_claim_token: str = Header(max_length=200),
     db: Session = Depends(get_db),
 ) -> Any:
-    """Checks the uploaded output against the worker's size and hash, normalises it and makes
-    it the inventory's current snapshot, or records why the refresh failed."""
+    """The combine's output (checked against the worker's size and hash, normalised into the
+    snapshot), or why the worker stopped. A combine that fails leaves the snapshot as it was;
+    the sources keep the outputs they stored."""
     refresh = _locked_refresh(db, refresh_id, x_claim_token)
     if refresh is None:
         return _gone()
     if body.status != RunStatus.SUCCESS.value:
         _end_refresh(db, refresh, body.status, body.error or body.status.replace("_", " "))
         return {}
-    path = inventory_refresh_output_path(refresh.id)  # the row's id, not the request's
-    raw = path.read_bytes() if path.exists() else b""
-    if len(raw) != body.bytes or hashlib.sha256(raw).hexdigest() != body.sha256:
+    if refresh.stage != "combine":
+        return JSONResponse({"detail": "Report the sources first"}, 409)
+    inventory = db.get(Inventory, refresh.inventory_id)
+    raw = _read_part(refresh, "combined", body.bytes, body.sha256)
+    if raw is None:
         return JSONResponse({"detail": "The output doesn't match its size and hash"}, 409)
+    if inventory is None:
+        _end_refresh(db, refresh, RunStatus.FAILED.value, "the inventory was deleted")
+        return {}
     try:
         snapshot, warnings = normalise(raw, (refresh.sources or {}).get("static_hosts", []))
     except SourceError as exc:
-        _end_refresh(db, refresh, RunStatus.FAILED.value, str(exc))
+        _end_refresh(
+            db, refresh, RunStatus.FAILED.value, f"applying the constructed sources: {exc}"
+        )
         return {}
+    warnings = combine_warnings(db, inventory) + warnings
     if body.scrubbed:
-        warnings.insert(0, "a credential's value appeared in the output and was redacted")
+        warnings.insert(0, _SCRUBBED)
     refresh.output_bytes = len(raw)
-    store_snapshot(db, refresh, snapshot, warnings)
-    _end_refresh(db, refresh, RunStatus.SUCCESS.value, None)
+    _finish_refresh(db, refresh, inventory, snapshot, warnings)
     return {}
 
 

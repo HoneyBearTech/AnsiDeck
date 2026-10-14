@@ -125,6 +125,11 @@
             "title": "Kinds",
             "type": "array"
           },
+          "partial_refreshes": {
+            "default": false,
+            "title": "Partial Refreshes",
+            "type": "boolean"
+          },
           "slots": {
             "default": 1,
             "maximum": 256.0,
@@ -998,6 +1003,7 @@
         "type": "object"
       },
       "RefreshCompleteIn": {
+        "description": "The end of a refresh: the combine's output (stage \"combine\"), or why the worker stopped\n(either stage).",
         "properties": {
           "bytes": {
             "default": 0,
@@ -1048,6 +1054,81 @@
           "status"
         ],
         "title": "RefreshCompleteIn",
+        "type": "object"
+      },
+      "RefreshSourceResultIn": {
+        "description": "What one source's ansible-inventory call did: its uploaded output (X-Part s<id>), or\nwhy it failed (scrubbed by the worker).",
+        "properties": {
+          "bytes": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "scrubbed": {
+            "default": false,
+            "title": "Scrubbed",
+            "type": "boolean"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "success",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "status"
+        ],
+        "title": "RefreshSourceResultIn",
+        "type": "object"
+      },
+      "RefreshSourcesIn": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/RefreshSourceResultIn"
+            },
+            "maxItems": 1000,
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "RefreshSourcesIn",
         "type": "object"
       },
       "ValidationError": {
@@ -1501,7 +1582,7 @@
     },
     "/internal/refreshes/{refresh_id}/complete": {
       "post": {
-        "description": "Checks the uploaded output against the worker's size and hash, normalises it and makes\nit the inventory's current snapshot, or records why the refresh failed.",
+        "description": "The combine's output (checked against the worker's size and hash, normalised into the\nsnapshot), or why the worker stopped. A combine that fails leaves the snapshot as it was;\nthe sources keep the outputs they stored.",
         "operationId": "refresh_complete_internal_refreshes__refresh_id__complete_post",
         "parameters": [
           {
@@ -1621,7 +1702,7 @@
     },
     "/internal/refreshes/{refresh_id}/output": {
       "post": {
-        "description": "Appends a chunk of the refresh's output at X-Offset (a resent chunk is accepted again;\na gap is refused with the offset to resend from).",
+        "description": "Appends a chunk of one of the refresh's outputs (X-Part: a source's \"s<id>\" in stage\n\"sources\", \"combined\" in stage \"combine\") at X-Offset (a resent chunk is accepted again; a\ngap is refused with the offset to resend from).",
         "operationId": "refresh_output_internal_refreshes__refresh_id__output_post",
         "parameters": [
           {
@@ -1652,6 +1733,17 @@
               "title": "X-Offset",
               "type": "integer"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-part",
+            "required": true,
+            "schema": {
+              "maxLength": 20,
+              "pattern": "^(s[0-9]{1,12}|combined)$",
+              "title": "X-Part",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1677,6 +1769,66 @@
           }
         },
         "summary": "Refresh Output"
+      }
+    },
+    "/internal/refreshes/{refresh_id}/sources": {
+      "post": {
+        "description": "What each source's call did. Their outputs become the sources' last good outputs; then\nthe API combines them into the snapshot itself ({\"done\": true}), or hands out the combine\njob for the inventory's constructed sources ({\"combine\": job}; asked again, the same).",
+        "operationId": "refresh_sources_internal_refreshes__refresh_id__sources_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "refresh_id",
+            "required": true,
+            "schema": {
+              "title": "Refresh Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-claim-token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "title": "X-Claim-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshSourcesIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Refresh Sources Internal Refreshes  Refresh Id  Sources Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Sources"
       }
     },
     "/internal/runs/{run_id}/artifacts": {

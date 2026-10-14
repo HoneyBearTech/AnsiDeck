@@ -385,6 +385,14 @@ export interface InventorySource {
   created_by: string;
   created_at: string;
   updated_at: string;
+  // Each source runs on its own: why it failed the last time (null: it worked) and when, and
+  // what its last good output held (refreshes keep using it until it works again).
+  last_error?: string | null;
+  last_finished_at?: string | null;
+  output_refreshed_at?: string | null;
+  output_host_count?: number | null;
+  output_group_count?: number | null;
+  output_warnings?: string[];
 }
 
 export interface InventorySourceInput {
@@ -407,6 +415,18 @@ export interface InventoryRefresh {
   worker_id: string | null;
   error: string | null;
   snapshot_id: number | null;
+  // What each source did (constructed ones don't run on their own: ran false).
+  source_results?: RefreshSourceResult[];
+}
+
+export interface RefreshSourceResult {
+  source_id: number | null;
+  name: string;
+  plugin: string;
+  ran: boolean;
+  status: "success" | "failed" | "stale" | null;
+  error: string | null;
+  host_count: number | null;
 }
 
 export interface InventorySnapshot {

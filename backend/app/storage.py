@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from app.config import get_settings
@@ -76,8 +77,18 @@ def git_snapshot_dir(source_id: int) -> Path:
     return path
 
 
-def inventory_refresh_output_path(refresh_id: int) -> Path:
-    """A refresh's output while the worker uploads it (removed when the refresh ends)."""
+def inventory_refresh_output_path(refresh_id: int, part: str) -> Path:
+    """One output of a refresh while the worker uploads it: a source's ("s<source id>") or the
+    combine's ("combined"). Removed when the refresh ends (remove_inventory_refresh_outputs)."""
+    if not re.fullmatch(r"s[0-9]{1,12}|combined", part):
+        raise ValueError(f"invalid refresh output part {part!r}")
     path = Path(get_settings().data_dir) / "inventory-refreshes"
     path.mkdir(parents=True, exist_ok=True)
-    return path / f"{refresh_id}.json"
+    return path / f"{int(refresh_id)}-{part}.json"
+
+
+def remove_inventory_refresh_outputs(refresh_id: int) -> None:
+    path = Path(get_settings().data_dir) / "inventory-refreshes"
+    for staged in path.glob(f"{int(refresh_id)}-*.json"):
+        staged.unlink(missing_ok=True)
+    (path / f"{int(refresh_id)}.json").unlink(missing_ok=True)  # from before sources ran alone
