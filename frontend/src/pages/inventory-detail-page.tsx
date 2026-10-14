@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { HostKeysPanel } from "@/components/host-keys-panel";
 import { PageHeader } from "@/components/page-header";
 import { InventorySourcesPanel } from "@/components/inventory-sources-panel";
 import { Badge } from "@/components/ui/badge";
@@ -197,7 +198,18 @@ export function InventoryDetailPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title={inventory.name}
+        title={
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="min-w-0 wrap-anywhere">{inventory.name}</span>
+            {inventory.host_key_checking === "off" && (
+              <a href="#host-keys" className="no-underline">
+                <Badge variant="changed" title="Runs on this inventory don't check SSH host keys">
+                  host keys not checked
+                </Badge>
+              </a>
+            )}
+          </span>
+        }
         description={inventory.description}
         back={{ to: "/inventories", label: "Inventories" }}
         actions={
@@ -280,6 +292,14 @@ export function InventoryDetailPage() {
       </Card>
 
       <InventorySourcesPanel inventoryId={inventoryId} projectId={inventory.project_id} />
+
+      <HostKeysPanel
+        inventoryId={inventoryId}
+        projectId={inventory.project_id}
+        onModeChanged={(mode) =>
+          setInventory((current) => current && { ...current, host_key_checking: mode })
+        }
+      />
     </div>
   );
 }

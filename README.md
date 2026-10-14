@@ -167,6 +167,9 @@ they are.
   Runs execute in worker containers that have no database access and no keys, each slot as a Linux user of
   its own, so a run can't reach the worker's token or other runs' files and processes. Runs can't reach the
   API or cloud metadata, but otherwise share the worker's network and resources. Details, and what isn't isolated, are in [docs/security.md](docs/security.md).
+- Check SSH host keys: inventories created before AnsiDeck checked them show "host keys not checked"; switch
+  them to **Learn new hosts** (or **Strict**) under **SSH host keys** on the inventory's page. New inventories
+  check host keys from their first run. See [the user guide](docs/user-guide/inventories.md#ssh-host-keys).
 - With `ENVIRONMENT=production` the backend and the workers refuse the default `WORKER_TOKEN`. Anyone holding
   it can claim runs and receive their secrets, so treat it like `CREDENTIAL_ENCRYPTION_KEY`.
 - Global admins cannot use single sign-on unless you set `SSO_ALLOW_ADMIN=true`, so password login stays your
@@ -302,6 +305,8 @@ webhook), a generic webhook, email, Pushbullet or Pushover. Each channel picks i
 - **Run recovered**: a playbook succeeded on an inventory after its previous run there failed.
 - **Inventory refresh failed**: a dynamic inventory's refresh failed (once per failing streak),
   and again when it works.
+- **SSH host key changed**: ssh refused a host in a run because it presented a different key than
+  its inventory trusts (once per run, with the presented fingerprints).
 
 Global channels can also take operations and security events:
 

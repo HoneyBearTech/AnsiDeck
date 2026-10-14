@@ -9,6 +9,7 @@ function worker(overrides = {}) {
     slots: 2,
     isolated: true,
     egress_filtered: true,
+    host_keys: true,
     running: 1,
     online: true,
     first_seen_at: "2026-10-05T10:00:00Z",
@@ -66,6 +67,18 @@ describe("workers", () => {
     expect(screen.getAllByText("egress filtered")).toHaveLength(1);
     expect(screen.getAllByText("egress open")).toHaveLength(1); // not for the unisolated one
     expect(screen.getByText("worker-open").parentElement).toHaveTextContent("egress open");
+  });
+
+  it("says which workers are too old to check SSH host keys", async () => {
+    const { screen } = renderApp("/workers", {
+      routes: {
+        "GET /workers": [worker(), worker({ id: "worker-old", host_keys: null })],
+        "GET /secret-store/status": { enabled: false },
+      },
+    });
+    expect(await screen.findByText("A worker doesn't check SSH host keys")).toBeInTheDocument();
+    expect(screen.getAllByText("no host key checks")).toHaveLength(1);
+    expect(screen.getByText("worker-old").parentElement).toHaveTextContent("no host key checks");
   });
 
   it("warns when no worker is online and keeps polling", async () => {

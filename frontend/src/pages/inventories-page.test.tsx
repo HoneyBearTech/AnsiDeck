@@ -2,7 +2,15 @@ import { within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { reply } from "@/test/fake-api";
-import { credential, inventory, inventorySource, refresh, targets, viewerUser } from "@/test/fixtures";
+import {
+  credential,
+  hostKeys,
+  inventory,
+  inventorySource,
+  refresh,
+  targets,
+  viewerUser,
+} from "@/test/fixtures";
 import { choose, renderApp } from "@/test/render";
 import { editorText } from "@/test/editor";
 
@@ -25,6 +33,7 @@ function detail(overrides = {}) {
     "GET /inventories/:id/sources": [],
     "GET /inventories/:id/targets": targets(),
     "GET /inventories/:id/snapshot": null,
+    "GET /inventories/:id/host-keys": hostKeys({ keys: [], hosts: [], total: 0 }),
     ...overrides,
   };
 }
@@ -284,5 +293,100 @@ describe("dynamic inventory sources", () => {
     });
     await user.click(await screen.findByRole("button", { name: "Refresh now" }));
     expect(await screen.findByText("No worker is online")).toBeInTheDocument();
+  });
+});
+
+describe("SSH host keys", () => {
+  it("shows the mode, the hosts without a trusted key and the keys", async () => {
+    const { api, screen } = renderApp("/inventories/1", {
+      routes: detail({ "GET /inventories/:id/host-keys": hostKeys() }),
+    });
+    expect(await screen.findByText("SSH host keys")).toBeInTheDocument();
+    expect(screen.getByLabelText("Host key mode")).toHaveTextContent("Learn new hosts");
+    expect(screen.getByText("1 learned, unconfirmed")).toBeInTheDocument();
+    expect(screen.getByText("1 no key yet")).toBeInTheDocument();
+    expect(screen.getByText("db1")).toBeInTheDocument();
+    expect(screen.getByText("SHA256:lb3T+CbqsTi3pCqDEQBmfHd/c/jIK875yJAZ+F10Eyo")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "by run #7" })).toHaveAttribute("href", "/runs/7");
+    expect(screen.getByText("unconfirmed")).toBeInTheDocument();
+    expect(
+      api.calls.some((c) => c.path === "/inventories/1/host-keys" && c.query.get("untrusted") === "true"),
+    ).toBe(true);
+    expect(screen.queryByText("host keys not checked")).not.toBeInTheDocument();
+  });
+
+  it("warns when an inventory doesn't check host keys", async () => {
+    const { screen } = renderApp("/inventories/1", {
+      routes: detail({
+        "GET /inventories/:id": inventory({ host_key_checking: "off" }),
+        "GET /inventories/:id/host-keys": hostKeys({ mode: "off", keys: [] }),
+      }),
+    });
+    expect(await screen.findByText("host keys not checked")).toBeInTheDocument();
+    expect(screen.getByText("Host keys aren't checked")).toBeInTheDocument();
+    expect(screen.getByText(/Learn new hosts is a safe start/)).toBeInTheDocument();
+  });
+
+  it("lets project admins change the mode, confirm learned keys, paste and remove keys", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { api, user, screen } = renderApp("/inventories/1", {
+      routes: detail({
+        "GET /inventories/:id/host-keys": hostKeys(),
+        "PUT /inventories/:id/host-keys/mode": { mode: "strict" },
+        "POST /inventories/:id/host-keys/confirm": [],
+        "DELETE /inventories/:id/host-keys/:key": reply(204),
+        "POST /inventories/:id/host-keys/paste": {
+          keys: [
+            {
+              name: "db1",
+              key_type: "ssh-ed25519",
+              fingerprint: "SHA256:new",
+              change: "replace",
+              previous: "SHA256:old",
+              hosts: ["db1"],
+            },
+          ],
+          warnings: ["line 2: hashed names can't be used (one plain name per key)"],
+        },
+      }),
+    });
+    await screen.findByText("SSH host keys");
+
+    await choose(user, screen.getByLabelText("Host key mode"), "Strict: confirmed keys only");
+    expect(confirm.mock.calls.at(-1)?.[0]).toMatch(/2 hosts have no confirmed key/);
+    expect(api.requests("PUT /inventories/1/host-keys/mode")[0]?.body).toEqual({ mode: "strict" });
+
+    await user.click(screen.getByRole("button", { name: "Confirm learned (1)" }));
+    expect(api.requests("POST /inventories/1/host-keys/confirm")[0]?.body).toEqual({ ids: [1] });
+
+    await user.click(screen.getByRole("button", { name: "Paste known_hosts" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.type(dialog.getByLabelText("known_hosts"), "db1 ssh-ed25519 AAAA");
+    await user.click(dialog.getByRole("button", { name: "Preview" }));
+    expect(await dialog.findByText("replaces a key")).toBeInTheDocument();
+    expect(dialog.getByText("was SHA256:old")).toBeInTheDocument();
+    expect(dialog.getByText(/hashed names can't be used/)).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Trust and replace" }));
+    expect(api.requests("POST /inventories/1/host-keys/paste").map((r) => r.body)).toEqual([
+      { known_hosts: "db1 ssh-ed25519 AAAA", dry_run: true },
+      { known_hosts: "db1 ssh-ed25519 AAAA", dry_run: false },
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    expect(confirm.mock.calls.at(-1)?.[0]).toMatch(/its next run learns whatever key it is shown/);
+    expect(api.requests("DELETE /inventories/1/host-keys/1")).toHaveLength(1);
+  });
+
+  it("is read-only for everyone else", async () => {
+    const { screen } = renderApp("/inventories/1", {
+      user: viewerUser(),
+      routes: detail({ "GET /inventories/:id/host-keys": hostKeys() }),
+    });
+    expect(await screen.findByText("SSH host keys")).toBeInTheDocument();
+    expect(screen.getByText("Learn new hosts")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Host key mode")).not.toBeInTheDocument();
+    for (const name of ["Paste known_hosts", "Confirm learned (1)", "Remove"]) {
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    }
   });
 });

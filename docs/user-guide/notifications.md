@@ -27,6 +27,7 @@ delivery's result is shown on the card. Failed deliveries are retried for up to 
 | Run failed | A run failed, timed out or lost its worker; the message names the failed tasks and hosts | project, global |
 | Run recovered | A playbook succeeded on an inventory after its previous run there failed | project, global |
 | Inventory refresh failed | A dynamic inventory's refresh failed (once per failing streak), and when it works again | project, global |
+| SSH host key changed | A run was refused by ssh because a host presented a different key than its inventory trusts (once per run) | project, global |
 | Worker offline | A worker stopped reporting in, and when it is back | global |
 | Worker not isolated | A worker runs playbooks without per-slot users | global |
 | Worker egress not filtered | A worker's runs can reach the API and cloud metadata (its egress filter is off or couldn't be updated) | global |

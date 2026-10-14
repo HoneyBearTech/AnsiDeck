@@ -51,10 +51,23 @@ the title says why when it isn't Ansible's own result (a lost worker, a timeout,
 what it has produced so far. Secret values known to AnsiDeck are removed from the output before it's stored,
 so they aren't in the download either. Viewers can download too.
 
+## When ssh refuses a host key
+
+On an inventory that checks host keys (see [Inventories](inventories.md#ssh-host-keys)), a host whose key
+changed, or that has no trusted key in strict mode, is unreachable, and the run's page says which host and
+what it presented. A changed key means the host was reinstalled or replaced, or that something else
+answered at its address. Compare the presented fingerprint with the host's own (on its console:
+`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`). If they match, a project admin trusts the new key
+under the inventory's **SSH host keys** (**Paste known_hosts**, or **Remove** the old key and let the next
+run learn it). If nothing changed on the host, don't. Admins can be notified (**SSH host key changed**).
+
+The run's page also says how it checked host keys and how many new keys it learned.
+
 ## The queue
 
 Runs wait in a queue until a worker slot is free. A queued run's page says what it waits for: a free
-worker, the run ahead of it on the same inventory, a Galaxy install, or no worker being online at all.
+worker, the run ahead of it on the same inventory, a Galaxy install, no worker being online at all, or a
+worker new enough to check SSH host keys (the Workers page marks older ones "no host key checks").
 
 - Runs against the same inventory go one at a time, in the order they were started.
 - While a Galaxy install waits or runs, no new run starts.
