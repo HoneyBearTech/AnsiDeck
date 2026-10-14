@@ -655,3 +655,44 @@ def test_0029_adds_per_source_outputs_and_downgrades() -> None:
         with admin.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
         admin.dispose()
+
+
+def test_0030_leaves_every_source_due_for_its_first_refresh_and_downgrades() -> None:
+    url = make_url(TEST_DATABASE_URL)
+    scratch = url.database.removesuffix("_test") + "_migration_test"
+    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{scratch}"'))
+    engine = create_engine(url.set(database=scratch))
+    config = alembic_config()
+
+    def migrate(step, revision: str) -> None:
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            step(config, revision)
+
+    try:
+        migrate(command.upgrade, "0029")
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO projects (name, description) VALUES ('P', '')"))
+            conn.execute(text("INSERT INTO inventories (project_id, name) VALUES (1, 'dyn')"))
+            conn.execute(
+                text(
+                    "INSERT INTO inventory_sources (inventory_id, name, plugin, config, "
+                    "created_by) VALUES (1, 'gen', 'ansible.builtin.generator', 'x', 'admin')"
+                )
+            )
+        migrate(command.upgrade, "0030")
+        with engine.begin() as conn:
+            row = conn.execute(
+                text("SELECT refresh_interval_seconds, last_queued_at FROM inventory_sources")
+            ).one()
+            assert tuple(row) == (None, None)  # the inventory's interval; runs in the next one
+        migrate(command.downgrade, "0029")
+        migrate(command.upgrade, "0030")
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        admin.dispose()

@@ -229,11 +229,13 @@ def delete_inventory(
 
 
 def _static_changed(db: Session, inventory_id: int, user: User) -> None:
-    """The inventory's own hosts or groups changed: its sources (constructed ones group them)
-    are refreshed, one refresh for a burst of edits."""
+    """The inventory's own hosts or groups changed: the snapshot is combined again from what the
+    sources found last (no source runs; constructed ones group the hosts again), one refresh
+    for a burst of edits."""
     inventory = db.get(Inventory, inventory_id)
-    if enqueue_refresh(db, inventory, "static_changed", user.username) is not None:
-        db.commit()
+    queued = enqueue_refresh(db, inventory, "static_changed", user.username, source_ids=[])
+    db.commit()  # also when it merged into a queued refresh
+    if queued is not None:
         notifier.notify(QUEUE_TOPIC)
 
 

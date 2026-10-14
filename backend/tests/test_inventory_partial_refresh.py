@@ -241,8 +241,9 @@ def test_a_failed_source_keeps_its_last_good_output(client: TestClient) -> None:
     )
     failed = _wait_refresh(client, inventory_id)
     assert failed["status"] == "failed" and failed["error"].startswith("source 'two': ")
-    results = {r["name"]: r["status"] for r in failed["source_results"]}
-    assert results == {"one": "success", "two": "failed"}
+    # Only the edited source ran; the other one contributed what it found last.
+    results = {r["name"]: (r["ran"], r["status"]) for r in failed["source_results"]}
+    assert results == {"one": (False, None), "two": (True, "failed")}
     # The snapshot still has every host: "two" contributes its last good output.
     assert client.get(f"/api/inventories/{inventory_id}/targets").json()["hosts"] == hosts
     sources = {s["name"]: s for s in client.get(f"/api/inventories/{inventory_id}/sources").json()}

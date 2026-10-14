@@ -37,6 +37,12 @@ const INTERVALS: { value: number; label: string }[] = [
   { value: 86400, label: "Every day" },
 ];
 
+function intervalLabel(seconds: number): string {
+  return INTERVALS.find((i) => i.value === seconds)?.label.toLowerCase() ?? `every ${seconds} s`;
+}
+
+const CONSTRUCTED_CONFIG = /^\s*plugin:\s*["']?(ansible\.builtin\.)?constructed["']?\s*$/m;
+
 const EXAMPLES: { label: string; config: string }[] = [
   {
     label: "constructed",
@@ -112,6 +118,20 @@ function when(value: string | null | undefined): string {
 
 const CONSTRUCTED_PLUGINS = ["constructed", "ansible.builtin.constructed"];
 
+/** How often a source runs, and when next. */
+function SourceSchedule({ source }: { source: InventorySource }) {
+  const every = source.effective_interval_seconds ?? 0;
+  const own = source.refresh_interval_seconds;
+  const whose = own === null || own === undefined ? " (the inventory's)" : "";
+  const text = every ? `Runs ${intervalLabel(every)}${whose}` : `Runs when something changes${whose}`;
+  return (
+    <span className="text-xs text-muted-foreground">
+      {text}
+      {source.enabled && source.next_refresh_at ? ` · next ${when(source.next_refresh_at)}` : ""}
+    </span>
+  );
+}
+
 /** What a source found last, or why it failed (each source runs on its own). */
 function SourceStatus({ source }: { source: InventorySource }) {
   if (CONSTRUCTED_PLUGINS.includes(source.plugin)) {
@@ -132,6 +152,15 @@ function SourceStatus({ source }: { source: InventorySource }) {
   return <span className="text-xs text-muted-foreground">{found ?? "Not refreshed yet"}</span>;
 }
 
+/** Which sources a refresh ran, when not all of them. */
+function scopeText(refresh: InventoryRefresh): string {
+  const results = (refresh.source_results ?? []).filter((r) => !CONSTRUCTED_PLUGINS.includes(r.plugin));
+  if (!refresh.scope || results.length === 0) return "";
+  const ran = results.filter((r) => r.ran).length;
+  if (ran === results.length) return "";
+  return ran === 0 ? " · no source ran (combined only)" : ` · ${ran} of ${results.length} sources`;
+}
+
 export function RefreshBadge({ refresh }: { refresh: InventoryRefresh | null }) {
   if (!refresh) return <Badge variant="outline">not refreshed</Badge>;
   if (refresh.status === "queued") return <Badge variant="outline">queued</Badge>;
@@ -144,6 +173,7 @@ function SourceDialog({
   inventoryId,
   projectId,
   source,
+  inventoryInterval,
   open,
   onClose,
   onSaved,
@@ -151,6 +181,7 @@ function SourceDialog({
   inventoryId: number;
   projectId: number;
   source: InventorySource | null;
+  inventoryInterval: number;
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
@@ -162,6 +193,10 @@ function SourceDialog({
     source?.credential_id ? String(source.credential_id) : "none",
   );
   const [enabled, setEnabled] = React.useState(source?.enabled ?? true);
+  const [refreshEvery, setRefreshEvery] = React.useState(
+    typeof source?.refresh_interval_seconds === "number" ? String(source.refresh_interval_seconds) : "inherit",
+  );
+  const constructed = CONSTRUCTED_CONFIG.test(config);
   const [credentials, setCredentials] = React.useState<Credential[]>([]);
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
@@ -181,6 +216,8 @@ function SourceDialog({
       config,
       credential_id: credentialId === "none" ? null : Number(credentialId),
       enabled,
+      refresh_interval_seconds:
+        constructed || refreshEvery === "inherit" ? null : Number(refreshEvery),
     };
     try {
       if (source) await api.updateInventorySource(inventoryId, source.id, input);
@@ -252,6 +289,34 @@ function SourceDialog({
               </SelectContent>
             </Select>
           </div>
+          {constructed ? (
+            <p className="text-xs text-muted-foreground">
+              A <code>constructed</code> source is applied again in every refresh, over what the other sources
+              found last and the inventory&apos;s own hosts.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <Label>Refresh</Label>
+              <Select value={refreshEvery} onValueChange={setRefreshEvery}>
+                <SelectTrigger aria-label="Source refresh">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="inherit">
+                    The inventory&apos;s ({intervalLabel(inventoryInterval)})
+                  </SelectItem>
+                  {INTERVALS.map((option) => (
+                    <SelectItem key={option.value} value={String(option.value)}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Only this source runs on its schedule; the others contribute what they found last.
+              </p>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <Switch id="source-enabled" checked={enabled} onCheckedChange={setEnabled} />
             <Label htmlFor="source-enabled">Enabled</Label>
@@ -376,6 +441,7 @@ export function InventorySourcesPanel({
                 <span className="text-muted-foreground">
                   {when(last.finished_at ?? last.queued_at)} · {last.trigger.replace("_", " ")}
                   {last.requested_by ? ` by ${last.requested_by}` : ""}
+                  {scopeText(last)}
                 </span>
               )}
               {targets?.snapshot_at && (
@@ -397,7 +463,7 @@ export function InventorySourcesPanel({
             )}
             {canManage ? (
               <div className="flex flex-wrap items-center gap-2">
-                <Label className="text-xs text-muted-foreground">Refresh</Label>
+                <Label className="text-xs text-muted-foreground">Sources refresh</Label>
                 <Select
                   value={String(targets?.refresh_interval_seconds ?? 0)}
                   onValueChange={(value) =>
@@ -448,7 +514,23 @@ export function InventorySourcesPanel({
                 <span className="text-xs text-muted-foreground">credential: {source.credential_name}</span>
               )}
               <SourceStatus source={source} />
+              {!CONSTRUCTED_PLUGINS.includes(source.plugin) && <SourceSchedule source={source} />}
             </div>
+            {(canManage || canRefresh) && (
+              <div className="flex flex-wrap items-center gap-2">
+                {canRefresh && source.enabled && !CONSTRUCTED_PLUGINS.includes(source.plugin) && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label={`Refresh ${source.name}`}
+                    disabled={refreshing}
+                    onClick={() => act(() => api.refreshInventorySource(inventoryId, source.id))}
+                  >
+                    Refresh
+                  </Button>
+                )}
+              </div>
+            )}
             {canManage && (
               <div className="flex items-center gap-2">
                 <Switch
@@ -510,6 +592,7 @@ export function InventorySourcesPanel({
           inventoryId={inventoryId}
           projectId={projectId}
           source={editing === "new" ? null : editing}
+          inventoryInterval={targets?.refresh_interval_seconds ?? 0}
           open
           onClose={() => setEditing(null)}
           onSaved={load}

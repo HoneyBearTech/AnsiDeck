@@ -19,6 +19,7 @@ from app.models import (
     Inventory,
     InventoryRefresh,
     InventorySnapshot,
+    InventorySource,
     Run,
     RunStatus,
 )
@@ -411,7 +412,8 @@ def test_refreshes_are_scheduled_and_merged(client: TestClient) -> None:
     )
     db = get_sessionmaker()()
     db.execute(update(InventoryRefresh).values(status="success", claim_token_hash=None))
-    db.execute(update(InventoryRefresh).values(queued_at=text("now() - interval '10 minutes'")))
+    # Each source is due once its interval has passed since a refresh last ran it.
+    db.execute(update(InventorySource).values(last_queued_at=text("now() - interval '10 minutes'")))
     db.commit()
     db.close()
     reap_once()

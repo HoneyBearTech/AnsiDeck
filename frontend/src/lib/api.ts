@@ -385,6 +385,12 @@ export interface InventorySource {
   created_by: string;
   created_at: string;
   updated_at: string;
+  // How often a schedule runs it: its own (null: the inventory's; 0: only when something
+  // changes), what applies, and when it runs next (null: no schedule, or not yet).
+  refresh_interval_seconds?: number | null;
+  effective_interval_seconds?: number;
+  last_queued_at?: string | null;
+  next_refresh_at?: string | null;
   // Each source runs on its own: why it failed the last time (null: it worked) and when, and
   // what its last good output held (refreshes keep using it until it works again).
   last_error?: string | null;
@@ -400,6 +406,8 @@ export interface InventorySourceInput {
   config: string;
   credential_id: number | null;
   enabled: boolean;
+  // null: the inventory's refresh interval.
+  refresh_interval_seconds?: number | null;
 }
 
 export type RefreshStatus = "queued" | "running" | "success" | "failed" | "timed_out";
@@ -407,7 +415,7 @@ export type RefreshStatus = "queued" | "running" | "success" | "failed" | "timed
 export interface InventoryRefresh {
   id: number;
   status: RefreshStatus;
-  trigger: "manual" | "schedule" | "sources_changed" | "static_changed";
+  trigger: "manual" | "schedule" | "sources_changed" | "static_changed" | "run";
   requested_by: string | null;
   queued_at: string;
   started_at: string | null;
@@ -415,6 +423,8 @@ export interface InventoryRefresh {
   worker_id: string | null;
   error: string | null;
   snapshot_id: number | null;
+  // The sources it runs (null: all; []: none, it only combines what they found last).
+  scope?: number[] | null;
   // What each source did (constructed ones don't run on their own: ran false).
   source_results?: RefreshSourceResult[];
 }
@@ -1182,6 +1192,8 @@ export const api = {
     }),
   deleteInventorySource: (id: number, sourceId: number) =>
     request<void>(`/inventories/${id}/sources/${sourceId}`, { method: "DELETE" }),
+  refreshInventorySource: (id: number, sourceId: number) =>
+    request<InventoryRefresh | null>(`/inventories/${id}/sources/${sourceId}/refresh`, { method: "POST" }),
   refreshInventory: (id: number) =>
     request<InventoryRefresh | null>(`/inventories/${id}/refresh`, { method: "POST" }),
   listInventoryRefreshes: (id: number, limit = 10) =>

@@ -138,8 +138,13 @@ plain text: a `{{ ... }}` in one is not evaluated during a refresh (it still is 
 
 More about sources:
 
-- **Refresh** sets a schedule (every 5 minutes to every day); "when something changes" refreshes after a
-  source or the inventory's own hosts change. When a source fails, the other sources' hosts are still
+- **Sources refresh** sets the inventory's schedule (every 5 minutes to every day, or "when something
+  changes"), and each source can have its own in its dialog (**Refresh**: the inventory's, or another
+  interval). A scheduled refresh runs only the sources that are due; the others contribute what they found
+  last, so a slow or rate-limited API can be asked less often than the rest. Each source shows its schedule
+  and when it runs next, and has its own **Refresh** button. Adding or editing a source runs just that source;
+  turning one off or deleting it, and editing the inventory's own hosts or groups, only combine again (no
+  source runs); **Refresh now** runs every source. `constructed` sources are applied again in every refresh. When a source fails, the other sources' hosts are still
   updated and the failed source keeps what it found last; the refresh counts as failed and names the source.
   Admins can be notified (**Inventory refresh failed**); the all-clear comes once every source works again.
 - A run uses the snapshot current when it starts, and a run can't start until the first refresh worked,

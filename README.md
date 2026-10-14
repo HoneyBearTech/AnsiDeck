@@ -329,9 +329,11 @@ credential), keeps what each one found, then combines them with the inventory's 
 `constructed` sources over the lot (so they can group those too; they read every source's and host's vars as
 plain text, never as templates), and keeps the result as a **snapshot**. Runs use the snapshot that
 is current when they are started, or wait for a refresh of their own when started with **Refresh the dynamic
-sources first** (the inventory's **Refresh before every run** ticks it by default); the inventory's own host vars win over a source's. A refresh happens when a
-source changes, when the inventory's own hosts or groups change, on demand, and on a schedule (at most every 5
-minutes). If a source fails, the others' new hosts are still used and the failed one keeps what it found last;
+sources first** (the inventory's **Refresh before every run** ticks it by default); the inventory's own host vars win over a source's. Each source runs on
+its own schedule (its own interval, or the inventory's; at most every 5 minutes), and only the sources that are
+due call their APIs: the others contribute what they found last. Adding or editing a source runs just that
+source; editing the inventory's own hosts or groups only combines again; **Refresh now** and runs that refresh
+first run every source; each source also has its own **Refresh**. If a source fails, the others' new hosts are still used and the failed one keeps what it found last;
 the refresh counts as failed, its page says which source failed and why, and an **Inventory refresh failed**
 notification goes out once (and again when every source works).
 

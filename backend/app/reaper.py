@@ -20,7 +20,7 @@ from app.host_key_scans import QUEUE_TIMEOUT_SECONDS as SCAN_QUEUE_TIMEOUT_SECON
 from app.host_key_scans import TIMEOUT_GRACE_SECONDS as SCAN_TIMEOUT_GRACE_SECONDS
 from app.host_key_scans import end_scan, prune_scans
 from app.host_key_scans import wait_reason as scan_wait_reason
-from app.inventory_sources import due_inventories, end_refresh, enqueue_refresh
+from app.inventory_sources import due_sources, end_refresh, enqueue_refresh
 from app.inventory_sources import prune_snapshots as prune_inventory_snapshots
 from app.jobs import UNRUNNABLE, unrunnable_reason
 from app.lint import (
@@ -32,6 +32,7 @@ from app.lint import wait_reason as lint_wait_reason
 from app.models import (
     GalaxyInstall,
     HostKeyScan,
+    Inventory,
     InventoryRefresh,
     LintJob,
     Run,
@@ -111,8 +112,10 @@ def reap_refreshes(db: Session) -> list[dict]:
     db.commit()
 
     queued = False
-    for inventory in due_inventories(db):
-        queued = enqueue_refresh(db, inventory, "schedule") is not None or queued
+    for inventory_id, source_ids in due_sources(db).items():
+        inventory = db.get(Inventory, inventory_id)
+        refresh_id = enqueue_refresh(db, inventory, "schedule", source_ids=source_ids)
+        queued = refresh_id is not None or queued
     db.commit()
     if queued:
         notifier.notify(QUEUE_TOPIC)
