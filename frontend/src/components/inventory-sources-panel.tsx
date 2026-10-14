@@ -110,6 +110,28 @@ function when(value: string | null | undefined): string {
   return value ? new Date(value).toLocaleString() : "never";
 }
 
+const CONSTRUCTED_PLUGINS = ["constructed", "ansible.builtin.constructed"];
+
+/** What a source found last, or why it failed (each source runs on its own). */
+function SourceStatus({ source }: { source: InventorySource }) {
+  if (CONSTRUCTED_PLUGINS.includes(source.plugin)) {
+    return <span className="text-xs text-muted-foreground">Applied in every refresh</span>;
+  }
+  const found =
+    source.output_refreshed_at
+      ? `${source.output_host_count ?? 0} hosts, ${source.output_group_count ?? 0} groups as of ${when(source.output_refreshed_at)}`
+      : null;
+  if (source.last_error) {
+    return (
+      <span className="text-xs text-destructive wrap-anywhere">
+        Failed {when(source.last_finished_at)}: {source.last_error.split("\n")[0]}
+        {found && <span className="text-muted-foreground"> · keeps {found}</span>}
+      </span>
+    );
+  }
+  return <span className="text-xs text-muted-foreground">{found ?? "Not refreshed yet"}</span>;
+}
+
 export function RefreshBadge({ refresh }: { refresh: InventoryRefresh | null }) {
   if (!refresh) return <Badge variant="outline">not refreshed</Badge>;
   if (refresh.status === "queued") return <Badge variant="outline">queued</Badge>;
@@ -367,7 +389,11 @@ export function InventorySourcesPanel({
               <pre className="whitespace-pre-wrap text-xs text-destructive">{last.error}</pre>
             )}
             {last && last.status !== "success" && !refreshing && targets?.snapshot_id && (
-              <p className="text-xs text-muted-foreground">Runs keep using the last good snapshot.</p>
+              <p className="text-xs text-muted-foreground">
+                {last.snapshot_id
+                  ? "The other sources were updated; a source that failed keeps what it found last."
+                  : "Runs keep using the last good snapshot."}
+              </p>
             )}
             {canManage ? (
               <div className="flex flex-wrap items-center gap-2">
@@ -421,6 +447,7 @@ export function InventorySourcesPanel({
               {source.credential_name && (
                 <span className="text-xs text-muted-foreground">credential: {source.credential_name}</span>
               )}
+              <SourceStatus source={source} />
             </div>
             {canManage && (
               <div className="flex items-center gap-2">

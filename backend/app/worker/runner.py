@@ -54,7 +54,7 @@ _MAX_OUTPUT_DEPTH = 64
 # "[ERROR]: Completely failed to parse inventory source <file>" after it the file.
 _PLUGIN_FAILED = re.compile(r"^\[WARNING\]: Failed to parse inventory with '([^']+)' plugin: (.*)$")
 _SOURCE_FAILED = re.compile(r"^\[ERROR\]: Completely failed to parse inventory source (.*)$")
-_REFRESH_PATHS = re.compile(r"/\S*?/ansideck-refresh-\d+-[^/\s]*/inventory/")
+_REFRESH_PATHS = re.compile(r"/\S*?/ansideck-refresh-\d+-[^/\s]*/(?:c\d+/)?inventory/")
 
 # Stop reasons (ExecutionHandle.stop_reason) and what they become.
 CANCELLED = "cancelled"
@@ -470,6 +470,7 @@ class Worker:
                         "host_keys": True,
                         "egress_allowlist": self.egress_allowlist(),
                         "ssh_certificates": True,
+                        "partial_refreshes": True,
                     },
                     timeout=self.claim_wait_seconds + 15,
                 )
@@ -780,37 +781,47 @@ class Worker:
     def _execute_refresh(
         self, task: RunTask, job_token: str, identity: RunIdentity | None = None
     ) -> None:
-        """An inventory refresh: ansible-inventory in the slot's run process, its output
-        scrubbed of the credentials' values, uploaded in chunks, then the outcome."""
+        """An inventory refresh: each source's ansible-inventory call in the slot's run process,
+        each output scrubbed of the credentials' values and uploaded on its own, then what each
+        source did; and when the API answers with a combine job (constructed sources), that
+        call too, its output uploaded, then the outcome."""
         job = self._fetch_job(task, job_token)
         if job is None:
             return
         task.timeout_seconds = job["timeout_seconds"]
         task.deadline = time.monotonic() + task.timeout_seconds
-        secrets = job["secrets"]
         logger.info("%s: starting", task.label)
-        rc: int | None = None
-        output, stderr, refused = "", "", None
-        try:
-            rc, output, stderr = inventory_in_worker(
-                {
-                    "files": job["files"],
-                    "env": job["env"],
-                    "prefix": f"ansideck-refresh-{task.run_id}-",
-                    "own_home": identity is not None,
-                    "max_output_bytes": job["max_output_bytes"],
-                },
-                clean_env(self._galaxy_env()),
-                task.handle,
-                identity,
-            )
-        except RunRefused as exc:
-            refused = str(exc)
-        except Exception:  # reported as a failed refresh below
-            if task.handle.stop_reason is None:
-                logger.exception("%s: could not run ansible-inventory", task.label)
-        finally:
-            del job
+        results: list[dict] = []
+        secrets = job["secrets"]
+
+        def source_result(key: str, rc: int | None, output: str, stderr: str) -> None:
+            result: dict = {"source_id": int(key[1:])}
+            uploaded = None if rc != 0 else self._upload_part(task, key, output, secrets)
+            if rc != 0:
+                result.update(status="failed", error=refresh_error(stderr, secrets, rc))
+            elif isinstance(uploaded, str):
+                result.update(status="failed", error=uploaded)
+            else:
+                result.update(status="success", **uploaded)
+            results.append(result)
+
+        refused = self._inventory_calls(task, job, identity, source_result)
+        answer = None
+        if refused is None and task.handle.stop_reason is None:
+            answer = self._report_sources(task, results)
+        combine = (answer or {}).get("combine")
+        combined: dict | str | None = None
+        if combine and task.handle.stop_reason is None:
+
+            def combine_result(_key: str, rc: int | None, output: str, stderr: str) -> None:
+                nonlocal combined
+                if rc != 0:
+                    combined = refresh_error(stderr, combine["secrets"], rc)
+                else:
+                    combined = self._upload_part(task, "combined", output, combine["secrets"])
+
+            refused = self._inventory_calls(task, combine, identity, combine_result)
+        del job
 
         reason = task.handle.stop_reason
         if reason == GONE:
@@ -820,12 +831,67 @@ class Worker:
             self._complete_refresh(task, {"status": outcome, "error": why})
         elif refused is not None:
             self._complete_refresh(task, {"status": "failed", "error": f"not run: {refused}"})
-        elif rc != 0:
-            self._complete_refresh(
-                task, {"status": "failed", "error": refresh_error(stderr, secrets, rc)}
-            )
+        elif answer is None or not combine:
+            return  # the API ended it with the sources' results (or the claim is gone)
+        elif isinstance(combined, dict):
+            self._complete_refresh(task, {"status": "success", **combined})
         else:
-            self._upload_refresh(task, output, secrets)
+            error = combined or "it ended without a result"
+            self._complete_refresh(
+                task, {"status": "failed", "error": f"applying the constructed sources: {error}"}
+            )
+
+    def _inventory_calls(
+        self, task: RunTask, job: dict, identity: RunIdentity | None, on_result
+    ) -> str | None:
+        """Runs a job's ansible-inventory calls; why they couldn't be set up, or None."""
+
+        def guarded(key: str, rc: int | None, output: str, stderr: str) -> None:
+            if task.handle.stop_reason is None:
+                on_result(key, rc, output, stderr)
+
+        try:
+            inventory_in_worker(
+                {
+                    "calls": job["calls"],
+                    "prefix": f"ansideck-refresh-{task.run_id}-",
+                    "own_home": identity is not None,
+                    "max_output_bytes": job["max_output_bytes"],
+                },
+                clean_env(self._galaxy_env()),
+                guarded,
+                task.handle,
+                identity,
+            )
+        except RunRefused as exc:
+            return Scrubber(job["secrets"]).scrub_text(str(exc))
+        except Exception:  # reported as a failed refresh
+            if task.handle.stop_reason is None:
+                logger.exception("%s: could not run ansible-inventory", task.label)
+                return "the refresh process failed (see the worker's log)"
+        return None
+
+    def _report_sources(self, task: RunTask, results: list[dict]) -> dict | None:
+        """What each source did; the API's answer ({"done"} or {"combine": job}), or None when
+        the claim is gone or the API can't be reached in time."""
+        deadline = time.monotonic() + _FLUSH_TIMEOUT_SECONDS
+        while time.monotonic() < deadline and task.handle.stop_reason is None:
+            try:
+                response = self.client.post(
+                    f"/internal/refreshes/{task.run_id}/sources",
+                    {"results": results},
+                    claim_token=task.claim_token,
+                )
+            except ApiUnavailable as exc:
+                logger.warning("%s: reporting the sources failed (%s); retrying", task.label, exc)
+                time.sleep(1)
+                continue
+            if response.status_code == 200:
+                return response.json()
+            logger.info("%s: sources reported (HTTP %s)", task.label, response.status_code)
+            return None
+        logger.error("%s: could not report the sources in time", task.label)
+        return None
 
     # ------------------------------------------------------------------ playbook checks
 
@@ -968,27 +1034,26 @@ class Worker:
             return
         logger.error("%s: could not report the result in time", task.label)
 
-    def _upload_refresh(self, task: RunTask, output: str, secrets: list[str]) -> None:
+    def _upload_part(self, task: RunTask, part: str, output: str, secrets: list[str]) -> dict | str:
+        """One call's output, scrubbed and uploaded as `part`: {"bytes", "sha256", "scrubbed"},
+        or why it couldn't be."""
         try:
             data = loads_bounded(output, _MAX_OUTPUT_DEPTH)
         except (ValueError, RecursionError):
-            self._complete_refresh(
-                task, {"status": "failed", "error": "ansible-inventory's output is not JSON"}
-            )
-            return
+            return "ansible-inventory's output is not JSON"
         data, scrubbed = scrub_exact(data, secrets)
         body = json.dumps(data).encode()
         offset = 0
         deadline = time.monotonic() + _FLUSH_TIMEOUT_SECONDS
         while offset < len(body) and time.monotonic() < deadline:
             if task.handle.stop_reason:
-                return
+                return "stopped"
             try:
                 response = self.client.post_bytes(
                     f"/internal/refreshes/{task.run_id}/output",
                     body[offset : offset + _REFRESH_CHUNK_BYTES],
                     claim_token=task.claim_token,
-                    headers={"X-Offset": str(offset)},
+                    headers={"X-Offset": str(offset), "X-Part": part},
                 )
             except ApiUnavailable as exc:
                 logger.warning("%s: upload failed (%s); retrying", task.label, exc)
@@ -996,23 +1061,19 @@ class Worker:
                 continue
             if response.status_code == 200:
                 offset = response.json()["offset"]
-            elif response.status_code == 409:
+            elif response.status_code == 409 and "expected_offset" in response.json():
                 offset = response.json()["expected_offset"]
             else:
                 logger.error("%s: output refused (HTTP %s)", task.label, response.status_code)
-                return
+                return f"its output was refused (HTTP {response.status_code})"
         if offset < len(body):
             logger.error("%s: could not upload the output in time", task.label)
-            return
-        self._complete_refresh(
-            task,
-            {
-                "status": "success",
-                "bytes": len(body),
-                "sha256": hashlib.sha256(body).hexdigest(),
-                "scrubbed": scrubbed,
-            },
-        )
+            return "its output could not be uploaded in time"
+        return {
+            "bytes": len(body),
+            "sha256": hashlib.sha256(body).hexdigest(),
+            "scrubbed": scrubbed,
+        }
 
     def _complete_refresh(self, task: RunTask, body: dict) -> None:
         deadline = time.monotonic() + _FLUSH_TIMEOUT_SECONDS

@@ -335,26 +335,28 @@ def _checked_dir(path: str, job: dict) -> str | None:
 def inventory_in_worker(
     job: dict,
     env: dict[str, str],
+    on_result,
     handle: ExecutionHandle | None = None,
     identity: RunIdentity | None = None,
-) -> tuple[int | None, str, str]:
-    """An inventory refresh in the run process (app.run_worker, mode "inventory"), as
-    `identity` when given: (ansible-inventory's exit code or None, its output, the end of its
-    stderr). RunRefused if it couldn't be set up."""
+) -> None:
+    """An inventory refresh's calls in the run process (app.run_worker, mode "inventory"), as
+    `identity` when given. `on_result(key, rc, output, stderr)` gets each call's outcome as it
+    ends (ansible-inventory's exit code, its output, the end of its stderr), one at a time.
+    RunRefused if it couldn't be set up."""
     chunks: list[str] = []
-    outcome: dict = {}
 
     def on_message(message: dict) -> None:
         if message["type"] == "output":
             chunks.append(message["data"])
         elif message["type"] == "inventory_result":
-            outcome.update(rc=message["rc"], stderr=message.get("stderr") or "")
+            output = "".join(chunks)
+            chunks.clear()
+            on_result(message["key"], message["rc"], output, message.get("stderr") or "")
 
     run_in_worker(
         {**job, "mode": "inventory"}, env, lambda _event: None, handle, identity,
         on_message=on_message,
     )  # fmt: skip
-    return outcome.get("rc"), "".join(chunks), outcome.get("stderr", "")
 
 
 def lint_in_worker(

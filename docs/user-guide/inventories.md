@@ -128,9 +128,10 @@ plain text: a `{{ ... }}` in one is not evaluated during a refresh (it still is 
    **Credential**, and refer to them with `{{ lookup('env', 'NETBOX_TOKEN') }}`. The AWS and Proxmox plugins
    read their credentials from the environment by themselves (`AWS_ACCESS_KEY_ID` and
    `AWS_SECRET_ACCESS_KEY`; `PROXMOX_TOKEN_ID` and `PROXMOX_TOKEN_SECRET`), so the credential is all they need.
-2. **Refresh now** runs every enabled source in a worker. The result is kept as a **snapshot**: the badge
-   shows whether the last refresh worked, when, and how many hosts and groups it found, with any warnings
-   (for example host names Ansible would misread, which are skipped).
+2. **Refresh now** runs every enabled source in a worker, each on its own. The result is kept as a
+   **snapshot**: the badge shows whether the last refresh worked, when, and how many hosts and groups it
+   found, with any warnings (for example host names Ansible would misread, which are skipped). Each source
+   says what it found last, or why it failed.
 3. **Hosts a run sees** lists the merged result (searchable, 100 hosts per page): which hosts came from a
    source, which from the inventory itself, their groups and vars. The inventory's own host vars win over
    a source's.
@@ -138,8 +139,9 @@ plain text: a `{{ ... }}` in one is not evaluated during a refresh (it still is 
 More about sources:
 
 - **Refresh** sets a schedule (every 5 minutes to every day); "when something changes" refreshes after a
-  source or the inventory's own hosts change. A refresh fails as a whole when any source fails, and runs
-  keep using the last good snapshot. Admins can be notified (**Inventory refresh failed**).
+  source or the inventory's own hosts change. When a source fails, the other sources' hosts are still
+  updated and the failed source keeps what it found last; the refresh counts as failed and names the source.
+  Admins can be notified (**Inventory refresh failed**); the all-clear comes once every source works again.
 - A run uses the snapshot current when it starts, and a run can't start until the first refresh worked,
   unless it refreshes the sources first: tick that on **New run** (or in a template, or send
   `"refresh_first": true` with the API), or switch on **Refresh before every run** next to the schedule to

@@ -175,8 +175,10 @@ def test_a_broken_source_fails_the_refresh_and_alerts_once(client: TestClient) -
     )
     failed = _wait_refresh(client, inventory_id)
     assert failed["status"] == "failed"
-    # names the source's file and the plugin's own reason
-    assert re.match(rf"\d\d-src{broken['id']}\.nb_inventory\.yml: .*refused", failed["error"])
+    # names the source, its file and the plugin's own reason
+    assert re.match(
+        rf"source 'netbox': \d\d-src{broken['id']}\.nb_inventory\.yml: .*refused", failed["error"]
+    )
     assert "Completely failed" not in failed["error"]
     assert "nb-sentinel-token-123" not in failed["error"]
     # Runs keep using the last good snapshot.

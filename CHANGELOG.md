@@ -9,7 +9,11 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Upgrading
 
-- The API applies database migrations 0017 to 0028 when it starts.
+- The API applies database migrations 0017 to 0029 when it starts.
+- **Inventory refreshes need workers of this release** (they run each source on its own); older workers
+  take no refreshes. A failed source no longer fails the whole snapshot: the other sources' hosts are
+  updated and the failed one keeps what it found last (the refresh still counts as failed and alerts).
+  `constructed` sources no longer template strings that came from other sources.
 - Runs on inventories that restrict network egress (none until a project admin turns it on) wait for a
   worker of this release whose egress filter is on.
 - **Passkeys need `PUBLIC_URL`** set to the address people open AnsiDeck at (`https://`, or `http://localhost`
@@ -41,6 +45,8 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- Each dynamic inventory source runs on its own, with only its own credential, and shows what it found
+  last or why it failed; the refresh history says what each source did.
 - The AWS (`amazon.aws.aws_ec2`) and Proxmox (`community.proxmox.proxmox`) inventory plugins work: the image
   now ships boto3/botocore, requests and proxmoxer (also used by the AWS and Proxmox modules in playbooks).
   The source dialog has examples for both. The backend image is larger by about 30 MB.

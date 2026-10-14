@@ -37,8 +37,10 @@ from app.models import (
     Credential,
     Inventory,
     InventoryRefresh,
+    InventoryRefreshSource,
     InventorySnapshot,
     InventorySource,
+    InventorySourceOutput,
     Run,
     RunStatus,
 )
@@ -200,10 +202,39 @@ def due_inventories(db: Session) -> list[Inventory]:
 # --- the job ------------------------------------------------------------------------------
 
 
+def input_sha256(source: InventorySource) -> str:
+    """What a source's output depends on (its plugin config and credential): an output made
+    from anything else is stale."""
+    material = json.dumps([source.plugin, source.config, source.credential_id])
+    return hashlib.sha256(material.encode()).hexdigest()
+
+
+def _source_env(
+    db: Session, inventory: Inventory, source: InventorySource, deadline: float
+) -> dict[str, str]:
+    """The variables of the source's credential ({} without one)."""
+    if source.credential_id is None:
+        return {}
+    credential = db.get(Credential, source.credential_id)
+    if credential is None or credential.project_id != inventory.project_id:
+        raise RuntimeError(f"source {source.id}: its credential is not in its project")
+    if credential.kind != "env":
+        raise SourceError(f"source '{source.name}': its credential is not env variables")
+    try:
+        values = resolve_env(credential, deadline)
+    except SecretStoreError as exc:
+        exc.subject = f"credential '{credential.name}'"
+        raise
+    if problem := env_problem(values):  # a name denied since the credential was saved
+        raise SourceError(f"credential '{credential.name}': {problem}")
+    return values
+
+
 def build_refresh_job(db: Session, refresh: InventoryRefresh) -> dict:
-    """What the worker runs: the config files in order, the credentials' variables, and the
-    values to scrub from the output. SecretStoreError (with `.subject`) when a credential in
-    the secret store can't be read."""
+    """Stage one of a refresh: one ansible-inventory call per source (constructed ones wait for
+    the combine), each with its own config and only its own credential's variables. Records
+    what each source is to do. SecretStoreError (with `.subject`) when a credential in the
+    secret store can't be read."""
     inventory = db.get(Inventory, refresh.inventory_id)
     if inventory is None or inventory.project_id != refresh.project_id:
         raise RuntimeError(f"refresh {refresh.id}: its inventory is gone or moved")
@@ -211,41 +242,34 @@ def build_refresh_job(db: Session, refresh: InventoryRefresh) -> dict:
     if not sources:
         raise SourceError("the inventory has no enabled sources")
     deadline = new_deadline()
-    env: dict[str, str] = {}
+    calls: list[dict] = []
     secrets: set[str] = set()
     for source in sources:
-        if source.credential_id is None:
+        constructed = is_constructed(source)
+        db.add(
+            InventoryRefreshSource(
+                refresh_id=refresh.id,
+                source_id=source.id,
+                name=source.name,
+                plugin=source.plugin,
+                ran=not constructed,
+                input_sha256=input_sha256(source),
+            )
+        )
+        if constructed:
             continue
-        credential = db.get(Credential, source.credential_id)
-        if credential is None or credential.project_id != inventory.project_id:
-            raise RuntimeError(f"refresh {refresh.id}: a credential is not in its project")
-        if credential.kind != "env":
-            raise SourceError(f"source '{source.name}': its credential is not env variables")
-        try:
-            values = resolve_env(credential, deadline)
-        except SecretStoreError as exc:
-            exc.subject = f"credential '{credential.name}'"
-            raise
-        if problem := env_problem(values):  # a name denied since the credential was saved
-            raise SourceError(f"credential '{credential.name}': {problem}")
-        for name, value in values.items():
-            if env.get(name, value) != value:
-                raise SourceError(f"two credentials set {name} to different values")
-        env.update(values)
-        secrets.update(values.values())
-
+        env = _source_env(db, inventory, source, deadline)
+        secrets.update(env.values())
+        calls.append(
+            {
+                "key": f"s{source.id}",
+                "kind": "plugin",
+                "files": [{"name": config_file_name(source, 10), "text": source.config}],
+                "env": env,
+            }
+        )
     static = static_data(inventory)
-    files = []
-    plain = [s for s in sources if not is_constructed(s)]
-    for order, source in enumerate(plain, start=10):
-        files.append({"name": config_file_name(source, order), "text": source.config})
-    # Operators write these vars, but the refresh holds the sources' credentials: a constructed
-    # source must read them as text, or a `{{ lookup('env', ...) }}` in one would run there.
-    graph = merge(static)
-    graph["hosts"] = {name: mark_unsafe(host_vars) for name, host_vars in graph["hosts"].items()}
-    files.append({"name": "50-static.yml", "text": render(graph)})
-    for order, source in enumerate((s for s in sources if is_constructed(s)), start=60):
-        files.append({"name": config_file_name(source, order), "text": source.config})
+    refresh.stage = "sources"
     refresh.sources = {
         "sources": [
             {
@@ -260,8 +284,7 @@ def build_refresh_job(db: Session, refresh: InventoryRefresh) -> dict:
     }
     return {
         "kind": "refresh",
-        "files": files,
-        "env": env,
+        "calls": calls,
         "secrets": sorted(secrets),
         "timeout_seconds": refresh.timeout_seconds,
         "max_output_bytes": get_settings().inventory_max_output_mb * 1024 * 1024,
@@ -296,24 +319,30 @@ def _unwrap(value: Any, depth: int = 0) -> Any:
     raise SourceError("unexpected output from ansible-inventory")
 
 
-def _vars(value: Any, where: str, warnings: list[str], quiet: bool = False) -> dict:
-    """A source's vars, minus vault values and the Ansible settings sources may not set.
-    `quiet`: a static host's echo of its own vars (they win in merge anyway), so dropping its
-    connection settings is no news."""
+def _parse_vars(value: Any, where: str, warnings: list[str]) -> dict:
+    """A source's vars as plain data, minus vault values (the Ansible settings are still in:
+    constructed sources may group by them; filter_graph drops them)."""
     if not isinstance(value, dict):
         raise SourceError(f"{where}: vars must be a mapping")
     out = {}
     for key, item in value.items():
         try:
-            unwrapped = _unwrap(item, 1)
+            out[str(key)] = _unwrap(item, 1)
         except _Vaulted:
             _warn(warnings, f"{where}: dropped {key}, a vault-encrypted value")
-            continue
-        if problem := source_var_problem(str(key), unwrapped):
+    return out
+
+
+def _filter_vars(value: dict, where: str, warnings: list[str], quiet: bool = False) -> dict:
+    """Without the Ansible settings sources may not set. `quiet`: a static host's echo of its
+    own vars (they win in merge anyway), so dropping its connection settings is no news."""
+    out = {}
+    for key, item in value.items():
+        if problem := source_var_problem(key, item):
             if not quiet:
-                _warn(warnings, f"{where}: dropped {str(key)[:100]}: it {problem}")
+                _warn(warnings, f"{where}: dropped {key[:100]}: it {problem}")
             continue
-        out[str(key)] = unwrapped
+        out[key] = item
     return out
 
 
@@ -324,10 +353,10 @@ def _warn(warnings: list[str], message: str) -> None:
         warnings.append("… more warnings not shown")
 
 
-def normalise(raw: bytes, static_hosts: list[str]) -> tuple[dict, list[str]]:
-    """ansible-inventory --list --export output as a snapshot ({"vars", "hosts", "groups",
-    "static_hosts"}) plus warnings, or SourceError. Names ansible would read differently are
-    skipped with a warning; anything over the limits fails the refresh."""
+def parse_output(raw: bytes) -> tuple[dict, list[str]]:
+    """ansible-inventory --list --export output as {"vars", "hosts", "groups"} plus warnings, or
+    SourceError. Names ansible would read differently are skipped with a warning; vault values
+    are dropped; anything over the limits fails. Ansible settings in vars are kept."""
     settings = get_settings()
     if len(raw) > settings.inventory_max_output_mb * 1024 * 1024:
         raise SourceError(f"the output is larger than {settings.inventory_max_output_mb} MiB")
@@ -350,7 +379,6 @@ def normalise(raw: bytes, static_hosts: list[str]) -> tuple[dict, list[str]]:
 
     hosts: dict[str, dict] = {}
     skipped: set[str] = set()
-    static = set(static_hosts)
 
     def add_host(name: Any) -> bool:
         if name in hosts:
@@ -368,7 +396,7 @@ def normalise(raw: bytes, static_hosts: list[str]) -> tuple[dict, list[str]]:
 
     for name, host_vars in hostvars.items():
         if add_host(name):
-            hosts[name] = _vars(host_vars, f"host {name}", warnings, quiet=name in static)
+            hosts[name] = _parse_vars(host_vars, f"host {name}", warnings)
 
     all_vars: dict = {}
     raw_groups: dict[str, dict] = {}
@@ -376,7 +404,7 @@ def normalise(raw: bytes, static_hosts: list[str]) -> tuple[dict, list[str]]:
         if not isinstance(group, dict):
             raise SourceError("unexpected output from ansible-inventory")
         if name == "all":
-            all_vars = _vars(group.get("vars") or {}, "group all", warnings)
+            all_vars = _parse_vars(group.get("vars") or {}, "group all", warnings)
             continue
         if name == "ungrouped":
             for host in _names(group.get("hosts")):
@@ -400,15 +428,39 @@ def normalise(raw: bytes, static_hosts: list[str]) -> tuple[dict, list[str]]:
         groups[name] = {
             "hosts": list(dict.fromkeys(members)),
             "children": list(dict.fromkeys(children)),
-            "vars": _vars(group.get("vars") or {}, f"group {name}", warnings),
+            "vars": _parse_vars(group.get("vars") or {}, f"group {name}", warnings),
         }
     _refuse_cycles(groups)
+    return {"vars": all_vars, "hosts": hosts, "groups": groups}, warnings
+
+
+def filter_graph(graph: dict, static_hosts: list[str], warnings: list[str]) -> dict:
+    """The snapshot: the graph without the Ansible settings sources may not set, and the
+    inventory's own hosts it was made with."""
+    static = set(static_hosts)
     return {
-        "vars": all_vars,
-        "hosts": hosts,
-        "groups": groups,
+        "vars": _filter_vars(graph["vars"], "group all", warnings),
+        "hosts": {
+            name: _filter_vars(host_vars, f"host {name}", warnings, quiet=name in static)
+            for name, host_vars in graph["hosts"].items()
+        },
+        "groups": {
+            name: {
+                "hosts": group["hosts"],
+                "children": group["children"],
+                "vars": _filter_vars(group["vars"], f"group {name}", warnings),
+            }
+            for name, group in graph["groups"].items()
+        },
         "static_hosts": list(static_hosts),
-    }, warnings
+    }
+
+
+def normalise(raw: bytes, static_hosts: list[str]) -> tuple[dict, list[str]]:
+    """ansible-inventory output as a snapshot ({"vars", "hosts", "groups", "static_hosts"})
+    plus warnings, or SourceError (parse_output, then filter_graph)."""
+    graph, warnings = parse_output(raw)
+    return filter_graph(graph, static_hosts, warnings), warnings
 
 
 def _names(value: Any) -> list[str]:
@@ -438,6 +490,257 @@ def _refuse_cycles(groups: dict[str, dict]) -> None:
             elif child not in state:
                 state[child] = 1
                 stack.append((child, iter(groups[child]["children"])))
+
+
+# --- per-source outputs and the combine ------------------------------------------------------
+#
+# Each source's output is kept on its own (parsed, Ansible settings still in), so a refresh
+# can combine what every source found last with the inventory's own hosts: the sources that
+# didn't run or failed keep contributing their last good output. Without constructed sources
+# the API layers them itself, as ansible-inventory does when it loads several inventories in
+# order (later wins per variable, group members and children are unions in first-seen order);
+# with them, a worker runs ansible-inventory once more over the outputs (every string
+# `!unsafe`: never a template), the inventory's own hosts and the constructed configs.
+
+
+def store_source_output(
+    db: Session, refresh: InventoryRefresh, row: InventoryRefreshSource, raw: bytes
+) -> None:
+    """A source's output from this refresh becomes its last good output, unless it can't be
+    used (the source failed) or the source changed since the job was built (stale). The caller
+    holds the refresh's lock and commits."""
+    try:
+        graph, warnings = parse_output(raw)
+    except SourceError as exc:
+        record_source_failure(db, row, str(exc))
+        return
+    source = db.get(InventorySource, row.source_id) if row.source_id is not None else None
+    if source is None or input_sha256(source) != row.input_sha256:
+        row.status = "stale"  # deleted or edited meanwhile: the next refresh runs it again
+        return
+    previous = db.get(InventorySourceOutput, source.id)
+    if (
+        previous is not None
+        and previous.host_count
+        and len(graph["hosts"]) < previous.host_count / 2
+    ):
+        _warn(
+            warnings,
+            f"{len(graph['hosts'])} hosts, down from {previous.host_count} last time: "
+            "check its filters and credential",
+        )
+    values = {
+        "inventory_id": source.inventory_id,
+        "refresh_id": refresh.id,
+        "data": graph,
+        "sha256": hashlib.sha256(json.dumps(graph, sort_keys=True).encode()).hexdigest(),
+        "host_count": len(graph["hosts"]),
+        "group_count": len(graph["groups"]),
+        "output_bytes": len(raw),
+        "warnings": warnings,
+        "input_sha256": row.input_sha256,
+        "refreshed_at": func.now(),
+    }
+    if previous is None:
+        db.add(InventorySourceOutput(source_id=source.id, **values))
+    else:
+        for key, value in values.items():
+            setattr(previous, key, value)
+    row.status, row.error, row.host_count = "success", None, len(graph["hosts"])
+    source.last_error, source.last_finished_at = None, func.now()
+
+
+def record_source_failure(db: Session, row: InventoryRefreshSource, error: str) -> None:
+    """The source keeps its last good output; its error shows until it works again."""
+    row.status, row.error = "failed", error[:1000]
+    source = db.get(InventorySource, row.source_id) if row.source_id is not None else None
+    if source is not None and input_sha256(source) == row.input_sha256:
+        source.last_error, source.last_finished_at = row.error, func.now()
+
+
+def refresh_rows(db: Session, refresh: InventoryRefresh) -> list[InventoryRefreshSource]:
+    return list(
+        db.scalars(
+            select(InventoryRefreshSource)
+            .where(InventoryRefreshSource.refresh_id == refresh.id)
+            .order_by(InventoryRefreshSource.id)
+        )
+    )
+
+
+def _contributing(
+    db: Session, inventory: Inventory
+) -> list[tuple[InventorySource, InventorySourceOutput]]:
+    """The enabled sources' last good outputs, in the order ansible-inventory reads them."""
+    plain = [s for s in ordered_sources(inventory) if not is_constructed(s)]
+    outputs = {
+        output.source_id: output
+        for output in db.scalars(
+            select(InventorySourceOutput).where(
+                InventorySourceOutput.source_id.in_([s.id for s in plain])
+            )
+        )
+    }
+    return [(source, outputs[source.id]) for source in plain if source.id in outputs]
+
+
+def _source_warnings(pairs: list[tuple[InventorySource, InventorySourceOutput]]) -> list[str]:
+    warnings: list[str] = []
+    for source, output in pairs:
+        for warning in output.warnings or []:
+            _warn(warnings, f"source '{source.name}': {warning}")
+    return warnings
+
+
+def _layer(graphs: list[dict]) -> dict:
+    """Graphs loaded in order, as ansible-inventory combines inventories."""
+    all_vars: dict = {}
+    hosts: dict[str, dict] = {}
+    groups: dict[str, dict] = {}
+    for graph in graphs:
+        all_vars.update(graph.get("vars") or {})
+        for name, host_vars in graph["hosts"].items():
+            hosts.setdefault(name, {}).update(host_vars or {})
+        for name, group in graph["groups"].items():
+            into = groups.setdefault(name, {"hosts": {}, "children": {}, "vars": {}})
+            into["hosts"].update(dict.fromkeys(group["hosts"]))
+            into["children"].update(dict.fromkeys(group["children"]))
+            into["vars"].update(group.get("vars") or {})
+    return {
+        "vars": all_vars,
+        "hosts": hosts,
+        "groups": {
+            name: {"hosts": list(g["hosts"]), "children": list(g["children"]), "vars": g["vars"]}
+            for name, g in groups.items()
+        },
+    }
+
+
+def _legacy_json(graph: dict) -> bytes:
+    """A graph as ansible-inventory --list --export writes it: names sorted (it sorts keys),
+    hosts without vars only in their groups (or "ungrouped": those in no group, in the order
+    they were added). parse_output then reads the hosts in ansible's order too."""
+    grouped = {host for group in graph["groups"].values() for host in group["hosts"]}
+    out: dict = {
+        "_meta": {
+            "profile": "inventory_legacy",
+            "hostvars": {
+                name: graph["hosts"][name]
+                for name in sorted(graph["hosts"])
+                if graph["hosts"][name]
+            },
+        },
+        "all": {"vars": graph["vars"]} if graph["vars"] else {},
+        "ungrouped": {"hosts": [name for name in graph["hosts"] if name not in grouped]},
+    }
+    for name in sorted(graph["groups"]):
+        group = graph["groups"][name]
+        out[name] = {key: group[key] for key in ("hosts", "children", "vars") if group[key]}
+    return json.dumps(out).encode()
+
+
+def needs_combine_job(inventory: Inventory) -> bool:
+    """Whether the combine runs in a worker (constructed sources are Jinja over the data)."""
+    return any(is_constructed(s) for s in ordered_sources(inventory))
+
+
+def combine_here(
+    db: Session, refresh: InventoryRefresh, inventory: Inventory
+) -> tuple[dict, list[str]]:
+    """The snapshot of an inventory without constructed sources: its sources' last good
+    outputs and its own hosts, layered here (SourceError when over the limits)."""
+    static = static_data(inventory)
+    pairs = _contributing(db, inventory)
+    warnings = _source_warnings(pairs)
+    graph = _layer([output.data for _, output in pairs] + [merge(static)])
+    snapshot, more = normalise(_legacy_json(graph), list(static["hosts"]))
+    refresh.sources = {**(refresh.sources or {}), "static_hosts": list(static["hosts"])}
+    return snapshot, warnings + more
+
+
+def build_combine_job(db: Session, refresh: InventoryRefresh, inventory: Inventory) -> dict:
+    """Stage two, for an inventory with constructed sources: the sources' last good outputs
+    (strings `!unsafe`), the inventory's own hosts (likewise: operators write them, but the
+    refresh holds the constructed sources' credentials), then the constructed configs."""
+    static = static_data(inventory)
+    files = []
+    for order, (source, output) in enumerate(_contributing(db, inventory), start=100):
+        data = output.data
+        graph = {
+            "vars": mark_unsafe(data["vars"]),
+            "hosts": {name: mark_unsafe(host_vars) for name, host_vars in data["hosts"].items()},
+            "groups": {
+                name: {**group, "vars": mark_unsafe(group["vars"])}
+                for name, group in data["groups"].items()
+            },
+        }
+        files.append({"name": f"{order:03d}-src{source.id}.out.yml", "text": render(graph)})
+    graph = merge(static)
+    graph["hosts"] = {name: mark_unsafe(host_vars) for name, host_vars in graph["hosts"].items()}
+    files.append({"name": "500-static.yml", "text": render(graph)})
+    deadline = new_deadline()
+    env: dict[str, str] = {}
+    secrets: set[str] = set()
+    constructed = [s for s in ordered_sources(inventory) if is_constructed(s)]
+    for order, source in enumerate(constructed, start=600):
+        values = _source_env(db, inventory, source, deadline)
+        for name, value in values.items():
+            if env.get(name, value) != value:
+                raise SourceError(f"two credentials set {name} to different values")
+        env.update(values)
+        secrets.update(values.values())
+        files.append({"name": config_file_name(source, order), "text": source.config})
+    refresh.stage = "combine"
+    refresh.sources = {**(refresh.sources or {}), "static_hosts": list(static["hosts"])}
+    return {
+        "calls": [{"key": "combined", "kind": "combine", "files": files, "env": env}],
+        "secrets": sorted(secrets),
+        "max_output_bytes": get_settings().inventory_max_output_mb * 1024 * 1024,
+    }
+
+
+def combine_warnings(db: Session, inventory: Inventory) -> list[str]:
+    """The sources' own warnings, for a snapshot made by a combine job."""
+    return _source_warnings(_contributing(db, inventory))
+
+
+def sources_outcome(rows: list[InventoryRefreshSource]) -> tuple[str, str | None]:
+    """The refresh's status from what its sources did: failed if any of them failed."""
+    errors = [f"source '{r.name}': {r.error or 'failed'}" for r in rows if r.status == "failed"]
+    if errors:
+        return RunStatus.FAILED.value, "\n".join(errors)[:1000]
+    return RunStatus.SUCCESS.value, None
+
+
+def keep_current_snapshot(
+    db: Session, inventory: Inventory, rows: list[InventoryRefreshSource]
+) -> bool:
+    """Whether to keep the inventory's current snapshot rather than store a combined one: when
+    no source worked this time (nothing new), or when a failed source has no output of its own
+    yet but contributed to the current snapshot (one from before sources ran on their own),
+    whose hosts the combination would lose."""
+    ran = [r for r in rows if r.ran]
+    if ran and not any(r.status in ("success", "stale") for r in ran):
+        return True
+    current = (
+        db.get(InventorySnapshot, inventory.current_snapshot_id)
+        if inventory.current_snapshot_id
+        else None
+    )
+    if current is None:
+        return False
+    in_current = {entry.get("id") for entry in current.sources or []}
+    with_output = set(
+        db.scalars(
+            select(InventorySourceOutput.source_id).where(
+                InventorySourceOutput.inventory_id == inventory.id
+            )
+        )
+    )
+    return any(
+        r.status == "failed" and r.source_id in in_current and r.source_id not in with_output
+        for r in rows
+    )
 
 
 def store_snapshot(
@@ -582,7 +885,9 @@ def end_refresh(
     try:
         with db.begin_nested():  # a notification must never fail the refresh's own commit
             if status == RunStatus.SUCCESS.value:
-                inventory_refresh_ok(db, inventory)
+                # Not while another source is still failing: its last refresh raised it.
+                if not any(source.enabled and source.last_error for source in inventory.sources):
+                    inventory_refresh_ok(db, inventory)
             elif inventory_refresh_failed(db, inventory, error or status):
                 return {
                     "action": "inventory.refresh",

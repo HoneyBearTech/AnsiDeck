@@ -15,13 +15,20 @@ from app import audit
 from app.db import get_db
 from app.hardening import client_ip
 from app.inventory_render import merge, static_data, target_hosts
-from app.inventory_sources import SourceError, check_config, enqueue_refresh, has_sources
+from app.inventory_sources import (
+    SourceError,
+    check_config,
+    enqueue_refresh,
+    has_sources,
+    refresh_rows,
+)
 from app.models import (
     Credential,
     Inventory,
     InventoryRefresh,
     InventorySnapshot,
     InventorySource,
+    InventorySourceOutput,
     RunStatus,
     User,
 )
@@ -35,6 +42,7 @@ from app.schemas.inventory_sources import (
     MergedHosts,
     RefreshOut,
     RefreshSettings,
+    RefreshSourceOut,
     SnapshotGroup,
     SnapshotOut,
     SourceCreate,
@@ -71,10 +79,23 @@ def _source(db: Session, inventory: Inventory, source_id: int) -> InventorySourc
 
 def _out(db: Session, source: InventorySource) -> dict:
     credential = db.get(Credential, source.credential_id) if source.credential_id else None
+    output = db.get(InventorySourceOutput, source.id)
     return {
         **SourceOut.model_validate(source).model_dump(),
         "credential_name": credential.name if credential else None,
+        "output_refreshed_at": output.refreshed_at if output else None,
+        "output_host_count": output.host_count if output else None,
+        "output_group_count": output.group_count if output else None,
+        "output_warnings": (output.warnings or []) if output else [],
     }
+
+
+def _refresh_out(db: Session, refresh: InventoryRefresh | None) -> RefreshOut | None:
+    if refresh is None:
+        return None
+    out = RefreshOut.model_validate(refresh)
+    out.source_results = [RefreshSourceOut.model_validate(row) for row in refresh_rows(db, refresh)]
+    return out
 
 
 def _check_credential(db: Session, inventory: Inventory, credential_id: int | None) -> None:
@@ -250,7 +271,7 @@ def request_refresh(
     request: Request,
     user: User = Depends(_refresh),
     db: Session = Depends(get_db),
-) -> InventoryRefresh | None:
+) -> RefreshOut | None:
     """Queues a refresh now (merged with one already queued)."""
     inventory = _inventory(db, user, request, inventory_id, Permission.CONTENT_WRITE)
     if not has_sources(db, inventory.id):
@@ -259,7 +280,7 @@ def request_refresh(
     db.commit()
     notifier.notify(QUEUE_TOPIC)
     _audit(db, "inventory.refresh_requested", user, request, inventory)
-    return db.scalars(
+    queued = db.scalars(
         select(InventoryRefresh)
         .where(
             InventoryRefresh.inventory_id == inventory.id,
@@ -267,6 +288,7 @@ def request_refresh(
         )
         .limit(1)
     ).first()
+    return _refresh_out(db, queued)
 
 
 @router.get("/refreshes", response_model=list[RefreshOut])
@@ -276,16 +298,15 @@ def list_refreshes(
     limit: int = Query(20, ge=1, le=100),
     user: User = Depends(_manage),
     db: Session = Depends(get_db),
-) -> list[InventoryRefresh]:
+) -> list[RefreshOut]:
     inventory = _inventory(db, user, request, inventory_id, Permission.CONTENT_READ)
-    return list(
-        db.scalars(
-            select(InventoryRefresh)
-            .where(InventoryRefresh.inventory_id == inventory.id)
-            .order_by(InventoryRefresh.id.desc())
-            .limit(limit)
-        )
+    refreshes = db.scalars(
+        select(InventoryRefresh)
+        .where(InventoryRefresh.inventory_id == inventory.id)
+        .order_by(InventoryRefresh.id.desc())
+        .limit(limit)
     )
+    return [_refresh_out(db, refresh) for refresh in refreshes]
 
 
 def _current(db: Session, inventory: Inventory) -> InventorySnapshot | None:
@@ -416,7 +437,7 @@ def _targets(db: Session, inventory: Inventory) -> Targets:
         ],
         snapshot_id=current.id if current else None,
         snapshot_at=current.created_at if current else None,
-        last_refresh=RefreshOut.model_validate(last) if last else None,
+        last_refresh=_refresh_out(db, last),
         refresh_interval_seconds=inventory.refresh_interval_seconds,
         refresh_before_run=inventory.refresh_before_run,
     )

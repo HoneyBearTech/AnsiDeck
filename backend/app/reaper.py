@@ -45,7 +45,7 @@ from app.notifications.ops import check_queue, check_workers
 from app.notify import notifier, run_topic
 from app.queue import QUEUE_TOPIC, fail_run
 from app.run_executor import format_duration
-from app.storage import inventory_refresh_output_path, run_artifacts_path
+from app.storage import remove_inventory_refresh_outputs, run_artifacts_path
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ def reap_refreshes(db: Session) -> list[dict]:
         )
         if audit_event := end_refresh(db, refresh, RunStatus.FAILED.value, why):
             pending.append(audit_event)
-        inventory_refresh_output_path(refresh.id).unlink(missing_ok=True)
+        remove_inventory_refresh_outputs(refresh.id)
     db.commit()
     began = func.coalesce(InventoryRefresh.started_at, InventoryRefresh.claimed_at)
     limit = func.make_interval(
@@ -107,7 +107,7 @@ def reap_refreshes(db: Session) -> list[dict]:
         why = f"timed out after {took} (its worker did not stop it)"
         if audit_event := end_refresh(db, refresh, RunStatus.TIMED_OUT.value, why):
             pending.append(audit_event)
-        inventory_refresh_output_path(refresh.id).unlink(missing_ok=True)
+        remove_inventory_refresh_outputs(refresh.id)
     db.commit()
 
     queued = False

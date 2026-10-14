@@ -1,6 +1,7 @@
 """Inventory refreshes over the internal API (Phase 4G-2), with the test playing the worker:
-claims by kind, the one-time job, chunked output, the API's checks of untrusted output, the
-reaper, the schedule and the galaxy gate."""
+claims by kind, the one-time job (one call per source), chunked outputs per part, the sources'
+report and the combine job, the API's checks of untrusted output, the reaper, the schedule and
+the galaxy gate."""
 
 import hashlib
 import json
@@ -60,12 +61,23 @@ def _setup(client: TestClient, *, env: dict | None = None) -> int:
     return inventory_id
 
 
+CLAIM = {"worker_id": "w", "wait_seconds": 0, "kinds": ["refresh"], "partial_refreshes": True}
+
+
+def _result(source_id: int, data: bytes) -> dict:
+    return {
+        "source_id": source_id,
+        "status": "success",
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+
+
 class ClaimedRefresh:
     def __init__(self) -> None:
         self.http = internal_client()
-        claim = self.http.post(
-            "/internal/claim", json={"worker_id": "w", "wait_seconds": 0, "kinds": ["refresh"]}
-        )
+        self.calls: list[dict] = []
+        claim = self.http.post("/internal/claim", json=CLAIM)
         assert claim.status_code == 200, claim.text
         body = claim.json()
         assert body["kind"] == "refresh"
@@ -83,17 +95,38 @@ class ClaimedRefresh:
         )
 
     def job(self):
-        return self.post("job", {"job_token": self.job_token})
+        response = self.post("job", {"job_token": self.job_token})
+        if response.status_code == 200:
+            self.calls = response.json()["calls"]
+        return response
 
-    def upload(self, data: bytes, offset: int = 0):
+    @property
+    def source_id(self) -> int:
+        """The (one) source this job runs."""
+        return int(self.calls[0]["key"][1:])
+
+    def upload(self, data: bytes, offset: int = 0, part: str | None = None):
         return self.http.post(
             f"/internal/refreshes/{self.id}/output",
             content=data,
-            headers={"X-Claim-Token": self.claim_token, "X-Offset": str(offset)},
+            headers={
+                "X-Claim-Token": self.claim_token,
+                "X-Offset": str(offset),
+                "X-Part": part or f"s{self.source_id}",
+            },
         )
 
-    def finish(self, data: bytes):
+    def report(self, data: bytes):
+        """Uploads the source's output and reports it; the API's answer."""
         assert self.upload(data).status_code == 200
+        return self.post("sources", {"results": [_result(self.source_id, data)]})
+
+    def finish(self, data: bytes):
+        """The source found `data`, and the combine (the constructed source) gives the same."""
+        answer = self.report(data)
+        assert answer.status_code == 200, answer.text
+        assert "combine" in answer.json()
+        assert self.upload(data, part="combined").status_code == 200
         return self.post(
             "complete",
             {"status": "success", "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()},
@@ -112,6 +145,8 @@ def test_only_workers_that_ask_for_refreshes_get_them(client: TestClient) -> Non
     http = internal_client()
     old = http.post("/internal/claim", json={"worker_id": "old", "wait_seconds": 0})
     assert old.status_code == 204  # a worker from before 4G never gets a refresh
+    whole = http.post("/internal/claim", json={**CLAIM, "partial_refreshes": False})
+    assert whole.status_code == 204  # nor one that runs every source in one call
     claimed = ClaimedRefresh()
     assert claimed.row().status == "running"
 
@@ -126,15 +161,29 @@ def test_the_refresh_job_is_handed_out_once_in_order_with_its_variables(
     job = claimed.job()
     assert job.status_code == 200, job.text
     body = job.json()
-    names = [f["name"] for f in body["files"]]
-    assert names[0].endswith(".generator.yml") and names[1] == "50-static.yml"
-    assert names[2].endswith(".constructed.yml")  # constructed last, whatever its position
-    assert "static1" in body["files"][1]["text"]
-    assert body["env"] == {"NB_TOKEN": "nb-job-sentinel"}
+    # Stage one: the generator alone (the constructed source waits for the combine).
+    assert [call["kind"] for call in body["calls"]] == ["plugin"]
+    (call,) = body["calls"]
+    assert [f["name"] for f in call["files"]] == [f"10-src{claimed.source_id}.generator.yml"]
+    assert call["env"] == {"NB_TOKEN": "nb-job-sentinel"}
     assert body["secrets"] == ["nb-job-sentinel"]
     assert body["timeout_seconds"] == 300
-    assert claimed.row().started_at is not None
+    assert claimed.row().started_at is not None and claimed.row().stage == "sources"
     assert claimed.job().status_code == 410  # single use
+
+    answer = claimed.report(_output({"gen": {"role": "db"}}))
+    combine = answer.json()["combine"]
+    (call,) = combine["calls"]
+    names = [f["name"] for f in call["files"]]
+    assert names[0] == f"100-src{claimed.source_id}.out.yml" and names[1] == "500-static.yml"
+    assert names[2].endswith(".constructed.yml")  # constructed last, whatever its position
+    assert "!unsafe 'db'" in call["files"][0]["text"] or "!unsafe db" in call["files"][0]["text"]
+    assert "static1" in call["files"][1]["text"]
+    assert call["kind"] == "combine" and call["env"] == {"NB_TOKEN": "nb-job-sentinel"}
+    assert combine["secrets"] == ["nb-job-sentinel"]
+    assert claimed.row().stage == "combine"
+    again = claimed.post("sources", {"results": []})  # asked again: the same job
+    assert again.json()["combine"]["calls"][0]["files"] == call["files"]
 
 
 def test_output_is_appended_by_offset_and_checked_before_it_counts(client: TestClient) -> None:
@@ -147,6 +196,20 @@ def test_output_is_appended_by_offset_and_checked_before_it_counts(client: TestC
     assert gap.status_code == 409 and gap.json() == {"expected_offset": 10}
     assert claimed.upload(data[:10]).json() == {"offset": 10}  # a resent chunk is fine
     assert claimed.upload(data[10:], offset=10).status_code == 200
+    assert claimed.upload(b"{}", part="s999999").status_code == 409  # not a source it ran
+    assert claimed.upload(b"{}", part="combined").status_code == 409  # not yet
+    early = claimed.post("complete", {"status": "success", "bytes": 2, "sha256": "0" * 64})
+    assert early.status_code == 409  # the sources first
+    wrong = claimed.post(
+        "sources", {"results": [{**_result(claimed.source_id, data), "sha256": "0" * 64}]}
+    )
+    assert wrong.status_code == 409
+    other = claimed.post("sources", {"results": [_result(999999, data)]})
+    assert other.status_code == 409
+    assert (
+        claimed.post("sources", {"results": [_result(claimed.source_id, data)]}).status_code == 200
+    )
+    assert claimed.upload(data, part="combined").status_code == 200
     wrong = claimed.post("complete", {"status": "success", "bytes": len(data), "sha256": "0" * 64})
     assert wrong.status_code == 409
     done = claimed.post(
@@ -184,7 +247,10 @@ def test_hostile_output_is_normalised_or_refused(client: TestClient) -> None:
     assert snapshot.data["hosts"]["ok1"]["note"] == "{{ lookup('pipe', 'id') }}"
     assert snapshot.data["hosts"]["v1"] == {}
     assert snapshot.data["groups"] == {"all_in": {"hosts": ["ok1"], "children": [], "vars": {}}}
-    assert len(snapshot.warnings) == 3  # the port, the vault value, the group name
+    # The port, the vault value, the group name: found when the source's output was stored (the
+    # combine here repeats the same raw output, so it finds them again).
+    from_source = [w for w in snapshot.warnings if w.startswith("source 'gen': ")]
+    assert len(from_source) == 3
 
     cyclic = _output({}, {"a": {"children": ["b"]}, "b": {"children": ["a"]}})
     client.post(f"/api/inventories/{claimed.row().inventory_id}/refresh")
@@ -307,9 +373,7 @@ def test_galaxy_installs_and_refreshes_wait_for_each_other(client: TestClient, m
     assert try_start_install() == install.id
     db.close()
     client.post(f"/api/inventories/{claimed.row().inventory_id}/refresh")
-    blocked = internal_client().post(
-        "/internal/claim", json={"worker_id": "w", "wait_seconds": 0, "kinds": ["refresh"]}
-    )
+    blocked = internal_client().post("/internal/claim", json=CLAIM)
     assert blocked.status_code == 204  # nothing is claimed while an install runs
 
 

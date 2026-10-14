@@ -537,6 +537,9 @@ class InventorySource(Base):
     )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Why it failed the last time it ran (None: it worked), and when that was.
+    last_error: Mapped[str | None] = mapped_column(String(1000), default=None)
+    last_finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_by: Mapped[str] = mapped_column(String(150))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -544,6 +547,58 @@ class InventorySource(Base):
     )
 
     inventory: Mapped["Inventory"] = relationship(back_populates="sources")
+
+
+class InventorySourceOutput(Base):
+    """A source's last good output (app.inventory_sources.parse_output: names and limits
+    checked, vault values dropped, Ansible settings still in): a refresh combines these with the
+    inventory's own hosts and its constructed sources into the snapshot, so a source that
+    didn't run (or failed) keeps contributing what it found last."""
+
+    __tablename__ = "inventory_source_outputs"
+
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey("inventory_sources.id", ondelete="CASCADE"), primary_key=True
+    )
+    inventory_id: Mapped[int] = mapped_column(
+        ForeignKey("inventories.id", ondelete="CASCADE"), index=True
+    )
+    refresh_id: Mapped[int | None] = mapped_column(Integer, default=None)
+    data: Mapped[dict] = mapped_column(JSON)
+    sha256: Mapped[str] = mapped_column(String(64))
+    host_count: Mapped[int] = mapped_column(Integer)
+    group_count: Mapped[int] = mapped_column(Integer)
+    output_bytes: Mapped[int] = mapped_column(Integer)
+    warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # The source's config (and credential) it came from: app.inventory_sources.input_sha256.
+    input_sha256: Mapped[str] = mapped_column(String(64))
+    refreshed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class InventoryRefreshSource(Base):
+    """What one source did in one refresh (the refresh's history keeps it after the source
+    is deleted)."""
+
+    __tablename__ = "inventory_refresh_sources"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    refresh_id: Mapped[int] = mapped_column(
+        ForeignKey("inventory_refreshes.id", ondelete="CASCADE"), index=True
+    )
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("inventory_sources.id", ondelete="SET NULL"), default=None
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    plugin: Mapped[str] = mapped_column(String(200))
+    # False: it didn't run this time (constructed sources, which are re-applied in the combine).
+    ran: Mapped[bool] = mapped_column(Boolean, default=True)
+    # None while it runs; success | failed | stale (its config changed meanwhile: discarded).
+    status: Mapped[str | None] = mapped_column(String(20), default=None)
+    error: Mapped[str | None] = mapped_column(String(1000), default=None)
+    input_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
+    host_count: Mapped[int | None] = mapped_column(Integer, default=None)
 
 
 class InventoryRefresh(Base):
@@ -608,6 +663,9 @@ class InventoryRefresh(Base):
     snapshot_id: Mapped[int | None] = mapped_column(
         ForeignKey("inventory_snapshots.id", ondelete="SET NULL"), default=None
     )
+    # Where a running refresh is (app.inventory_sources): "sources" (each source runs on its
+    # own), then "combine" (constructed sources over the combination) when there are any.
+    stage: Mapped[str | None] = mapped_column(String(10), default=None)
 
 
 class InventorySnapshot(Base):
