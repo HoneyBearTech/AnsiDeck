@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.db import get_db
 from app.hardening import client_ip
+from app.inventory_files import InventoryFileError, read_inventory_files
 from app.inventory_render import merge, static_data, target_hosts
 from app.inventory_sources import (
     SourceError,
@@ -28,6 +29,8 @@ from app.inventory_sources import (
 )
 from app.models import (
     Credential,
+    GitSnapshot,
+    GitSource,
     Inventory,
     InventoryRefresh,
     InventorySnapshot,
@@ -84,6 +87,7 @@ def _source(db: Session, inventory: Inventory, source_id: int) -> InventorySourc
 def _out(db: Session, source: InventorySource) -> dict:
     credential = db.get(Credential, source.credential_id) if source.credential_id else None
     output = db.get(InventorySourceOutput, source.id)
+    git_source = db.get(GitSource, source.git_source_id) if source.git_source_id else None
     interval = effective_interval(source, source.inventory)
     next_at = None
     if interval and source.enabled and source.last_queued_at is not None:
@@ -97,6 +101,8 @@ def _out(db: Session, source: InventorySource) -> dict:
         "output_host_count": output.host_count if output else None,
         "output_group_count": output.group_count if output else None,
         "output_warnings": (output.warnings or []) if output else [],
+        "output_git_commit": output.git_commit if output else None,
+        "git_source_name": git_source.name if git_source else None,
     }
 
 
@@ -125,6 +131,25 @@ def _plugin(config: str) -> str:
         return check_config(config)
     except SourceError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Config: {exc}") from None
+
+
+def _check_git_file(db: Session, inventory: Inventory, git_source_id: int, path: str) -> str:
+    """The path, once its git source (of the inventory's project) has it in its current
+    commit; 400 otherwise."""
+    git_source = db.get(GitSource, git_source_id)
+    if git_source is None or git_source.project_id != inventory.project_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Pick a git source of this project")
+    snapshot = (
+        db.get(GitSnapshot, git_source.current_snapshot_id)
+        if git_source.current_snapshot_id
+        else None
+    )
+    if snapshot is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sync the git source first")
+    try:
+        return read_inventory_files(snapshot, path).target
+    except InventoryFileError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
 
 
 def _audit(db, action: str, user: User, request: Request, inventory: Inventory, **detail):
@@ -179,13 +204,19 @@ def create_source(
     inventory = _inventory(db, user, request, inventory_id, Permission.SOURCES_MANAGE)
     if len(inventory.sources) >= MAX_SOURCES:
         raise HTTPException(status.HTTP_409_CONFLICT, "This inventory has too many sources")
-    plugin = _plugin(payload.config)
+    if payload.kind == "git_file":
+        plugin, path = "file", _check_git_file(db, inventory, payload.git_source_id, payload.path)
+    else:
+        plugin, path = _plugin(payload.config), None
     _check_credential(db, inventory, payload.credential_id)
     source = InventorySource(
         inventory_id=inventory.id,
         name=payload.name.strip(),
+        kind=payload.kind,
         plugin=plugin,
         config=payload.config,
+        git_source_id=payload.git_source_id,
+        path=path,
         credential_id=payload.credential_id,
         enabled=payload.enabled,
         position=payload.position,
@@ -220,12 +251,28 @@ def update_source(
     inventory = _inventory(db, user, request, inventory_id, Permission.SOURCES_MANAGE)
     source = _source(db, inventory, source_id)
     values = payload.model_dump(exclude_unset=True)
+    git = source.kind == "git_file"
+    if git and ({"config", "credential_id"} & set(values)):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A git file source has no config")
+    if not git and ({"git_source_id", "path"} & set(values)):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A plugin source has no git source")
     # What it finds can change: it runs (again) in the next refresh.
     rerun = (
         values.get("config", source.config) != source.config
         or values.get("credential_id", source.credential_id) != source.credential_id
+        or values.get("git_source_id", source.git_source_id) != source.git_source_id
+        or values.get("path", source.path) != source.path
         or (values.get("enabled") is True and not source.enabled)
     )
+    if git and ("git_source_id" in values or "path" in values):
+        source.path = _check_git_file(
+            db,
+            inventory,
+            values.get("git_source_id") or source.git_source_id,
+            values.get("path") or source.path,
+        )
+        source.git_source_id = values.get("git_source_id") or source.git_source_id
+        source.missing_at = None
     if "config" in values:
         source.plugin = _plugin(values["config"])
         source.config = values["config"]

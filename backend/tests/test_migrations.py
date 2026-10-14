@@ -696,3 +696,69 @@ def test_0030_leaves_every_source_due_for_its_first_refresh_and_downgrades() -> 
         with admin.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
         admin.dispose()
+
+
+def test_0031_adds_git_file_sources_and_refuses_to_drop_them() -> None:
+    url = make_url(TEST_DATABASE_URL)
+    scratch = url.database.removesuffix("_test") + "_migration_test"
+    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{scratch}"'))
+    engine = create_engine(url.set(database=scratch))
+    config = alembic_config()
+
+    def migrate(step, revision: str) -> None:
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            step(config, revision)
+
+    def source(conn, columns: str, values: str) -> None:
+        conn.execute(
+            text(
+                f"INSERT INTO inventory_sources (inventory_id, created_by, {columns}) "
+                f"VALUES (1, 'admin', {values})"
+            )
+        )
+
+    try:
+        migrate(command.upgrade, "0030")
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO projects (name, description) VALUES ('P', '')"))
+            conn.execute(text("INSERT INTO inventories (project_id, name) VALUES (1, 'dyn')"))
+            conn.execute(
+                text(
+                    "INSERT INTO git_sources (project_id, name, url, branch, playbook_globs, "
+                    "auth_kind, auto_sync_seconds, enabled, created_by) VALUES "
+                    "(1, 'repo', 'https://example.com/r.git', 'main', '[]', 'none', 300, true, 'a')"
+                )
+            )
+            source(conn, "name, plugin, config", "'gen', 'ansible.builtin.generator', 'x'")
+        migrate(command.upgrade, "0031")
+        with engine.begin() as conn:
+            assert conn.execute(text("SELECT kind FROM inventory_sources")).scalar() == "plugin"
+            source(
+                conn, "name, kind, plugin, git_source_id, path", "'f', 'git_file', 'file', 1, 'h'"
+            )
+        for columns, values in [
+            ("name, kind, plugin, git_source_id", "'b1', 'git_file', 'file', 1"),  # no path
+            (
+                "name, kind, plugin, config, git_source_id, path",
+                "'b2', 'git_file', 'f', 'x', 1, 'h'",
+            ),
+            ("name, plugin", "'b3', 'x'"),  # a plugin source without its config
+            ("name, kind, plugin, config", "'b4', 'script', 'x', 'y'"),
+        ]:
+            with engine.begin() as conn, pytest.raises(IntegrityError):
+                source(conn, columns, values)
+        with pytest.raises(RuntimeError, match="Inventory sources from git exist"):
+            migrate(command.downgrade, "0030")
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM inventory_sources WHERE kind = 'git_file'"))
+        migrate(command.downgrade, "0030")
+        migrate(command.upgrade, "0031")
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        admin.dispose()

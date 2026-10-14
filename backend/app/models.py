@@ -522,15 +522,32 @@ class InventorySource(Base):
     run by ansible-inventory in an isolated worker when the inventory is refreshed."""
 
     __tablename__ = "inventory_sources"
-    __table_args__ = (UniqueConstraint("inventory_id", "name", name="uq_inventory_source_name"),)
+    __table_args__ = (
+        UniqueConstraint("inventory_id", "name", name="uq_inventory_source_name"),
+        CheckConstraint(
+            "(kind = 'plugin' AND config IS NOT NULL AND git_source_id IS NULL AND path IS NULL)"
+            " OR (kind = 'git_file' AND config IS NULL AND git_source_id IS NOT NULL"
+            " AND path IS NOT NULL)",
+            name="kind_fields",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     inventory_id: Mapped[int] = mapped_column(
         ForeignKey("inventories.id", ondelete="CASCADE"), index=True
     )
     name: Mapped[str] = mapped_column(String(100))
-    plugin: Mapped[str] = mapped_column(String(200))  # from the config, for display
-    config: Mapped[str] = mapped_column(Text)
+    # "plugin": an inventory plugin's config; "git_file": an inventory file (or directory) in a
+    # synced git source (app.inventory_files), read from its current commit at each refresh.
+    kind: Mapped[str] = mapped_column(String(20), default="plugin", server_default="plugin")
+    plugin: Mapped[str] = mapped_column(String(200))  # from the config ("file"), for display
+    config: Mapped[str | None] = mapped_column(Text, default=None)
+    git_source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("git_sources.id", ondelete="RESTRICT"), index=True, default=None
+    )
+    path: Mapped[str | None] = mapped_column(String(1024), default=None)
+    # When the git source's commit stopped having the path (None: it has it).
+    missing_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     # An env credential (app.env_credentials) the plugin reads its API token from.
     credential_id: Mapped[int | None] = mapped_column(
         ForeignKey("credentials.id", ondelete="RESTRICT"), index=True, default=None
@@ -577,6 +594,8 @@ class InventorySourceOutput(Base):
     warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
     # The source's config (and credential) it came from: app.inventory_sources.input_sha256.
     input_sha256: Mapped[str] = mapped_column(String(64))
+    # A git file source: the commit it was read from.
+    git_commit: Mapped[str | None] = mapped_column(String(64), default=None)
     refreshed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -604,6 +623,11 @@ class InventoryRefreshSource(Base):
     error: Mapped[str | None] = mapped_column(String(1000), default=None)
     input_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
     host_count: Mapped[int | None] = mapped_column(Integer, default=None)
+    # A git file source: the commit it read.
+    git_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("git_snapshots.id", ondelete="SET NULL"), default=None
+    )
+    git_commit: Mapped[str | None] = mapped_column(String(64), default=None)
 
 
 class InventoryRefresh(Base):

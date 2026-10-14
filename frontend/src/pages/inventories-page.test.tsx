@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { reply } from "@/test/fake-api";
 import {
+  gitSource,
   credential,
   egressSettings,
   hostKeys,
@@ -387,6 +388,50 @@ describe("dynamic inventory sources", () => {
     dialog = within(await screen.findByRole("dialog"));
     expect(dialog.queryByRole("combobox", { name: "Source refresh" })).not.toBeInTheDocument();
     expect(dialog.getByText(/applied again in every refresh/)).toBeInTheDocument();
+  });
+
+  it("adds an inventory file from a git source, and shows where it comes from", async () => {
+    const { api, user, screen } = renderApp("/inventories/1", {
+      routes: detail({
+        "GET /projects/:id/git-sources": [gitSource({ id: 4, name: "infra" })],
+        "POST /inventories/:id/sources": inventorySource({ kind: "git_file" }),
+      }),
+    });
+    await user.click(await screen.findByRole("button", { name: "Add source" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.type(dialog.getByLabelText("Name"), "hosts");
+    await user.click(dialog.getByRole("button", { name: "Inventory file from git" }));
+    expect(dialog.queryByLabelText("Plugin config (YAML)")).not.toBeInTheDocument();
+    expect(dialog.queryByRole("combobox", { name: "Credential" })).not.toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Save" })).toBeDisabled();
+    await choose(user, dialog.getByRole("combobox", { name: "Git source" }), "infra");
+    await user.type(dialog.getByLabelText("Path in the repository"), "inventory/hosts.ini");
+    api.set({
+      "GET /inventories/:id/sources": [
+        inventorySource({
+          name: "hosts",
+          kind: "git_file",
+          plugin: "file",
+          config: null,
+          git_source_id: 4,
+          git_source_name: "infra",
+          path: "inventory/hosts.ini",
+          output_git_commit: "0123456789abcdef0123456789abcdef01234567",
+          missing_at: "2026-10-05T12:00:00Z",
+        }),
+      ],
+    });
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("inventory/hosts.ini · git: infra @ 01234567")).toBeInTheDocument();
+    expect(screen.getByText("missing upstream")).toBeInTheDocument();
+    expect(api.requests("POST /inventories/1/sources")[0]?.body).toEqual({
+      name: "hosts",
+      kind: "git_file",
+      git_source_id: 4,
+      path: "inventory/hosts.ini",
+      enabled: true,
+      refresh_interval_seconds: null,
+    });
   });
 
   it("reports a refresh the API refuses", async () => {

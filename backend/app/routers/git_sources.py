@@ -13,7 +13,16 @@ from app import audit, git_sync
 from app.crypto import encrypt_secret
 from app.db import get_db
 from app.hardening import client_ip
-from app.models import Credential, GitSnapshot, GitSource, Playbook, Run, RunStatus, User
+from app.models import (
+    Credential,
+    GitSnapshot,
+    GitSource,
+    InventorySource,
+    Playbook,
+    Run,
+    RunStatus,
+    User,
+)
 from app.notify import notifier
 from app.permissions import Permission, Scope, guard
 from app.schemas.git_sources import (
@@ -290,6 +299,15 @@ def delete_source(
     if active:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Runs from this source are queued or running; wait for them"
+        )
+    reader = db.scalars(
+        select(InventorySource).where(InventorySource.git_source_id == source.id).limit(1)
+    ).first()
+    if reader is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"The inventory source {reader.name!r} reads a file from this git source: "
+            "remove it first",
         )
     playbook_ids = list(db.scalars(select(Playbook.id).where(Playbook.source_id == source.id)))
     name, deleted_id = source.name, source.id  # paths come from the row, not the request

@@ -1131,6 +1131,8 @@ def _store_results(db: Session, refresh: InventoryRefresh, body: RefreshSourcesI
         return JSONResponse({"detail": "Results for sources this refresh didn't run"}, 409)
     for source_id, row in rows.items():
         result = reported.get(source_id)
+        if row.status is not None:
+            continue  # already settled when the job was built (e.g. its file is gone)
         if result is None:
             record_source_failure(db, row, "the worker reported no result")
         elif result.status != RunStatus.SUCCESS.value:

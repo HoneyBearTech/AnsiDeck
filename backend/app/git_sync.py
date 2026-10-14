@@ -957,6 +957,10 @@ def _sync_locked(source_id: int) -> str:
         source.last_sync_error = None
         source.last_sync_finished_at = func.now()
         db.commit()
+        if changed:
+            from app.inventory_sources import git_source_synced  # imports this module
+
+            git_source_synced(db, source_id, before, snapshot)
         if changed or any(changes.values()):
             audit.record(
                 db,
