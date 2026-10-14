@@ -289,10 +289,14 @@ class Worker:
     # ------------------------------------------------------------------ lifecycle
 
     def start(self) -> None:
+        """Sweeps each slot once (whatever an earlier worker left behind) before its thread
+        starts claiming, so once this returns, nothing of a slot's user survives that the
+        worker didn't start itself. A slot still dirty keeps sweeping in its thread."""
         for n in range(self.slots):
             identity = identity_for_slot(n) if self.isolated else None
+            clean = identity is None or sweep(identity)
             thread = threading.Thread(
-                target=self._slot, args=(identity,), name=f"slot-{n}", daemon=True
+                target=self._slot, args=(identity, clean), name=f"slot-{n}", daemon=True
             )
             thread.start()
             self._slot_threads.append(thread)
@@ -341,9 +345,9 @@ class Worker:
                 return False
         return True
 
-    def _slot(self, identity: RunIdentity | None = None) -> None:
+    def _slot(self, identity: RunIdentity | None = None, clean: bool = False) -> None:
         delay = 1.0
-        dirty = identity is not None  # whatever an earlier worker left behind
+        dirty = identity is not None and not clean  # whatever an earlier worker left behind
         while not self._stopping.is_set():
             if dirty:
                 if identity is not None and not self._sweep_until_clean(identity):

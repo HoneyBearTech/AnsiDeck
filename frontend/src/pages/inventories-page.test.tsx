@@ -323,7 +323,8 @@ describe("SSH host keys", () => {
       }),
     });
     expect(await screen.findByText("host keys not checked")).toBeInTheDocument();
-    expect(screen.getByText("Host keys aren't checked")).toBeInTheDocument();
+    // The panel loads on its own.
+    expect(await screen.findByText("Host keys aren't checked")).toBeInTheDocument();
     expect(screen.getByText(/Learn new hosts is a safe start/)).toBeInTheDocument();
   });
 
