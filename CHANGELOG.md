@@ -9,7 +9,15 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Upgrading
 
-- The API applies database migrations 0017, 0018, 0019 and 0020 when it starts.
+- The API applies database migrations 0017 to 0026 when it starts.
+- **Passkeys need `PUBLIC_URL`** set to the address people open AnsiDeck at (`https://`, or `http://localhost`
+  to try it out). The production `compose.yaml` now passes `PUBLIC_URL` and `REQUIRE_ADMIN_2FA` on from
+  `.env`: replace it with this release's.
+- `POST /api/auth/totp/recovery-codes` is now `POST /api/auth/recovery-codes`, `DELETE
+  /api/users/{id}/totp` is `DELETE /api/users/{id}/two-factor` (it removes passkeys too), and the server
+  command `reset-totp` is `reset-2fa`. The old names still work and are deprecated.
+- The sign-in response for an account with two-factor login lists the `methods` it can finish with.
+  `POST /api/auth/totp/enable` returns `recovery_codes: null` when you already had codes (from a passkey).
 - **Upgrade the workers with the API.** Runs on inventories that check SSH host keys (every new
   inventory) wait for a worker of this release ("Waiting for a worker that checks SSH host keys").
 - **Inventories you already have keep running without host key checking**, as before. Turn it on per
@@ -31,6 +39,11 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- **Passkeys** as a second factor beside authenticator apps: add up to ten under **Account** (password,
+  then the browser's prompt), rename and remove them, and sign in with **Use a passkey**. Recovery codes
+  now stand in for any second factor. Removing a second factor needs the password and a current one.
+- **`REQUIRE_ADMIN_2FA`**: global and project admins without a second factor must set one up at their next
+  password sign-in before they can do anything else (single sign-on and API keys are exempt).
 - **Run artifacts**: files a playbook leaves in `$ARTIFACTS_DIR` (or `ansideck_artifacts_dir`) are kept with
   the run, listed on its page and downloadable (one file or a `.tar.gz`) by people who can start runs and
   trigger API keys; they aren't scrubbed of secrets. Limits and retention: `RUN_ARTIFACT_MAX_MB` (100),

@@ -85,10 +85,10 @@ def test_recovery_codes_are_distinct_formatted_and_single_use() -> None:
     assert len(set(codes)) == len(set(hashes)) == totp.RECOVERY_CODE_COUNT
     assert all(re.fullmatch(r"[a-z2-9]{5}-[a-z2-9]{5}", c) for c in codes)
 
-    user = User(totp_secret=b"x", totp_recovery_hashes=hashes)
+    user = User(totp_secret=b"x", recovery_code_hashes=hashes)
     typed = codes[3].upper().replace("-", " ")
     assert totp.use_second_factor(user, code=None, recovery_code=typed) == "recovery_code"
-    assert len(user.totp_recovery_hashes) == totp.RECOVERY_CODE_COUNT - 1
+    assert len(user.recovery_code_hashes) == totp.RECOVERY_CODE_COUNT - 1
     assert totp.use_second_factor(user, code=None, recovery_code=codes[3]) is None
     assert totp.use_second_factor(user, code=None, recovery_code="\ud800" * 10) is None
 
@@ -148,7 +148,8 @@ def test_password_alone_no_longer_signs_in(client: TestClient, clock) -> None:
     browser = TestClient(app)
 
     response = _login(browser)
-    assert response.status_code == 200 and response.json() == {"mfa_required": True}
+    assert response.status_code == 200
+    assert response.json() == {"mfa_required": True, "methods": ["totp", "recovery_code"]}
     assert "ansideck_session" not in response.headers.get("set-cookie", "")
     assert browser.get("/api/auth/me").status_code == 401
     assert _login(browser, password="wrong").status_code == 401  # unchanged for a bad password
@@ -230,7 +231,7 @@ def test_wrong_codes_are_throttled_per_ip_and_per_user(client: TestClient, clock
     assert [_mfa(browser, code="000000").status_code for _ in range(5)] == [401] * 5
     user_login_throttle.clear()  # and again: the per-user limit still holds
     blocked = _mfa(browser, code=_code(secret, clock))
-    assert blocked.status_code == 429 and "wrong codes" in blocked.json()["detail"]
+    assert blocked.status_code == 429 and "failed attempts" in blocked.json()["detail"]
     assert blocked.headers["Retry-After"] == "900"
 
     failures = [
@@ -300,29 +301,34 @@ def test_an_admin_can_reset_someone_elses_two_factor_login(client: TestClient, c
     listed = {u["username"]: u for u in client.get("/api/users").json()}
     assert listed["totp-user"]["totp_enabled"] is True
 
-    reset = client.delete(f"/api/users/{listed['totp-user']['id']}/totp")
+    assert listed["totp-user"]["two_factor_enabled"] is True
+    assert listed["totp-user"]["passkey_count"] == 0
+
+    reset = client.delete(f"/api/users/{listed['totp-user']['id']}/two-factor")
     assert reset.status_code == 204
     assert user.get("/api/auth/me").status_code == 401  # signed out
     assert _login(TestClient(app), "totp-user", TEST_PASSWORD).json()["username"] == "totp-user"
 
     admin_id = listed["admin"]["id"]
-    assert client.delete(f"/api/users/{admin_id}/totp").status_code == 400
-    assert user.delete(f"/api/users/{admin_id}/totp").status_code in (401, 403)
-    assert any(e["action"] == "user.totp_reset" for e in _audit_rows())
+    assert client.delete(f"/api/users/{admin_id}/two-factor").status_code == 400
+    assert client.delete(f"/api/users/{admin_id}/totp").status_code == 400  # the old path
+    assert user.delete(f"/api/users/{admin_id}/two-factor").status_code in (401, 403)
+    row = next(e for e in _audit_rows() if e["action"] == "user.two_factor_reset")
+    assert row["detail"] == str({"totp": True, "passkeys": 0})
 
 
 def test_the_server_cli_is_the_break_glass(client: TestClient, clock, capsys) -> None:
     _login(client)
     _enable(client, clock)
 
-    assert cli.main(["reset-totp", "admin"]) == 0
+    assert cli.main(["reset-2fa", "admin"]) == 0
     assert "turned off" in capsys.readouterr().out
     assert _login(TestClient(app)).json()["username"] == "admin"
     assert client.get("/api/auth/me").status_code == 401  # sessions signed out
-    assert cli.main(["reset-totp", "admin"]) == 0  # nothing left to do
-    assert cli.main(["reset-totp", "nobody"]) == 1
+    assert cli.main(["reset-totp", "admin"]) == 0  # the old name; nothing left to do
+    assert cli.main(["reset-2fa", "nobody"]) == 1
 
-    row = next(e for e in _audit_rows() if e["action"] == "user.totp_reset")
+    row = next(e for e in _audit_rows() if e["action"] == "user.two_factor_reset")
     assert row["actor_username"] == "(server cli)" and row["target_name"] == "admin"
 
 
@@ -353,7 +359,7 @@ def _race_second_factor(clock, *, recovery: bool) -> int:
     code = recovery_codes[0] if recovery else _code(secret, clock)
 
     second = TestClient(app)
-    assert _login(second).json() == {"mfa_required": True}  # password step, before the lock
+    assert _login(second).json()["mfa_required"] is True  # password step, before the lock
 
     db = get_sessionmaker()()
     try:

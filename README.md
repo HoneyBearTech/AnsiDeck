@@ -174,11 +174,12 @@ they are.
   it can claim runs and receive their secrets, so treat it like `CREDENTIAL_ENCRYPTION_KEY`.
 - Global admins cannot use single sign-on unless you set `SSO_ALLOW_ADMIN=true`, so password login stays your
   break-glass.
-- Turn on two-factor login under **Account** (authenticator-app codes for password sign-ins; SSO and GitHub
-  sign-ins rely on your provider's MFA). Keep the recovery codes it shows. An admin can reset someone else's
-  under **Users**; if no admin can sign in, reset it on the server with
-  `docker compose exec backend uv run python -m app.cli reset-totp <username>` (in the production image,
-  which has no `uv`: `python -m app.cli reset-totp <username>`).
+- Turn on two-factor login under **Account**: passkeys (they need `PUBLIC_URL` to be your `https://` address)
+  or an authenticator app, for password sign-ins; SSO and GitHub sign-ins rely on your provider's MFA. Keep
+  the recovery codes it shows. `REQUIRE_ADMIN_2FA=true` makes global and project admins set one up at their
+  next password sign-in. An admin can reset someone else's under **Users**; if no admin can sign in, reset it
+  on the server with `docker compose exec backend uv run python -m app.cli reset-2fa <username>` (in the
+  production image, which has no `uv`: `python -m app.cli reset-2fa <username>`).
 - The audit log records sign-ins, run activity and permission denials, and is kept for
   `AUDIT_RETENTION_DAYS` (365 by default).
 - With a secret store, give AnsiDeck a read-only policy on its prefix only, put its secret id or token in a file

@@ -1,5 +1,6 @@
 """Property-based tests (Hypothesis) for the code that handles untrusted text:
-the output scrubber, the vault helpers, the inventory renderer and the SSH host key parser.
+the output scrubber, the vault helpers, the inventory renderer, the SSH host key parser and
+passkey (WebAuthn) responses.
 
 Each property is a plain Hypothesis test so a coverage-guided fuzzer can
 reuse it later via `test_x.hypothesis.fuzz_one_input`.
@@ -7,9 +8,11 @@ reuse it later via `test_x.hypothesis.fuzz_one_input`.
 
 import base64
 import contextlib
+import functools
 import json
 import re
 import time
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -17,10 +20,13 @@ from ansible.parsing.yaml.loader import AnsibleLoader
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
+from app import passkeys
 from app.host_keys import KEY_TYPES, check_key, host_key_problem, normalise_name, parse_known_hosts
 from app.inventory_render import hostname_problem, merge, render, target_hosts
+from app.models import User, WebAuthnCredential
 from app.scrub import REDACTED, Scrubber, _PlaybookLoader, collect_secrets
 from app.vault import VaultError, decrypt_vault_text, encrypt_to_vault_envelope, to_yaml_block
+from tests.soft_authenticator import SoftAuthenticator, b64u
 
 # st.text() never yields lone surrogates; JSON parsed by the stdlib can.
 any_text = st.text(st.one_of(st.characters(), st.characters(categories=["Cs"])))
@@ -574,3 +580,70 @@ def test_refused_host_key_detection_never_raises_and_keeps_safe_text(data) -> No
         if problem is not None:
             for value in (problem["host"], problem["name"] or "", problem["key_type"] or ""):
                 assert re.fullmatch(r"[A-Za-z0-9_.:%\[\]@-]*", value)
+
+
+# ------------------------------------------------------------------ passkeys
+
+_PASSKEY_RP = ("localhost", "http://localhost")
+_CHALLENGE = b"c" * 32
+
+
+@functools.cache
+def _passkey_holder() -> tuple[SoftAuthenticator, User]:
+    auth = SoftAuthenticator()
+    user = User(username="u", password_hash="x", role="viewer")
+    user.passkeys.append(
+        WebAuthnCredential(
+            name="k", credential_id=b64u(auth.cred_id), public_key=b64u(auth._cose()), sign_count=0
+        )
+    )
+    return auth, user
+
+
+def _signed(credential: dict) -> tuple:
+    response = credential.get("response")
+    if not isinstance(response, dict):
+        return ()
+    return tuple(response.get(k) for k in ("clientDataJSON", "authenticatorData", "signature"))
+
+
+@st.composite
+def passkey_assertions(draw) -> tuple[dict, dict]:
+    """(a valid assertion for _CHALLENGE, it with one part replaced by anything)."""
+    auth, _ = _passkey_holder()
+    valid = auth.get({"challenge": b64u(_CHALLENGE), "rpId": "localhost"}, "http://localhost")
+    mutated = json.loads(json.dumps(valid))
+    junk = json_values(any_text) | st.binary(max_size=200).map(b64u)
+    if draw(st.booleans()):
+        mutated[draw(st.sampled_from([*valid, "extra"]))] = draw(junk)
+    else:
+        mutated["response"][draw(st.sampled_from([*valid["response"], "extra"]))] = draw(junk)
+    return valid, mutated
+
+
+@given(passkey_assertions())
+@settings(deadline=None)
+def test_a_passkey_response_is_accepted_only_with_its_signed_parts_intact(pair) -> None:
+    valid, mutated = pair
+    _, user = _passkey_holder()
+    with patch.object(passkeys, "relying_party", lambda: _PASSKEY_RP):
+        passkeys._store_challenge(user, _CHALLENGE, "login")
+        try:
+            passkeys.verify_assertion(user, mutated, "login")
+        except passkeys.PasskeyError:
+            return
+    assert _signed(mutated) == _signed(valid)
+    assert mutated.get("rawId") == valid["rawId"] or mutated.get("id") == valid["id"]
+
+
+@given(json_values(any_text))
+@settings(deadline=None)
+def test_a_passkey_registration_raises_only_passkey_error(data) -> None:
+    _, user = _passkey_holder()
+    with patch.object(passkeys, "relying_party", lambda: _PASSKEY_RP):
+        for credential in (data, {"id": "x", "rawId": "x", "type": "public-key", "response": data}):
+            if not isinstance(credential, dict):
+                continue
+            passkeys._store_challenge(user, _CHALLENGE, "register")
+            with pytest.raises(passkeys.PasskeyError):
+                passkeys.verify_registration(user, credential)

@@ -3300,8 +3300,21 @@
         "type": "object"
       },
       "MfaChallenge": {
-        "description": "The password was right; POST /auth/login/mfa with a code to finish signing in.",
+        "description": "The password was right; finish signing in with one of `methods`: POST /auth/login/mfa\n(a TOTP or recovery code) or the passkey ceremony (/auth/login/mfa/passkey).",
         "properties": {
+          "methods": {
+            "default": [],
+            "items": {
+              "enum": [
+                "totp",
+                "passkey",
+                "recovery_code"
+              ],
+              "type": "string"
+            },
+            "title": "Methods",
+            "type": "array"
+          },
           "mfa_required": {
             "const": true,
             "default": true,
@@ -3358,6 +3371,138 @@
           "mode"
         ],
         "title": "ModeIn",
+        "type": "object"
+      },
+      "PasskeyAddedOut": {
+        "properties": {
+          "passkey": {
+            "$ref": "#/components/schemas/PasskeyOut"
+          },
+          "recovery_codes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recovery Codes"
+          }
+        },
+        "required": [
+          "passkey"
+        ],
+        "title": "PasskeyAddedOut",
+        "type": "object"
+      },
+      "PasskeyCredentialIn": {
+        "properties": {
+          "credential": {
+            "additionalProperties": true,
+            "title": "Credential",
+            "type": "object"
+          }
+        },
+        "required": [
+          "credential"
+        ],
+        "title": "PasskeyCredentialIn",
+        "type": "object"
+      },
+      "PasskeyOptionsOut": {
+        "properties": {
+          "options": {
+            "additionalProperties": true,
+            "title": "Options",
+            "type": "object"
+          }
+        },
+        "required": [
+          "options"
+        ],
+        "title": "PasskeyOptionsOut",
+        "type": "object"
+      },
+      "PasskeyOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "synced": {
+            "title": "Synced",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "last_used_at",
+          "synced"
+        ],
+        "title": "PasskeyOut",
+        "type": "object"
+      },
+      "PasskeyRegisterRequest": {
+        "properties": {
+          "credential": {
+            "additionalProperties": true,
+            "title": "Credential",
+            "type": "object"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential",
+          "name"
+        ],
+        "title": "PasskeyRegisterRequest",
+        "type": "object"
+      },
+      "PasskeyRenameRequest": {
+        "properties": {
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "PasskeyRenameRequest",
         "type": "object"
       },
       "PasswordConfirmRequest": {
@@ -3890,11 +4035,18 @@
       "RecoveryCodesOut": {
         "properties": {
           "recovery_codes": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Recovery Codes",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recovery Codes"
           }
         },
         "required": [
@@ -4035,6 +4187,43 @@
           }
         },
         "title": "RefreshSettings",
+        "type": "object"
+      },
+      "RemovePasskeyRequest": {
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "current_password": {
+            "title": "Current Password",
+            "type": "string"
+          },
+          "passkey": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passkey"
+          }
+        },
+        "required": [
+          "current_password"
+        ],
+        "title": "RemovePasskeyRequest",
         "type": "object"
       },
       "RequirementsPayload": {
@@ -5812,18 +6001,36 @@
       "TotpDisableRequest": {
         "properties": {
           "code": {
-            "maxLength": 64,
-            "title": "Code",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
           },
           "current_password": {
             "title": "Current Password",
             "type": "string"
+          },
+          "passkey": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passkey"
           }
         },
         "required": [
-          "current_password",
-          "code"
+          "current_password"
         ],
         "title": "TotpDisableRequest",
         "type": "object"
@@ -5962,6 +6169,10 @@
             "title": "Is Active",
             "type": "boolean"
           },
+          "passkey_count": {
+            "title": "Passkey Count",
+            "type": "integer"
+          },
           "role": {
             "title": "Role",
             "type": "string"
@@ -5986,6 +6197,10 @@
             "title": "Totp Enabled",
             "type": "boolean"
           },
+          "two_factor_enabled": {
+            "title": "Two Factor Enabled",
+            "type": "boolean"
+          },
           "username": {
             "title": "Username",
             "type": "string"
@@ -6001,6 +6216,8 @@
           "email",
           "sso_linked",
           "totp_enabled",
+          "passkey_count",
+          "two_factor_enabled",
           "sso_provider"
         ],
         "title": "UserAdminOut",
@@ -6058,6 +6275,11 @@
       },
       "UserOut": {
         "properties": {
+          "passkey_count": {
+            "default": 0,
+            "title": "Passkey Count",
+            "type": "integer"
+          },
           "permissions": {
             "items": {
               "type": "string"
@@ -6087,6 +6309,16 @@
           },
           "totp_enabled": {
             "title": "Totp Enabled",
+            "type": "boolean"
+          },
+          "two_factor_enabled": {
+            "default": false,
+            "title": "Two Factor Enabled",
+            "type": "boolean"
+          },
+          "two_factor_setup_required": {
+            "default": false,
+            "title": "Two Factor Setup Required",
             "type": "boolean"
           },
           "username": {
@@ -7313,6 +7545,115 @@
         ]
       }
     },
+    "/api/auth/login/mfa/passkey": {
+      "post": {
+        "operationId": "login_passkey_api_auth_login_mfa_passkey_post",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "ansideck_mfa",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Mfa"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasskeyCredentialIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login Passkey",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/login/mfa/passkey/options": {
+      "post": {
+        "description": "Options for navigator.credentials.get() with the user's passkeys (the password was\nright: the MFA cookie).",
+        "operationId": "login_passkey_options_api_auth_login_mfa_passkey_options_post",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "ansideck_mfa",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Mfa"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyOptionsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login Passkey Options",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/auth/logout": {
       "post": {
         "operationId": "logout_api_auth_logout_post",
@@ -7545,6 +7886,464 @@
         ]
       }
     },
+    "/api/auth/passkeys": {
+      "get": {
+        "operationId": "list_passkeys_api_auth_passkeys_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PasskeyOut"
+                  },
+                  "title": "Response List Passkeys Api Auth Passkeys Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Passkeys",
+        "tags": [
+          "auth"
+        ]
+      },
+      "post": {
+        "description": "Stores the passkey navigator.credentials.create() made for the options above. The first\nsecond factor comes with recovery codes and signs out the other sessions.",
+        "operationId": "add_passkey_api_auth_passkeys_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasskeyRegisterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyAddedOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Passkey",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/passkeys/registration/options": {
+      "post": {
+        "description": "Options for navigator.credentials.create() (adding a passkey asks for the password).",
+        "operationId": "passkey_registration_options_api_auth_passkeys_registration_options_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyOptionsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Passkey Registration Options",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/passkeys/step-up-options": {
+      "post": {
+        "description": "Options to confirm a change (removing a second factor) with one of your passkeys.",
+        "operationId": "passkey_step_up_options_api_auth_passkeys_step_up_options_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyOptionsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Passkey Step Up Options",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/passkeys/{passkey_id}": {
+      "patch": {
+        "operationId": "rename_passkey_api_auth_passkeys__passkey_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "passkey_id",
+            "required": true,
+            "schema": {
+              "title": "Passkey Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasskeyRenameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename Passkey",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/passkeys/{passkey_id}/remove": {
+      "post": {
+        "description": "Removes a passkey: the password and a current second factor (a code, a recovery code\nor a passkey, maybe this one). The last second factor takes the recovery codes with it.",
+        "operationId": "remove_passkey_api_auth_passkeys__passkey_id__remove_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "passkey_id",
+            "required": true,
+            "schema": {
+              "title": "Passkey Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemovePasskeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Remove Passkey Api Auth Passkeys  Passkey Id  Remove Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Passkey",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/auth/providers": {
       "get": {
         "operationId": "providers_api_auth_providers_get",
@@ -7563,6 +8362,82 @@
           }
         },
         "summary": "Providers",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/recovery-codes": {
+      "post": {
+        "description": "New recovery codes (for TOTP and passkeys alike); the old ones stop working.",
+        "operationId": "regenerate_recovery_codes_api_auth_recovery_codes_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Regenerate Recovery Codes",
         "tags": [
           "auth"
         ]
@@ -7724,6 +8599,8 @@
     },
     "/api/auth/totp/recovery-codes": {
       "post": {
+        "deprecated": true,
+        "description": "Deprecated: POST /api/auth/recovery-codes.",
         "operationId": "totp_regenerate_recovery_codes_api_auth_totp_recovery_codes_post",
         "parameters": [
           {
@@ -16420,7 +17297,8 @@
     },
     "/api/users/{user_id}/totp": {
       "delete": {
-        "description": "Turn off someone's two-factor login (lost authenticator and recovery codes).\nTheir sessions end; they sign in with the password alone and can set it up again.",
+        "deprecated": true,
+        "description": "The old path of DELETE /api/users/{user_id}/two-factor (it now removes passkeys too).",
         "operationId": "reset_totp_api_users__user_id__totp_delete",
         "parameters": [
           {
@@ -16480,7 +17358,75 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Reset Totp",
+        "summary": "Reset Two Factor (old path)",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/two-factor": {
+      "delete": {
+        "description": "Turn off someone's two-factor login (lost authenticator, passkeys and recovery codes):\nTOTP, every passkey and the recovery codes go. Their sessions end; they sign in with the\npassword alone and can set it up again.",
+        "operationId": "reset_two_factor_api_users__user_id__two_factor_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reset Two Factor",
         "tags": [
           "users"
         ]

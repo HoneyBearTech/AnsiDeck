@@ -6,7 +6,15 @@ import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/context/auth-context";
-import { api, ApiError, GITHUB_LOGIN_URL, SSO_LOGIN_URL, type AuthProviders } from "@/lib/api";
+import {
+  api,
+  ApiError,
+  GITHUB_LOGIN_URL,
+  SSO_LOGIN_URL,
+  type AuthProviders,
+  type MfaMethod,
+} from "@/lib/api";
+import { getPasskey, passkeyProblem, passkeysSupported } from "@/lib/webauthn";
 
 // The server only ever sends a generic code; the real reason is in the audit log.
 const SSO_MESSAGES: Record<string, string> & { failed: string } = {
@@ -14,67 +22,110 @@ const SSO_MESSAGES: Record<string, string> & { failed: string } = {
   failed: "SSO sign-in failed. Try again, or sign in with your password.",
 };
 
-function SecondFactorForm({ onStartOver }: { onStartOver: () => void }) {
+type Mode = "passkey" | "totp" | "recovery_code";
+
+function SecondFactorForm({ methods, onStartOver }: { methods: MfaMethod[]; onStartOver: () => void }) {
   const { completeMfa } = useAuth();
   const navigate = useNavigate();
-  const [useRecovery, setUseRecovery] = React.useState(false);
+  const canUsePasskey = methods.includes("passkey") && passkeysSupported();
+  const [mode, setMode] = React.useState<Mode>(
+    canUsePasskey ? "passkey" : methods.includes("totp") ? "totp" : "recovery_code",
+  );
   const [value, setValue] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
 
-  async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
+  async function finish(second: () => Promise<Parameters<typeof completeMfa>[0]>) {
     setError(null);
     setSubmitting(true);
     try {
-      await completeMfa(useRecovery ? { recovery_code: value } : { code: value });
+      await completeMfa(await second());
       navigate("/");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong");
+      setError(err instanceof ApiError ? err.message : (passkeyProblem(err) ?? "Something went wrong"));
       setValue("");
     } finally {
       setSubmitting(false);
     }
   }
 
+  function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (mode === "passkey") {
+      void finish(async () => ({ passkey: await getPasskey((await api.loginPasskeyOptions()).options) }));
+    } else {
+      void finish(async () => (mode === "recovery_code" ? { recovery_code: value } : { code: value }));
+    }
+  }
+
+  function switchTo(next: Mode) {
+    setMode(next);
+    setValue("");
+    setError(null);
+  }
+
+  const others = (
+    [
+      ["passkey", "Use a passkey", canUsePasskey],
+      ["totp", "Use an authenticator code", methods.includes("totp")],
+      ["recovery_code", "Use a recovery code instead", true],
+    ] as const
+  ).filter(([key, , offered]) => offered && key !== mode);
+
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="second-factor">{useRecovery ? "Recovery code" : "Authentication code"}</Label>
-        <Input
-          id="second-factor"
-          key={useRecovery ? "recovery" : "code"}
-          // oxlint-disable-next-line jsx-a11y/no-autofocus -- second sign-in step; focus follows the user's own submit
-          autoFocus
-          autoComplete={useRecovery ? "off" : "one-time-code"}
-          inputMode={useRecovery ? "text" : "numeric"}
-          placeholder={useRecovery ? "xxxxx-xxxxx" : "123456"}
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          required
-        />
-        <p className="text-xs text-muted-foreground">
-          {useRecovery
-            ? "Each recovery code works once."
-            : "Enter the 6-digit code from your authenticator app."}
+      {mode === "passkey" ? (
+        <p className="text-sm">
+          Confirm it's you with your passkey: your fingerprint, face, screen lock or security key.
         </p>
-      </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="second-factor">
+            {mode === "recovery_code" ? "Recovery code" : "Authentication code"}
+          </Label>
+          <Input
+            id="second-factor"
+            key={mode}
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- second sign-in step; focus follows the user's own submit
+            autoFocus
+            autoComplete={mode === "recovery_code" ? "off" : "one-time-code"}
+            inputMode={mode === "recovery_code" ? "text" : "numeric"}
+            placeholder={mode === "recovery_code" ? "xxxxx-xxxxx" : "123456"}
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            required
+          />
+          <p className="text-xs text-muted-foreground">
+            {mode === "recovery_code"
+              ? "Each recovery code works once."
+              : "Enter the 6-digit code from your authenticator app."}
+          </p>
+        </div>
+      )}
       {error && <p className="text-sm text-destructive">{error}</p>}
-      <Button type="submit" disabled={submitting || !value.trim()} className="mt-2">
-        {submitting ? "Checking…" : "Verify"}
-      </Button>
-      <div className="flex justify-between text-sm">
-        <button
-          type="button"
-          className="text-muted-foreground hover:text-foreground"
-          onClick={() => {
-            setUseRecovery(!useRecovery);
-            setValue("");
-            setError(null);
-          }}
-        >
-          {useRecovery ? "Use an authenticator code" : "Use a recovery code instead"}
-        </button>
+      {mode === "passkey" ? (
+        // oxlint-disable-next-line jsx-a11y/no-autofocus -- second sign-in step; focus follows the user's own submit
+        <Button type="submit" disabled={submitting} className="mt-2" autoFocus>
+          {submitting ? "Waiting for your passkey…" : "Use a passkey"}
+        </Button>
+      ) : (
+        <Button type="submit" disabled={submitting || !value.trim()} className="mt-2">
+          {submitting ? "Checking…" : "Verify"}
+        </Button>
+      )}
+      <div className="flex flex-wrap justify-between gap-x-4 gap-y-2 text-sm">
+        <div className="flex flex-col items-start gap-2">
+          {others.map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              className="text-muted-foreground hover:text-foreground"
+              onClick={() => switchTo(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <button type="button" className="text-muted-foreground hover:text-foreground" onClick={onStartOver}>
           Start over
         </button>
@@ -90,7 +141,9 @@ export function LoginPage() {
   const [password, setPassword] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
-  const [needsSecondFactor, setNeedsSecondFactor] = React.useState(false);
+  // The second factors to finish with, once the password was right.
+  const [secondFactor, setSecondFactor] = React.useState<MfaMethod[] | null>(null);
+  const needsSecondFactor = secondFactor !== null;
   const [providers, setProviders] = React.useState<AuthProviders | null>(null);
   const [searchParams] = useSearchParams();
   const ssoError = searchParams.get("sso_error");
@@ -111,9 +164,10 @@ export function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
-      if ((await login(username, password)) === "mfa") {
+      const methods = await login(username, password);
+      if (methods) {
         setPassword("");
-        setNeedsSecondFactor(true);
+        setSecondFactor(methods);
       } else {
         navigate("/");
       }
@@ -137,7 +191,7 @@ export function LoginPage() {
         </CardHeader>
         <CardContent>
           {needsSecondFactor ? (
-            <SecondFactorForm onStartOver={() => setNeedsSecondFactor(false)} />
+            <SecondFactorForm methods={secondFactor} onStartOver={() => setSecondFactor(null)} />
           ) : (
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
               <div className="flex flex-col gap-2">

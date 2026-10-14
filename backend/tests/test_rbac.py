@@ -119,6 +119,8 @@ PUBLIC = {
     ("/api/health", "GET"),
     ("/api/auth/login", "POST"),
     ("/api/auth/login/mfa", "POST"),  # authorised by the signed password-step cookie
+    ("/api/auth/login/mfa/passkey/options", "POST"),  # (the same cookie)
+    ("/api/auth/login/mfa/passkey", "POST"),
     ("/api/auth/logout", "POST"),
     # SSO runs before there is a session; each provider's routes 404 unless it is configured.
     ("/api/auth/providers", "GET"),
@@ -142,6 +144,23 @@ def test_every_route_carries_a_permission_guard_or_is_explicitly_public() -> Non
             if not guarded and (route.path, method) not in PUBLIC
         )
     assert unguarded == []
+
+
+def test_only_the_two_factor_setup_routes_are_open_while_it_is_required() -> None:
+    """REQUIRE_ADMIN_2FA: a session that still has to set up a second factor reaches these and
+    nothing else (logout and the login steps are public)."""
+    opened = set()
+    for route in iter_api_routes(app):
+        if any(getattr(d.call, "_allows_2fa_setup", False) for d in _walk(route.dependant)):
+            opened |= {(method, route.path) for method in route.methods}
+    assert opened == {
+        ("GET", "/api/auth/me"),
+        ("POST", "/api/auth/totp/setup"),
+        ("POST", "/api/auth/totp/enable"),
+        ("GET", "/api/auth/passkeys"),
+        ("POST", "/api/auth/passkeys/registration/options"),
+        ("POST", "/api/auth/passkeys"),
+    }
 
 
 def test_role_permission_map_is_monotonic() -> None:

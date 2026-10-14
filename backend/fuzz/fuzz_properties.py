@@ -36,6 +36,8 @@ TARGETS = {
     "vault_encrypt": "test_encrypt_raises_only_vault_error",
     "inventory_render": "test_rendered_inventory_parses_back_to_exactly_the_merged_inventory",
     "known_hosts": "test_known_hosts_parsing_keeps_only_plain_names_with_checked_keys",
+    "passkey_assertion": "test_a_passkey_response_is_accepted_only_with_its_signed_parts_intact",
+    "passkey_registration": "test_a_passkey_registration_raises_only_passkey_error",
 }
 
 
@@ -45,8 +47,9 @@ def main() -> None:
     target = sys.argv.pop(1)
 
     # The parsers the properties feed are guidance too: with only `app`
-    # instrumented, the fuzzer can't tell one YAML document from another.
-    with atheris.instrument_imports(include=["app", "yaml", "ansible.parsing"]):
+    # instrumented, the fuzzer can't tell one YAML document (or WebAuthn response) from another.
+    parsers = ["yaml", "ansible.parsing", "webauthn", "cbor2"]
+    with atheris.instrument_imports(include=["app", *parsers]):
         from tests import test_properties
 
     prop = getattr(test_properties, TARGETS[target])

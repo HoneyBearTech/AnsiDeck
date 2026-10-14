@@ -39,6 +39,8 @@ jobs:
           - vault_encrypt
           - inventory_render
           - known_hosts
+          - passkey_assertion
+          - passkey_registration
     defaults:
       run:
         working-directory: backend

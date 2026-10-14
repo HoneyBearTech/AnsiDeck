@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.api_keys import KEY_ROLE_PREFIX
 from app.db import get_db
-from app.dependencies import get_current_user
+from app.dependencies import SESSION_COOKIE_NAME, get_current_user
 from app.hardening import client_ip
 from app.models import ProjectMember, User
 
@@ -148,14 +148,42 @@ def effective_permissions(db: Session, user: User) -> set[Permission]:
     return union
 
 
+def admin_2fa_required(db: Session, user: User) -> bool:
+    """REQUIRE_ADMIN_2FA applies to this user: a global admin, or an admin of some project."""
+    from app.config import get_settings
+
+    return get_settings().require_admin_2fa and (
+        is_global_admin(user) or "admin" in user_project_roles(db, user).values()
+    )
+
+
+def two_factor_setup_required(db: Session, user: User, cookie: str | None) -> bool:
+    """A password session of an admin who must set up a second factor first (REQUIRE_ADMIN_2FA):
+    it may only do that (or sign out). SSO sessions rely on the provider's own MFA, and API keys
+    have no session."""
+    from app.security import session_info
+
+    if getattr(user, "_api_key_id", None) is not None or user.two_factor_enabled:
+        return False
+    info = session_info(cookie or "")
+    return (info is None or info.method != "sso") and admin_2fa_required(db, user)
+
+
 def guard(
-    read: Permission | None, write: Permission | None, *, scope: Scope, api_key: bool = False
+    read: Permission | None,
+    write: Permission | None,
+    *,
+    scope: Scope,
+    api_key: bool = False,
+    during_2fa_setup: bool = False,
 ) -> Callable[..., User]:
     """Route dependency: authenticates, then requires `read` for safe methods and
     `write` otherwise (None = any authenticated user) *in at least one project*.
     Handlers of Scope.PROJECT routes must then resolve the concrete project via
     app.scoping. Denials are audited. API keys are refused unless the route opts in
-    with api_key=True (deny by default; a test pins the opted-in set)."""
+    with api_key=True (deny by default; a test pins the opted-in set). An admin who must set
+    up a second factor first is refused everything but the routes that opt in with
+    during_2fa_setup=True (also pinned by a test)."""
 
     def dependency(
         request: Request,
@@ -174,6 +202,20 @@ def guard(
                 detail={"reason": "api keys cannot use this endpoint"},
             )
             raise HTTPException(status.HTTP_403_FORBIDDEN, "API keys cannot use this endpoint")
+        if not during_2fa_setup and two_factor_setup_required(
+            db, user, request.cookies.get(SESSION_COOKIE_NAME)
+        ):
+            audit.record(
+                db,
+                "permission.denied",
+                outcome="denied",
+                actor=user,
+                target_type="endpoint",
+                target_name=f"{request.method} {request.url.path}",
+                ip=client_ip(request),
+                detail={"reason": "two-factor setup required"},
+            )
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Set up two-factor login first")
         required = read if request.method in SAFE_METHODS else write
         if required is not None and not holds_somewhere(db, user, required):
             audit.record(
@@ -192,6 +234,7 @@ def guard(
     dependency._is_permission_guard = True  # type: ignore[attr-defined]
     dependency._scope = scope  # type: ignore[attr-defined]
     dependency._allows_api_key = api_key  # type: ignore[attr-defined]
+    dependency._allows_2fa_setup = during_2fa_setup  # type: ignore[attr-defined]
     return dependency
 
 
@@ -199,5 +242,5 @@ def require_permission(permission: Permission, *, scope: Scope) -> Callable[...,
     return guard(permission, permission, scope=scope)
 
 
-def require_authenticated() -> Callable[..., User]:
-    return guard(None, None, scope=Scope.GLOBAL)
+def require_authenticated(*, during_2fa_setup: bool = False) -> Callable[..., User]:
+    return guard(None, None, scope=Scope.GLOBAL, during_2fa_setup=during_2fa_setup)

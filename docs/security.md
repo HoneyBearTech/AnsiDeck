@@ -21,8 +21,10 @@ exposed directly to the public internet. The rest of this page assumes that depl
 - Passwords are stored as Argon2id hashes. Sign-in failures are throttled per user and per client address,
   and repeated failures are audited and can raise an alert. The address comes from proxy headers only when
   a trusted proxy sent them (`TRUSTED_PROXIES` on the frontend, `TRUSTED_PROXY_HOSTS` on the API).
-- Optional two-factor sign-in (TOTP authenticator codes plus single-use recovery codes) for password
-  logins. Single sign-on (OpenID Connect, GitHub) relies on the provider's MFA, and never signs in a global
+- Optional two-factor sign-in for password logins: passkeys (WebAuthn, bound to `PUBLIC_URL`'s host, with
+  the authenticator's signature counter checked so a cloned authenticator is refused) or TOTP authenticator
+  codes, plus single-use recovery codes. Turning a second factor off takes the password and a current
+  second factor. `REQUIRE_ADMIN_2FA=true` holds admins without one on a setup page (enforced by the API). Single sign-on (OpenID Connect, GitHub) relies on the provider's MFA, and never signs in a global
   admin unless `SSO_ALLOW_ADMIN=true`.
 - Session cookies are signed (HMAC-SHA-256), `HttpOnly`, `SameSite=Lax` and `Secure` when
   `COOKIE_SECURE=true`. Changing your password or turning on two-factor sign-in ends your other sessions, an

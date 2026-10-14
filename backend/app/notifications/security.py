@@ -67,9 +67,9 @@ def from_audit(
         and detail.get("role") == ADMIN
     ):
         _admin_change(db, "made a global admin", who, target_name, ip)
-    elif action == "user.totp_reset":
+    elif action in ("user.two_factor_reset", "user.totp_reset"):
         _admin_change(db, "had two-factor login reset", who, target_name, ip)
-    elif action == "auth.totp_disable":
+    elif action in ("auth.totp_disable", "auth.passkey_remove") and detail.get("two_factor_off"):
         _admin_change(db, "turned off two-factor login", who, who, ip)
     elif (
         action == "auth.login"

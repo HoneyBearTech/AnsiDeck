@@ -2,7 +2,7 @@ import { waitFor } from "@testing-library/react";
 import axe from "axe-core";
 import { describe, expect, it } from "vitest";
 
-import { FQCN_FINDING, lintJob } from "./fixtures";
+import { adminUser, FQCN_FINDING, lintJob } from "./fixtures";
 import { PAGE_ROUTES as ROUTES, PAGES } from "./pages";
 import { renderApp } from "./render";
 
@@ -40,6 +40,25 @@ describe("accessibility (axe)", () => {
   it("the login page has no violations", async () => {
     const { screen } = renderApp("/login", { user: null });
     await screen.findByRole("heading", { level: 1, name: "AnsiDeck" });
+    expect(await violations(document.body)).toEqual([]);
+  });
+
+  it("the required two-factor setup has no violations", async () => {
+    const { screen } = renderApp("/", { user: adminUser({ two_factor_setup_required: true }), routes: ROUTES });
+    await screen.findByRole("heading", { level: 1, name: "Set up two-factor login" });
+    await screen.findByText("Work laptop");
+    expect(await violations(document.body)).toEqual([]);
+  });
+
+  it("the second sign-in step has no violations", async () => {
+    const { screen, user } = renderApp("/login", {
+      user: null,
+      routes: { "POST /auth/login": { mfa_required: true, methods: ["totp", "recovery_code"] } },
+    });
+    await user.type(await screen.findByLabelText("Username"), "admin");
+    await user.type(screen.getByLabelText("Password"), "pw");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await screen.findByLabelText("Authentication code");
     expect(await violations(document.body)).toEqual([]);
   });
 });

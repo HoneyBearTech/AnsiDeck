@@ -1076,8 +1076,13 @@ def test_two_factor_and_sso_admin_changes_come_off_the_audit_trail(client) -> No
     db = get_sessionmaker()()
     try:
         admin = db.query(User).filter(User.username == "admin").one()
-        audit.record(db, "user.totp_reset", actor=admin, target_name="carol", ip="10.0.0.9")
-        audit.record(db, "auth.totp_disable", actor=admin, ip="10.0.0.9")
+        audit.record(db, "user.two_factor_reset", actor=admin, target_name="carol", ip="10.0.0.9")
+        audit.record(db, "user.totp_reset", actor=admin, target_name="dave", ip="10.0.0.9")
+        # Removing one factor while another stays on is quiet; removing the last one isn't.
+        audit.record(db, "auth.passkey_remove", actor=admin, detail={"two_factor_off": False})
+        audit.record(
+            db, "auth.totp_disable", actor=admin, ip="10.0.0.9", detail={"two_factor_off": True}
+        )
         audit.record(db, "auth.login", actor=admin, ip="10.0.0.9", detail={"method": "oidc"})
         audit.record(db, "auth.login", actor=admin, ip="10.0.0.9")  # password: quiet
         audit.record(db, "user.totp_reset", outcome="failure", actor=admin, target_name="x")
@@ -1085,6 +1090,7 @@ def test_two_factor_and_sso_admin_changes_come_off_the_audit_trail(client) -> No
         db.close()
     assert [(p["user"], p["change"]) for _e, p in _events_queued()] == [
         ("carol", "had two-factor login reset"),
+        ("dave", "had two-factor login reset"),
         ("admin", "turned off two-factor login"),
         ("admin", "signed in as a global admin with oidc"),
     ]

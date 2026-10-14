@@ -31,6 +31,9 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-[]}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-[]}
+      # The browser-visible address: links in notifications, SSO callbacks and passkeys.
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      REQUIRE_ADMIN_2FA: ${REQUIRE_ADMIN_2FA:-false}
       INTERNAL_API_HOST: 0.0.0.0
       # Also needed by the workers, which can't read secret files safely (see docs/installing.md).
       WORKER_TOKEN: ${WORKER_TOKEN:?set WORKER_TOKEN in .env}
