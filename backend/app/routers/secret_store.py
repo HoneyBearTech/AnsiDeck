@@ -33,6 +33,8 @@ def info(
         "label": get_settings().secrets_store_label,
         "base_path": secret_store.base_path(project_id) if enabled else None,
         "path_rules": secret_store.PATH_RULES,
+        "ssh_mounts": get_settings().secrets_store_ssh_mount_list if enabled else [],
+        "ssh_role_prefix": secret_store.ssh_role_name(project_id, "") if enabled else None,
     }
 
 

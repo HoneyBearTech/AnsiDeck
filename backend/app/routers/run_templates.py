@@ -23,6 +23,7 @@ from app.routers.runs import HIDDEN, _run_out, become_vars, deleted_items_confli
 from app.schemas.run_templates import RunTemplateIn, RunTemplateLaunch, RunTemplateOut
 from app.schemas.runs import RunCreate, RunOut
 from app.scoping import deny, get_scoped, readable_project_ids
+from app.ssh_certificates import run_credential_problem
 
 router = APIRouter()
 
@@ -115,8 +116,8 @@ def _check_references(
                 status.HTTP_400_BAD_REQUEST,
                 f"{label} must belong to the same project as the playbook",
             )
-        if model is Credential and obj.kind != "ssh":
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "A run needs an SSH key credential")
+        if model is Credential and (problem := run_credential_problem(obj)):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, problem)
     for env_id in payload.env_credential_ids:
         env = get_scoped(
             db, user, request, Credential, env_id, Permission.SECRETS_LIST, "Credential not found"

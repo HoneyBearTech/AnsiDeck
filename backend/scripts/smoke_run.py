@@ -2,9 +2,12 @@
 
 Usage: python3 smoke_run.py <api url> <admin password> <path to an OpenSSH private key>
        python3 smoke_run.py <api url> <admin password> --store-path <path> [--expect-reason <text>]
+       python3 smoke_run.py <api url> <admin password> --ssh-cert <role>:<principal>
 
 With --store-path the credential is a reference into the secret store (created once, then
 reused); --expect-reason expects the run to fail with a status reason containing that text.
+With --ssh-cert it is an SSH certificate credential (the store's "ssh" mount): the run's
+ssh-agent must hold a certificate, and the run must record its serial.
 --check-egress <API host> also has the playbook try the API's ports (as the worker reaches the
 API) and cloud metadata: the worker's egress filter must refuse all of them.
 Standard library only (it runs on the CI host, not in the image).
@@ -58,6 +61,16 @@ EGRESS_TASKS = """\
         that: egress.stdout_lines | select('search', ' ECONNREFUSED$') | list | length == 4
         fail_msg: "{{ egress.stdout_lines }}"
 """
+CERTIFICATE_TASKS = """\
+    - name: what the run's ssh-agent holds
+      ansible.builtin.command: ssh-add -L
+      register: agent
+      changed_when: false
+    - name: a certificate, next to its key
+      ansible.builtin.assert:
+        that: agent.stdout is search('-cert-v01@openssh[.]com ')
+        fail_msg: "{{ agent.stdout_lines | map('split') | map('first') | list }}"
+"""
 
 
 def main() -> None:
@@ -68,9 +81,10 @@ def main() -> None:
     parser.add_argument("--store-path")
     parser.add_argument("--expect-reason")
     parser.add_argument("--check-egress", metavar="API_HOST")
+    parser.add_argument("--ssh-cert", metavar="ROLE:PRINCIPAL")
     args = parser.parse_args()
-    if bool(args.key_path) == bool(args.store_path):
-        parser.error("give a private key file or --store-path")
+    if sum(map(bool, (args.key_path, args.store_path, args.ssh_cert))) != 1:
+        parser.error("give a private key file, --store-path or --ssh-cert")
     base = args.base
     opener = urllib.request.build_opener(
         urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
@@ -94,6 +108,8 @@ def main() -> None:
     content = PLAYBOOK
     if args.check_egress:
         content += EGRESS_TASKS.replace("API_HOST", args.check_egress)
+    if args.ssh_cert:
+        content += CERTIFICATE_TASKS
     playbook = call("POST", "/playbooks", {"name": f"smoke-{tag}.yml", "content": content})
     inventory = call("POST", "/inventories", {"name": f"smoke-{tag}"})
     call("POST", f"/inventories/{inventory['id']}/hosts", {"hostname": "localhost", "vars": {}})
@@ -105,6 +121,20 @@ def main() -> None:
             else call(
                 "POST", "/credentials", {"name": "smoke-store", "store_path": args.store_path}
             )
+        )
+        print(f"credential {credential['id']}: {credential['store_location']}")
+    elif args.ssh_cert:
+        role, principal = args.ssh_cert.split(":", 1)
+        credential = call(
+            "POST",
+            "/credentials",
+            {
+                "name": f"smoke-cert-{tag}",
+                "kind": "ssh_cert",
+                "ssh_mount": "ssh",
+                "ssh_role": role,
+                "ssh_principals": [principal],
+            },
         )
         print(f"credential {credential['id']}: {credential['store_location']}")
     else:
@@ -130,6 +160,8 @@ def main() -> None:
         return
     if run["status"] != "success" or not run["worker_id"]:
         sys.exit(f"run ended {run['status']!r} ({run.get('status_reason')})")
+    if args.ssh_cert and not (run.get("ssh_certificate") or {}).get("serial"):
+        sys.exit("the run recorded no SSH certificate")
 
 
 if __name__ == "__main__":

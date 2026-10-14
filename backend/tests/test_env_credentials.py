@@ -48,6 +48,7 @@ def test_an_env_credential_is_stored_encrypted_and_shows_only_names(client: Test
         "ok": True,
         "version": None,
         "env_names": ["NB_X", "NETBOX_TOKEN"],
+        "certificate": None,
         "error_kind": None,
         "error": None,
     }
@@ -110,7 +111,9 @@ def test_an_env_credential_cannot_run_a_playbook_or_be_a_deploy_key(
             "credential_id": env_id,
         },
     )
-    assert run.status_code == 400 and run.json()["detail"] == "A run needs an SSH key credential"
+    assert run.status_code == 400 and run.json()["detail"] == (
+        "A run needs an SSH key or SSH certificate credential"
+    )
     source = client.post(
         "/api/projects/1/git-sources",
         json={

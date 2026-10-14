@@ -53,6 +53,10 @@ def test_create_list_delete_credential(client: TestClient) -> None:
         "store_path",
         "store_key",
         "store_location",
+        "ssh_mount",
+        "ssh_role",
+        "ssh_role_full",
+        "ssh_principals",
     }
     assert body["store"] == "ansideck" and body["store_path"] is None
     credential_id = body["id"]
@@ -72,6 +76,10 @@ def test_create_list_delete_credential(client: TestClient) -> None:
         "store_path",
         "store_key",
         "store_location",
+        "ssh_mount",
+        "ssh_role",
+        "ssh_role_full",
+        "ssh_principals",
     }
 
     delete_response = client.delete(f"/api/credentials/{credential_id}")

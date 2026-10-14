@@ -11,6 +11,8 @@ class WorkerOut(BaseModel):
     host_keys: bool | None = None
     # It can limit runs to their inventory's hosts (runs that must wait for such a worker).
     egress_allowlist: bool | None = None
+    # It loads SSH certificates (runs with a certificate credential wait for such a worker).
+    ssh_certificates: bool | None = None
     running: int
     online: bool
     first_seen_at: datetime

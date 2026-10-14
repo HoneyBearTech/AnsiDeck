@@ -10,6 +10,7 @@ import hashlib
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app import ssh_certificates
 from app.config import get_settings
 from app.egress_allowlist import job_egress
 from app.env_credentials import env_problem, resolve_env
@@ -17,6 +18,7 @@ from app.git_sync import snapshot_path, vars_texts
 from app.host_key_store import job_host_keys
 from app.inventory_render import all_vars_dicts, merge, render, static_data
 from app.models import (
+    RUN_CREDENTIAL_KINDS,
     Credential,
     GitSnapshot,
     Inventory,
@@ -129,19 +131,22 @@ def run_env(db: Session, run: Run, deadline: float) -> dict[str, str]:
 
 
 def build_job(db: Session, run: Run) -> dict:
-    """SecretStoreError (with `.subject` naming the secret) when a credential or vault password
-    in the secret store can't be read; one deadline covers all of the job's reads. JobError
-    when the run can't be prepared as it was triggered."""
+    """SecretStoreError (with `.subject` naming the secret, and `.verb`) when a credential or
+    vault password in the secret store can't be read or an SSH certificate can't be had; one
+    deadline covers all of the job's store requests. JobError when the run can't be prepared
+    as it was triggered."""
     deadline = new_deadline()
     credential = db.get(Credential, run.credential_id)
     assert_same_project(run, credential, "credential")
-    if credential.kind != "ssh":
-        raise RuntimeError(f"run {run.id}: its credential is not an SSH key")
-    try:
-        private_key_pem = resolve_credential(credential, deadline)
-    except SecretStoreError as exc:
-        exc.subject = f"credential '{credential.name}'"
-        raise
+    if credential.kind not in RUN_CREDENTIAL_KINDS:
+        raise RuntimeError(f"run {run.id}: its credential is not an SSH key or certificate")
+    private_key_pem = None
+    if credential.kind == "ssh":
+        try:
+            private_key_pem = resolve_credential(credential, deadline)
+        except SecretStoreError as exc:
+            exc.subject = f"credential '{credential.name}'"
+            raise
 
     vault_password_plain = None
     if run.vault_password_id is not None:
@@ -185,6 +190,18 @@ def build_job(db: Session, run: Run) -> dict:
         }
         repo_vars = vars_texts(snapshot)
 
+    # Signed last: a run that can't be prepared never gets a certificate.
+    certificate = None
+    if credential.kind == "ssh_cert":
+        try:
+            issued = ssh_certificates.issue_for_run(credential, run, deadline)
+        except SecretStoreError as exc:
+            exc.subject = f"an SSH certificate for credential '{credential.name}'"
+            exc.verb = "get"
+            raise
+        private_key_pem, certificate = issued.private_key, issued.certificate
+        run.ssh_certificate = {**issued.info, "certificate": certificate}
+
     secrets = collect_secrets(
         ssh_key_pem=private_key_pem,
         vault_password=vault_password_plain,
@@ -209,6 +226,8 @@ def build_job(db: Session, run: Run) -> dict:
         "playbook": run.playbook_snapshot,
         "inventory": inventory_text,
         "ssh_key": private_key_pem,
+        # With an SSH certificate credential: the store's certificate for ssh_key.
+        "ssh_certificate": certificate,
         "vault_password": vault_password_plain,
         "cmdline": " ".join(flags) or None,
         "limit": run.limit,

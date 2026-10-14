@@ -546,3 +546,65 @@ def test_0020_leaves_existing_inventories_unchecked_and_downgrades() -> None:
         with admin.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
         admin.dispose()
+
+
+def test_0028_adds_ssh_certificate_credentials_and_refuses_to_drop_them() -> None:
+    url = make_url(TEST_DATABASE_URL)
+    scratch = url.database.removesuffix("_test") + "_migration_test"
+    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{scratch}"'))
+    engine = create_engine(url.set(database=scratch))
+    config = alembic_config()
+
+    def migrate(step, revision: str) -> None:
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            step(config, revision)
+
+    def insert(conn, columns: str, values: str) -> None:
+        conn.execute(text(f"INSERT INTO credentials (name, project_id, {columns}) VALUES {values}"))
+
+    try:
+        migrate(command.upgrade, "0027")
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO projects (name, description) VALUES ('P', '')"))
+            insert(conn, "encrypted_private_key", "('old', 1, 'x')")
+        migrate(command.upgrade, "0028")
+        with engine.begin() as conn:
+            insert(
+                conn,
+                "kind, ssh_mount, ssh_role, ssh_principals",
+                "('cert', 1, 'ssh_cert', 'ssh', 'web', '[\"deploy\"]')",
+            )
+        for columns, values in [
+            ("kind, ssh_mount, ssh_role", "('bad1', 1, 'ssh_cert', 'ssh', 'web')"),  # no users
+            (  # a key in a certificate one
+                "kind, encrypted_private_key, ssh_mount, ssh_role, ssh_principals",
+                "('bad2', 1, 'ssh_cert', 'x', 'ssh', 'web', '[\"d\"]')",
+            ),
+            (
+                "kind, store_path, store_key, ssh_mount, ssh_role, ssh_principals",
+                "('bad3', 1, 'ssh_cert', 'p', 'k', 'ssh', 'web', '[\"d\"]')",
+            ),
+            ("encrypted_private_key, ssh_role", "('bad4', 1, 'x', 'web')"),  # a role on a key
+            ("kind, encrypted_env, ssh_mount", "('bad5', 1, 'env', 'x', 'ssh')"),
+        ]:
+            with engine.begin() as conn, pytest.raises(IntegrityError):
+                insert(conn, columns, values)
+        with pytest.raises(RuntimeError, match="SSH certificate credentials exist"):
+            migrate(command.downgrade, "0027")
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM credentials WHERE kind = 'ssh_cert'"))
+        migrate(command.downgrade, "0027")
+        with engine.begin() as conn:
+            assert conn.execute(text("SELECT name FROM credentials")).scalars().all() == ["old"]
+            with pytest.raises(IntegrityError), conn.begin_nested():
+                insert(conn, "kind", "('c', 1, 'ssh_cert')")
+        migrate(command.upgrade, "0028")
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        admin.dispose()

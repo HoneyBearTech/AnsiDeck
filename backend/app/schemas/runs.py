@@ -4,6 +4,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import DEFAULT_RUN_TIMEOUT_SECONDS, MAX_RUN_TIMEOUT_SECONDS
+from app.schemas.credentials import SshCertificateInfo
 from app.scrub import mask_secret_keys
 
 
@@ -128,6 +129,9 @@ class RunOut(BaseModel):
     egress_restricted: bool | None = None
     egress_addresses: int | None = None
     egress_refused: list[EgressRefused] | None = None
+    # With an SSH certificate credential: the certificate its job got (GET
+    # /runs/{id}/ssh-certificate serves the certificate itself).
+    ssh_certificate: SshCertificateInfo | None = None
     # Runs of playbooks synced from git: where and at which commit they execute.
     git_source_name: str | None = None
     git_commit: str | None = None

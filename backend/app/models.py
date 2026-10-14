@@ -205,20 +205,29 @@ class ApiKey(Base):
     )
 
 
-CREDENTIAL_KINDS = ("ssh", "env")
+CREDENTIAL_KINDS = ("ssh", "env", "ssh_cert")
+# The kinds a run can log in with.
+RUN_CREDENTIAL_KINDS = ("ssh", "ssh_cert")
+
+_NO_CERT = " AND ssh_mount IS NULL AND ssh_role IS NULL AND ssh_principals IS NULL"
 
 
 class Credential(Base):
     __tablename__ = "credentials"
     __table_args__ = (
-        CheckConstraint("kind IN ('ssh', 'env')", name="kind"),
+        CheckConstraint("kind IN ('ssh', 'env', 'ssh_cert')", name="kind"),
         CheckConstraint(
             "CASE kind"
             " WHEN 'ssh' THEN encrypted_env IS NULL"
             " AND (encrypted_private_key IS NULL) <> (store_path IS NULL)"
             " AND (store_path IS NULL) = (store_key IS NULL)"
+            f"{_NO_CERT}"
             " WHEN 'env' THEN encrypted_private_key IS NULL AND store_key IS NULL"
             " AND (encrypted_env IS NULL) <> (store_path IS NULL)"
+            f"{_NO_CERT}"
+            " WHEN 'ssh_cert' THEN encrypted_private_key IS NULL AND encrypted_env IS NULL"
+            " AND store_path IS NULL AND store_key IS NULL"
+            " AND ssh_mount IS NOT NULL AND ssh_role IS NOT NULL AND ssh_principals IS NOT NULL"
             " ELSE false END",
             name="secret_by_kind",
         ),
@@ -228,7 +237,8 @@ class Credential(Base):
     name: Mapped[str] = mapped_column(String(150), unique=True)
     description: Mapped[str | None] = mapped_column(String(500), default=None)
     # "ssh": a private key for runs and git deploy keys. "env": named variables (an API
-    # token) for inventory plugins (app.env_credentials).
+    # token) for inventory plugins (app.env_credentials). "ssh_cert": no secret at all; each
+    # run gets a new key pair and a certificate the secret store signs (app.ssh_certificates).
     kind: Mapped[str] = mapped_column(String(10), default="ssh", server_default="ssh")
     # Either encrypted here, or a reference into the secret store (app.secret_store): a path
     # under the project's own subtree and, for a key, the key in that secret (an env
@@ -239,6 +249,11 @@ class Credential(Base):
     env_names: Mapped[list | None] = mapped_column(JSON, default=None)
     store_path: Mapped[str | None] = mapped_column(String(400), default=None)
     store_key: Mapped[str | None] = mapped_column(String(100), default=None)
+    # An ssh_cert credential's SSH engine mount, its project-local role name (the store's role
+    # is "<prefix>-<project id>-<role>") and the users its certificates may log in as.
+    ssh_mount: Mapped[str | None] = mapped_column(String(100), default=None)
+    ssh_role: Mapped[str | None] = mapped_column(String(64), default=None)
+    ssh_principals: Mapped[list | None] = mapped_column(JSON(none_as_null=True), default=None)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -731,6 +746,9 @@ class Run(Base):
     egress_restricted: Mapped[bool | None] = mapped_column(Boolean, default=None)
     egress_allowlist: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
     egress_refused: Mapped[list | None] = mapped_column(JSON(none_as_null=True), default=None)
+    # The SSH certificate its job was given (app.ssh_certificates.describe, plus the public
+    # "certificate" line itself); the key pair is never stored.
+    ssh_certificate: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
     timeout_seconds: Mapped[int] = mapped_column(
         Integer,
         default=DEFAULT_RUN_TIMEOUT_SECONDS,
@@ -926,6 +944,8 @@ class Worker(Base):
     # Whether it can limit runs to their inventory's hosts (egress allowlists that passed its
     # self-test); restricted runs are only given to such.
     egress_allowlist: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    # Whether its runs load an SSH certificate; certificate runs are only given to such.
+    ssh_certificates: Mapped[bool | None] = mapped_column(Boolean, default=None)
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -172,6 +172,15 @@ SECRET_STORE_UP = Gauge(
 )
 for _outcome in ("ok", "unreachable", "denied", "not_found", "auth_failed", "sealed"):
     SECRET_STORE_READS.labels(_outcome)
+SSH_CERTIFICATES = Counter(
+    "ansideck_ssh_certificates",
+    "SSH certificates the secret store signed for runs and tests, by outcome (ok or the "
+    "error kind)",
+    ["outcome"],
+    registry=REGISTRY,
+)
+for _outcome in ("ok", "unreachable", "denied", "no_ssh_role", "principal_refused", "ssh_refused"):
+    SSH_CERTIFICATES.labels(_outcome)
 
 _METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
 _ACTION = re.compile(r"^[a-z_]{1,30}\.[a-z_]{1,40}$")
@@ -239,6 +248,10 @@ def run_claimed(wait_seconds: float) -> None:
 
 def secret_store_read(outcome: str) -> None:
     SECRET_STORE_READS.labels(outcome[:20]).inc()
+
+
+def ssh_certificate_signed(outcome: str) -> None:
+    SSH_CERTIFICATES.labels(outcome[:20]).inc()
 
 
 def secret_store_up(up: bool) -> None:

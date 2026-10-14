@@ -102,10 +102,11 @@ _JOB_PATHS = {"run": "runs", "refresh": "refreshes", "lint": "lints", "keyscan":
 
 def _ssh_agent_noise(event: dict) -> bool:
     """ansible-runner's own "Identity added: <temp path> (<key comment>)" line from loading the
-    run's SSH key into its agent: not the playbook's output, and it names a temporary path and
-    the key's comment (often someone's user@host)."""
+    run's SSH key into its agent (and "Certificate added: ..." for its SSH certificate): not the
+    playbook's output, and it names a temporary path and the key's comment (often someone's
+    user@host)."""
     return event.get("event") == "verbose" and str(event.get("stdout", "")).startswith(
-        "Identity added: "
+        ("Identity added: ", "Certificate added: ")
     )
 
 
@@ -468,6 +469,7 @@ class Worker:
                         "kinds": ["run", "refresh", "lint", "keyscan"],
                         "host_keys": True,
                         "egress_allowlist": self.egress_allowlist(),
+                        "ssh_certificates": True,
                     },
                     timeout=self.claim_wait_seconds + 15,
                 )
@@ -627,6 +629,7 @@ class Worker:
                     "prefix": f"ansideck-run-{task.run_id}-",
                     "own_home": identity is not None,
                     "ssh_key": job["ssh_key"],
+                    "ssh_certificate": job.get("ssh_certificate"),
                     "cmdline": job["cmdline"],
                     "limit": job["limit"],
                     "extravars": job["extravars"],
@@ -1119,6 +1122,7 @@ class Worker:
                     "egress_filtered": self.egress_filtered(),
                     "host_keys": True,
                     "egress_allowlist": self.egress_allowlist(),
+                    "ssh_certificates": True,
                     "runs": [
                         {"run_id": t.run_id, "claim_token": t.claim_token}
                         for t in tasks

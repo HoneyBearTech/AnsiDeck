@@ -160,6 +160,9 @@ class ClaimIn(BaseModel):
     # It can limit a run to its inventory's hosts (app.worker.egress allowlists, self-tested);
     # only counts together with egress_filtered. Runs that must go only to such workers.
     egress_allowlist: bool = False
+    # Its runs load an SSH certificate next to their key (app.ssh_certificates); runs with a
+    # certificate credential go only to such workers.
+    ssh_certificates: bool = False
 
 
 class ClaimOut(BaseModel):
@@ -207,6 +210,7 @@ class HeartbeatIn(BaseModel):
     egress_filtered: bool | None = None
     host_keys: bool = False
     egress_allowlist: bool = False
+    ssh_certificates: bool = False
     runs: list[HeartbeatRun] = Field(max_length=256)
     refreshes: list[HeartbeatRefresh] = Field([], max_length=256)
     lints: list[HeartbeatLint] = Field([], max_length=256)
@@ -359,10 +363,11 @@ def _claim_once(
     kinds: tuple[str, ...] = ("run",),
     host_keys: bool = False,
     egress_allowlist: bool = False,
+    ssh_certificates: bool = False,
 ) -> Claim | None:
     db = get_sessionmaker()()
     try:
-        return claim_next(db, worker_id, kinds, host_keys, egress_allowlist)
+        return claim_next(db, worker_id, kinds, host_keys, egress_allowlist, ssh_certificates)
     finally:
         db.close()
 
@@ -378,6 +383,7 @@ def _seen(body: ClaimIn) -> None:
             body.egress_filtered,
             body.host_keys,
             _egress_allowlist(body),
+            body.ssh_certificates,
         )
         db.commit()
     finally:
@@ -405,6 +411,7 @@ async def claim(body: ClaimIn) -> ClaimOut | Response:
                 tuple(body.kinds),
                 body.host_keys,
                 _egress_allowlist(body),
+                body.ssh_certificates,
             )
             if claimed is not None:
                 return ClaimOut(
@@ -468,10 +475,11 @@ def job(
     except SecretStoreError as exc:
         label = get_settings().secrets_store_label
         subject = getattr(exc, "subject", "a secret")
+        verb = getattr(exc, "verb", "read")
         fail_run(
             run,
             RunStatus.FAILED,
-            f"not run: could not read {subject} from {label}: {explain(exc.kind)}",
+            f"not run: could not {verb} {subject} from {label}: {explain(exc.kind)}",
         )
         if exc.kind in OUTAGE_KINDS:
             try:
@@ -490,12 +498,39 @@ def job(
     except Exception:  # never echo details that might hold secrets
         logger.exception("could not build the job for run %s", run_id)
         fail_run(run, RunStatus.FAILED, "could not prepare the job (see the server log)")
+        _audit_certificate(db, run)
         db.commit()
         _finished(run_id)
         return _gone()
     run.started_at = func.now()  # the worker launches ansible next
+    _audit_certificate(db, run)
     db.commit()
     return payload
+
+
+def _audit_certificate(db: Session, run: Run) -> None:
+    """Every SSH certificate a run's job got (a retried run gets a new one each attempt; the
+    run keeps the latest): targets' sshd logs name its serial."""
+    info = run.ssh_certificate
+    if not info:
+        return
+    audit.record(
+        db,
+        "credential.certificate_issued",
+        actor_username=f"run #{run.id}",
+        target_type="credential",
+        target_id=run.credential_id,
+        target_name=run.credential_name,
+        project_id=run.project_id,
+        detail={
+            "run_id": run.id,
+            "serial": info.get("serial"),
+            "principals": info.get("principals"),
+            "valid_before": info.get("valid_before"),
+            "location": info.get("location"),
+            "capped": info.get("capped"),
+        },
+    )
 
 
 @router.post("/runs/{run_id}/snapshot")
@@ -563,6 +598,7 @@ def heartbeat(body: HeartbeatIn, db: Session = Depends(get_db)) -> dict[str, lis
         body.egress_filtered,
         body.host_keys,
         _egress_allowlist(body),
+        body.ssh_certificates,
     )
     answers: list[dict] = []
     for item in body.runs:
