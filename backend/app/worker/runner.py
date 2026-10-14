@@ -12,6 +12,7 @@ from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
+from app.host_keys import MAX_LEARNED_LINES, MAX_PROBLEMS, host_key_problem
 from app.json_limits import loads_bounded
 from app.run_executor import (
     ExecutionHandle,
@@ -358,6 +359,7 @@ class Worker:
                         "egress_filtered": self.egress_filtered(),
                         "wait_seconds": self.claim_wait_seconds,
                         "kinds": ["run", "refresh", "lint"],
+                        "host_keys": True,
                     },
                     timeout=self.claim_wait_seconds + 15,
                 )
@@ -459,6 +461,7 @@ class Worker:
         scrub = build_scrubber(job["secrets"])
         sender = EventSender(self.client, task)
         recap: dict[str, int] = {}
+        host_keys: dict = {"problems": [], "learned": []}
 
         # A playbook synced from git runs inside its repository at the run's commit.
         snapshot: bytes | None = None
@@ -477,7 +480,16 @@ class Worker:
                 event = {**event, "stdout": ""}
             if event.get("event") == "playbook_on_stats":
                 recap.update(host_counts(event.get("event_data")))  # before scrubbing
+            elif (problem := host_key_problem(event)) and len(host_keys["problems"]) < MAX_PROBLEMS:
+                host_keys["problems"].append(problem)
             sender.add(_bounded(scrub(event)))
+
+        def on_message(message: dict) -> None:
+            lines = message.get("lines")
+            if message.get("type") == "host_keys_learned" and isinstance(lines, list):
+                host_keys["learned"] = [
+                    line for line in lines[:MAX_LEARNED_LINES] if isinstance(line, str)
+                ]
 
         status: str | None = None
         return_code: int | None = None
@@ -496,6 +508,7 @@ class Worker:
                     "cmdline": job["cmdline"],
                     "limit": job["limit"],
                     "extravars": job["extravars"],
+                    "host_keys": job.get("host_keys"),
                     "passwords": (
                         {r"Vault password:\s*?$": vault_password}
                         if vault_password is not None
@@ -507,6 +520,7 @@ class Worker:
                 task.handle,
                 identity,
                 stdin_tail=snapshot,
+                on_message=on_message,
             )
         except RunRefused as exc:
             refused = str(exc)
@@ -528,7 +542,7 @@ class Worker:
         outcome, why = self._outcome(task, reason, status, crashed)
         if refused is not None and reason is None:
             outcome, why = "failed", f"not run: {refused}"
-        self._complete(task, sender.last_seq, outcome, why, return_code, recap)
+        self._complete(task, sender.last_seq, outcome, why, return_code, recap, host_keys)
 
     # ------------------------------------------------------------------ refreshes
 
@@ -765,6 +779,7 @@ class Worker:
         reason: str | None,
         return_code: int | None,
         recap: dict[str, int],
+        host_keys: dict | None = None,
     ) -> None:
         body = {
             "last_seq": last_seq,
@@ -773,6 +788,10 @@ class Worker:
             "reason": reason,
             "host_counts": recap or None,
         }
+        if host_keys and host_keys["learned"]:
+            body["learned_host_keys"] = host_keys["learned"]
+        if host_keys and host_keys["problems"]:
+            body["host_key_problems"] = host_keys["problems"]
         deadline = time.monotonic() + _FLUSH_TIMEOUT_SECONDS
         delay = 0.5
         while time.monotonic() < deadline:
@@ -817,6 +836,7 @@ class Worker:
                     "slots": self.slots,
                     "isolated": self.isolated,
                     "egress_filtered": self.egress_filtered(),
+                    "host_keys": True,
                     "runs": [
                         {"run_id": t.run_id, "claim_token": t.claim_token}
                         for t in tasks

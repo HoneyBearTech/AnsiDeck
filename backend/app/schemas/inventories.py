@@ -19,6 +19,8 @@ class InventorySummary(BaseModel):
     name: str
     description: str | None
     project_id: int
+    # How runs treat SSH host keys: off, accept_new, strict (app.host_keys).
+    host_key_checking: str
 
 
 class GroupCreate(BaseModel):

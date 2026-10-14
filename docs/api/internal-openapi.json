@@ -14,6 +14,11 @@
             ],
             "title": "Egress Filtered"
           },
+          "host_keys": {
+            "default": false,
+            "title": "Host Keys",
+            "type": "boolean"
+          },
           "isolated": {
             "anyOf": [
               {
@@ -118,10 +123,41 @@
             ],
             "title": "Host Counts"
           },
+          "host_key_problems": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/HostKeyProblemIn"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Key Problems"
+          },
           "last_seq": {
             "minimum": 0.0,
             "title": "Last Seq",
             "type": "integer"
+          },
+          "learned_host_keys": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learned Host Keys"
           },
           "reason": {
             "anyOf": [
@@ -294,6 +330,11 @@
             ],
             "title": "Egress Filtered"
           },
+          "host_keys": {
+            "default": false,
+            "title": "Host Keys",
+            "type": "boolean"
+          },
           "isolated": {
             "anyOf": [
               {
@@ -407,6 +448,67 @@
           "claim_token"
         ],
         "title": "HeartbeatRun",
+        "type": "object"
+      },
+      "HostKeyProblemIn": {
+        "properties": {
+          "host": {
+            "maxLength": 255,
+            "title": "Host",
+            "type": "string"
+          },
+          "key_type": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Type"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "presented": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "pattern": "^SHA256:[A-Za-z0-9+/]{43}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Presented"
+          },
+          "problem": {
+            "enum": [
+              "changed",
+              "unknown",
+              "failed"
+            ],
+            "title": "Problem",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "problem"
+        ],
+        "title": "HostKeyProblemIn",
         "type": "object"
       },
       "JobIn": {

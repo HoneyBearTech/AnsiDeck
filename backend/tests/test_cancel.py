@@ -27,9 +27,10 @@ def _audit(action: str) -> list[AuditEvent]:
         db.close()
 
 
-def _heartbeat(worker_id: str, slots: int = 1, runs: list | None = None):
+def _heartbeat(worker_id: str, slots: int = 1, runs: list | None = None, host_keys: bool = True):
     response = internal_client().post(
-        "/internal/heartbeat", json={"worker_id": worker_id, "slots": slots, "runs": runs or []}
+        "/internal/heartbeat",
+        json={"worker_id": worker_id, "slots": slots, "runs": runs or [], "host_keys": host_keys},
     )
     assert response.status_code == 200
     return response.json()["runs"]
@@ -132,6 +133,11 @@ def test_a_queued_run_says_what_it_is_waiting_for(client) -> None:
     (_inv_a, [run_a]), (_inv_b, [run_b]) = queued.items()
     assert _waiting(client, run_a) == "No worker is online: start one to run queued runs"
 
+    # A worker from before managed host keys can't run it: its inventory checks them.
+    _heartbeat("w", slots=1, host_keys=False)
+    assert _waiting(client, run_a) == (
+        "Waiting for a worker that checks SSH host keys (upgrade your workers)"
+    )
     _heartbeat("w", slots=1)
     assert _waiting(client, run_a) == "Waiting for a worker…"
 
@@ -173,7 +179,8 @@ def test_a_worker_that_is_gone_no_longer_counts_as_online(client) -> None:
 def test_workers_report_in_by_claiming_and_heartbeating(client) -> None:
     _queue_runs(client, 1, 1)
     claim = internal_client().post(
-        "/internal/claim", json={"worker_id": "host-a:1", "slots": 3, "wait_seconds": 0}
+        "/internal/claim",
+        json={"worker_id": "host-a:1", "slots": 3, "wait_seconds": 0, "host_keys": True},
     )
     assert claim.status_code == 200
     _heartbeat("host-b:2", slots=2)

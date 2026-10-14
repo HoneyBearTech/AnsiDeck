@@ -493,3 +493,56 @@ def test_0018_keeps_the_snapshot_a_run_used_and_downgrades() -> None:
         with admin.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
         admin.dispose()
+
+
+def test_0020_leaves_existing_inventories_unchecked_and_downgrades() -> None:
+    """Existing inventories keep today's behaviour (no host key checking); new ones check."""
+    url = make_url(TEST_DATABASE_URL)
+    scratch = url.database.removesuffix("_test") + "_migration_test"
+    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{scratch}"'))
+    engine = create_engine(url.set(database=scratch))
+    config = alembic_config()
+
+    def migrate(step, revision: str) -> None:
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            step(config, revision)
+
+    try:
+        migrate(command.upgrade, "0019")
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO projects (name, description) VALUES ('P', '')"))
+            conn.execute(text("INSERT INTO inventories (project_id, name) VALUES (1, 'old')"))
+        migrate(command.upgrade, "0020")
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO inventories (project_id, name) VALUES (1, 'new')"))
+            modes = conn.execute(
+                text("SELECT name, host_key_checking FROM inventories ORDER BY id")
+            ).all()
+            conn.execute(
+                text(
+                    "INSERT INTO inventory_host_keys (inventory_id, name, key_type, key_b64, "
+                    "fingerprint, source, created_by) VALUES (1, 'web1', 'ssh-ed25519', 'AAAA', "
+                    "'SHA256:x', 'paste', 'admin')"
+                )
+            )
+            # One key per name and type.
+            with pytest.raises(IntegrityError), conn.begin_nested():
+                conn.execute(
+                    text(
+                        "INSERT INTO inventory_host_keys (inventory_id, name, key_type, "
+                        "key_b64, fingerprint, source, created_by) VALUES (1, 'web1', "
+                        "'ssh-ed25519', 'BBBB', 'SHA256:y', 'paste', 'admin')"
+                    )
+                )
+        assert [tuple(r) for r in modes] == [("old", "off"), ("new", "accept_new")]
+        migrate(command.downgrade, "0019")
+        migrate(command.upgrade, "0020")
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        admin.dispose()

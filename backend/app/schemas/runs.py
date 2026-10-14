@@ -32,6 +32,14 @@ class RunCreate(BaseModel):
         return v or None
 
 
+class HostKeyProblem(BaseModel):
+    host: str
+    problem: str  # changed, unknown, failed
+    name: str | None = None
+    key_type: str | None = None
+    presented: str | None = None
+
+
 class RunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -75,6 +83,11 @@ class RunOut(BaseModel):
     # many hosts the sources found then.
     inventory_snapshot_at: datetime | None = None
     inventory_snapshot_hosts: int | None = None
+    # How it treated SSH host keys (off / accept_new / strict; None before it was claimed),
+    # the hosts whose key ssh refused, and how many keys it learned.
+    host_key_checking: str | None = None
+    host_key_problems: list[HostKeyProblem] | None = None
+    host_keys_learned: int | None = None
     # Runs of playbooks synced from git: where and at which commit they execute.
     git_source_name: str | None = None
     git_commit: str | None = None

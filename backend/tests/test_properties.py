@@ -1,10 +1,11 @@
 """Property-based tests (Hypothesis) for the code that handles untrusted text:
-the output scrubber, the vault helpers and the inventory renderer.
+the output scrubber, the vault helpers, the inventory renderer and the SSH host key parser.
 
 Each property is a plain Hypothesis test so a coverage-guided fuzzer can
 reuse it later via `test_x.hypothesis.fuzz_one_input`.
 """
 
+import base64
 import contextlib
 import json
 import re
@@ -16,6 +17,7 @@ from ansible.parsing.yaml.loader import AnsibleLoader
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
+from app.host_keys import KEY_TYPES, check_key, host_key_problem, normalise_name, parse_known_hosts
 from app.inventory_render import hostname_problem, merge, render, target_hosts
 from app.scrub import REDACTED, Scrubber, _PlaybookLoader, collect_secrets
 from app.vault import VaultError, decrypt_vault_text, encrypt_to_vault_envelope, to_yaml_block
@@ -521,3 +523,54 @@ def test_the_nesting_scan_stays_linear_on_hostile_input(raw: bytes) -> None:
     started = time.perf_counter()
     nesting_depth(raw)
     assert time.perf_counter() - started < 2
+
+
+# ------------------------------------------------------------------ SSH host keys
+
+_KEY_TYPES = sorted(KEY_TYPES)
+
+
+@st.composite
+def known_hosts_text(draw) -> str:
+    """Lines that look like known_hosts (names, a type, a blob) mixed with anything at all."""
+    lines = []
+    for _ in range(draw(st.integers(0, 6))):
+        if draw(st.booleans()):
+            lines.append(draw(any_text))
+            continue
+        key_type = draw(st.sampled_from([*_KEY_TYPES, "ssh-dss", draw(st.text(max_size=20))]))
+        body = draw(st.binary(max_size=80))
+        claimed = draw(st.sampled_from([key_type, "ssh-rsa"])).encode()
+        blob = base64.b64encode(len(claimed).to_bytes(4, "big") + claimed + body).decode()
+        names = draw(st.lists(st.text(max_size=30) | st.sampled_from(["web1", "[h]:2222", "*"]),
+                              min_size=1, max_size=3))  # fmt: skip
+        marker = draw(st.sampled_from(["", "@cert-authority ", "@revoked ", "|1|"]))
+        lines.append(f"{marker}{','.join(names)} {key_type} {blob} {draw(st.text(max_size=10))}")
+    return draw(st.sampled_from(["\n", "\r\n"])).join(lines)
+
+
+@given(known_hosts_text())
+@example(f"web1,*,|1|a=|b=,[h]:22 ssh-ed25519 {base64.b64encode(b'x').decode()}")
+def test_known_hosts_parsing_keeps_only_plain_names_with_checked_keys(text: str) -> None:
+    keys, warnings = parse_known_hosts(text)
+    assert all(isinstance(w, str) for w in warnings)
+    for key in keys:
+        # Exactly one plain name: what a run's known_hosts gets can't match other hosts.
+        assert normalise_name(key.name) == key.name
+        assert not set(key.name) & set("*?!,| \t@")
+        assert check_key(key.key_type, key.key_b64) == key.fingerprint
+        assert key.line.split(" ") == [key.name, key.key_type, key.key_b64]
+    assert len({(k.name, k.key_type) for k in keys}) == len(keys)
+
+
+@given(json_values(any_text))
+def test_refused_host_key_detection_never_raises_and_keeps_safe_text(data) -> None:
+    for message in (data, "Host key verification failed." + str(data)):
+        event = {
+            "event": "runner_on_unreachable",
+            "event_data": {"host": data, "res": {"msg": message}},
+        }
+        problem = host_key_problem(event)
+        if problem is not None:
+            for value in (problem["host"], problem["name"] or "", problem["key_type"] or ""):
+                assert re.fullmatch(r"[A-Za-z0-9_.:%\[\]@-]*", value)

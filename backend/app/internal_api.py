@@ -11,7 +11,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -25,6 +25,8 @@ from app.db import get_db, get_sessionmaker
 from app.galaxy import try_start_install
 from app.git_sync import snapshot_path
 from app.hardening import FailureThrottle
+from app.host_key_store import record_learned, record_problems
+from app.host_keys import MAX_LEARNED_LINES, MAX_PROBLEMS
 from app.inventory_sources import (
     SourceError,
     build_refresh_job,
@@ -36,7 +38,7 @@ from app.jobs import build_job
 from app.lint import LintJobError, build_lint_job, end_lint
 from app.models import GitSnapshot, InventoryRefresh, LintJob, Run, RunStatus
 from app.notifications.events import run_finished
-from app.notifications.ops import secret_store_failed
+from app.notifications.ops import host_key_changed, secret_store_failed
 from app.notify import notifier, run_topic
 from app.queue import QUEUE_TOPIC, Claim, claim_next, fail_run, hash_token, record_worker
 from app.run_log import append_events
@@ -133,6 +135,8 @@ class ClaimIn(BaseModel):
     wait_seconds: float = Field(MAX_CLAIM_WAIT_SECONDS, ge=0, le=MAX_CLAIM_WAIT_SECONDS)
     # What the worker can do; one from before 4G (no kinds) is only ever given runs.
     kinds: list[Literal["run", "refresh", "lint"]] = Field(["run"], min_length=1, max_length=3)
+    # It checks SSH host keys (app.host_keys); one that doesn't never gets a run that must.
+    host_keys: bool = False
 
 
 class ClaimOut(BaseModel):
@@ -172,6 +176,7 @@ class HeartbeatIn(BaseModel):
     slots: int = Field(1, ge=1, le=256)
     isolated: bool | None = None
     egress_filtered: bool | None = None
+    host_keys: bool = False
     runs: list[HeartbeatRun] = Field(max_length=256)
     refreshes: list[HeartbeatRefresh] = Field([], max_length=256)
     lints: list[HeartbeatLint] = Field([], max_length=256)
@@ -210,12 +215,26 @@ class RefreshCompleteIn(BaseModel):
     scrubbed: bool = False
 
 
+class HostKeyProblemIn(BaseModel):
+    host: str = Field(max_length=255)
+    problem: Literal["changed", "unknown", "failed"]
+    name: str | None = Field(None, max_length=300)
+    key_type: str | None = Field(None, max_length=64)
+    presented: str | None = Field(None, max_length=64, pattern=r"^SHA256:[A-Za-z0-9+/]{43}$")
+
+
 class CompleteIn(BaseModel):
     last_seq: int = Field(ge=0)
     status: Literal["success", "failed", "cancelled", "timed_out"]
     return_code: int | None = None
     reason: str | None = Field(None, max_length=500)
     host_counts: dict[str, int] | None = None
+    # Keys the run's ssh learned (accept_new), as known_hosts lines: untrusted, the playbook
+    # can write the file they come from (app.host_key_store.record_learned filters them).
+    learned_host_keys: list[Annotated[str, Field(max_length=20_000)]] | None = Field(
+        None, max_length=MAX_LEARNED_LINES
+    )
+    host_key_problems: list[HostKeyProblemIn] | None = Field(None, max_length=MAX_PROBLEMS)
 
 
 @router.post("/ping")
@@ -223,10 +242,12 @@ def ping() -> dict[str, bool]:
     return {"ok": True}
 
 
-def _claim_once(worker_id: str, kinds: tuple[str, ...] = ("run",)) -> Claim | None:
+def _claim_once(
+    worker_id: str, kinds: tuple[str, ...] = ("run",), host_keys: bool = False
+) -> Claim | None:
     db = get_sessionmaker()()
     try:
-        return claim_next(db, worker_id, kinds)
+        return claim_next(db, worker_id, kinds, host_keys)
     finally:
         db.close()
 
@@ -234,7 +255,9 @@ def _claim_once(worker_id: str, kinds: tuple[str, ...] = ("run",)) -> Claim | No
 def _seen(body: ClaimIn) -> None:
     db = get_sessionmaker()()
     try:
-        record_worker(db, body.worker_id, body.slots, body.isolated, body.egress_filtered)
+        record_worker(
+            db, body.worker_id, body.slots, body.isolated, body.egress_filtered, body.host_keys
+        )
         db.commit()
     finally:
         db.close()
@@ -255,7 +278,9 @@ async def claim(body: ClaimIn) -> ClaimOut | Response:
     deadline = loop.time() + body.wait_seconds
     with notifier.listen(QUEUE_TOPIC) as listener:
         while True:
-            claimed = await asyncio.to_thread(_claim_once, body.worker_id, tuple(body.kinds))
+            claimed = await asyncio.to_thread(
+                _claim_once, body.worker_id, tuple(body.kinds), body.host_keys
+            )
             if claimed is not None:
                 return ClaimOut(
                     kind=claimed.kind,
@@ -400,7 +425,9 @@ def heartbeat(body: HeartbeatIn, db: Session = Depends(get_db)) -> dict[str, lis
     """Renews the lease of each run the worker still owns: "ok", "cancel" (stop it), or "gone"
     (the claim ended; stop without reporting)."""
     lease = get_settings().run_lease_seconds
-    record_worker(db, body.worker_id, body.slots, body.isolated, body.egress_filtered)
+    record_worker(
+        db, body.worker_id, body.slots, body.isolated, body.egress_filtered, body.host_keys
+    )
     answers: list[dict] = []
     for item in body.runs:
         row = db.execute(
@@ -484,6 +511,7 @@ def complete(
     run.lease_expires_at = None
     run.claim_token_hash = None
     project_id, worker_id = run.project_id, run.worker_id
+    learned, problems = _host_keys(db, run, body)
     run_finished(db, run)
     metrics.run_finished(db, project_id, body.status, run.started_at)
     db.commit()
@@ -498,8 +526,60 @@ def complete(
             target_id=run_id,
             project_id=project_id,
         )
+    _audit_host_keys(db, run_id, project_id, learned, problems)
     _finished(run_id)
     return {}
+
+
+def _host_keys(db: Session, run: Run, body: CompleteIn) -> tuple[list[dict], list[dict]]:
+    """Keeps the keys the run learned and what ssh refused, in a savepoint: bad data must
+    never keep a run from finishing. Returns them for the audit log and notifications."""
+    problems = [p.model_dump() for p in body.host_key_problems or []]
+    learned: list[dict] = []
+    inventory_id, inventory_name = run.inventory_id, run.inventory_name
+    try:
+        with db.begin_nested():
+            learned = record_learned(db, run, body.learned_host_keys or [])
+            record_problems(run, problems)
+            changed = [p for p in problems if p["problem"] == "changed"]
+            if changed and inventory_id is not None:
+                host_key_changed(db, run, changed)
+    except Exception:
+        logger.exception("could not record run %s's host keys", run.id)
+        learned = []
+    return (
+        [{**k, "inventory_id": inventory_id, "inventory": inventory_name} for k in learned],
+        [{**p, "inventory_id": inventory_id, "inventory": inventory_name} for p in problems],
+    )
+
+
+def _audit_host_keys(
+    db: Session, run_id: int, project_id: int, learned: list[dict], problems: list[dict]
+) -> None:
+    for action, items, outcome in (
+        ("inventory.host_key_learned", learned, "success"),
+        ("inventory.host_key_refused", problems, "failure"),
+    ):
+        if not items:
+            continue
+        audit.record(
+            db,
+            action,
+            outcome=outcome,
+            actor_username=f"run #{run_id}",
+            target_type="inventory",
+            target_id=items[0]["inventory_id"],
+            target_name=items[0]["inventory"],
+            project_id=project_id,
+            detail={
+                "run_id": run_id,
+                "keys": [
+                    {k: v for k, v in item.items() if k not in ("inventory_id", "inventory")}
+                    for item in items[:20]
+                ],
+                "count": len(items),
+            },
+        )
 
 
 # --- inventory refreshes (Phase 4G) -------------------------------------------------------

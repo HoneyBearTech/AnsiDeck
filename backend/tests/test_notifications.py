@@ -478,7 +478,7 @@ def test_a_success_after_a_failure_is_a_recovery_and_other_endings_are_quiet(cli
     def again(status: str) -> None:
         client.post("/api/runs", json=_same_run(client, first.run_id))
         claim = internal_client().post(
-            "/internal/claim", json={"worker_id": "w", "wait_seconds": 0}
+            "/internal/claim", json={"worker_id": "w", "wait_seconds": 0, "host_keys": True}
         )
         claimed = Claimed.__new__(Claimed)
         claimed.http, claimed.run_id = internal_client(), claim.json()["run_id"]
@@ -1104,6 +1104,7 @@ def test_ops_and_security_events_are_for_global_channels_only(client) -> None:
         RUN_FAILED: "Runs",
         RUN_RECOVERED: "Runs",
         "inventory.refresh_failed": "Inventories",
+        "inventory.host_key_changed": "Inventories",
         "worker.offline": "Operations",
         "worker.unisolated": "Operations",
         "worker.unfiltered": "Operations",

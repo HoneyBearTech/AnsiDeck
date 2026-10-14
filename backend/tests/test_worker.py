@@ -174,6 +174,7 @@ def test_the_worker_imports_nothing_that_could_reach_the_database_or_the_key() -
     ).stdout.split()
     allowed = {
         "app",
+        "app.host_keys",  # standard library (ansible only when the API asks for addresses)
         "app.json_limits",  # json, re and itertools only
         "app.process_hardening",
         "app.run_executor",

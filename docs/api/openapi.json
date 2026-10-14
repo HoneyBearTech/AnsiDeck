@@ -777,6 +777,24 @@
         "title": "ChannelUpdate",
         "type": "object"
       },
+      "ConfirmIn": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 2000,
+            "minItems": 1,
+            "title": "Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "title": "ConfirmIn",
+        "type": "object"
+      },
       "CredentialCreate": {
         "description": "kind \"ssh\": either `private_key` (stored encrypted here) or a secret store reference,\n`store_path` under the project's own subtree and `store_key` in that secret.\nkind \"env\": either `env` (named variables, stored encrypted here) or `store_path`, a\nsecret whose every key becomes a variable.",
         "properties": {
@@ -1781,6 +1799,285 @@
         "title": "HostKey",
         "type": "object"
       },
+      "HostKeyHost": {
+        "properties": {
+          "connection": {
+            "title": "Connection",
+            "type": "string"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "enum": [
+              "trusted",
+              "learned",
+              "missing",
+              "unknown",
+              "not_checked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "name",
+          "connection",
+          "status"
+        ],
+        "title": "HostKeyHost",
+        "type": "object"
+      },
+      "HostKeyOut": {
+        "properties": {
+          "confirmed": {
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "confirmed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed At"
+          },
+          "confirmed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed By"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "hosts": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Hosts",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "key_type": {
+            "title": "Key Type",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "key_type",
+          "fingerprint",
+          "source",
+          "confirmed",
+          "run_id",
+          "created_by",
+          "created_at",
+          "confirmed_by",
+          "confirmed_at"
+        ],
+        "title": "HostKeyOut",
+        "type": "object"
+      },
+      "HostKeyProblem": {
+        "properties": {
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "key_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Type"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "presented": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Presented"
+          },
+          "problem": {
+            "title": "Problem",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "problem"
+        ],
+        "title": "HostKeyProblem",
+        "type": "object"
+      },
+      "HostKeySummary": {
+        "properties": {
+          "hosts": {
+            "title": "Hosts",
+            "type": "integer"
+          },
+          "learned": {
+            "title": "Learned",
+            "type": "integer"
+          },
+          "missing": {
+            "title": "Missing",
+            "type": "integer"
+          },
+          "not_checked": {
+            "title": "Not Checked",
+            "type": "integer"
+          },
+          "trusted": {
+            "title": "Trusted",
+            "type": "integer"
+          },
+          "unknown": {
+            "title": "Unknown",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "hosts",
+          "trusted",
+          "learned",
+          "missing",
+          "unknown",
+          "not_checked"
+        ],
+        "title": "HostKeySummary",
+        "type": "object"
+      },
+      "HostKeysOut": {
+        "properties": {
+          "hosts": {
+            "items": {
+              "$ref": "#/components/schemas/HostKeyHost"
+            },
+            "title": "Hosts",
+            "type": "array"
+          },
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/HostKeyOut"
+            },
+            "title": "Keys",
+            "type": "array"
+          },
+          "mode": {
+            "enum": [
+              "off",
+              "accept_new",
+              "strict"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/HostKeySummary"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mode",
+          "keys",
+          "hosts",
+          "total",
+          "summary"
+        ],
+        "title": "HostKeysOut",
+        "type": "object"
+      },
       "HostOut": {
         "properties": {
           "group_ids": {
@@ -2171,6 +2468,10 @@
             "title": "Groups",
             "type": "array"
           },
+          "host_key_checking": {
+            "title": "Host Key Checking",
+            "type": "string"
+          },
           "hosts": {
             "items": {
               "$ref": "#/components/schemas/HostOut"
@@ -2196,6 +2497,7 @@
           "name",
           "description",
           "project_id",
+          "host_key_checking",
           "groups",
           "hosts"
         ],
@@ -2272,6 +2574,10 @@
             ],
             "title": "Description"
           },
+          "host_key_checking": {
+            "title": "Host Key Checking",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -2289,7 +2595,8 @@
           "id",
           "name",
           "description",
-          "project_id"
+          "project_id",
+          "host_key_checking"
         ],
         "title": "InventorySummary",
         "type": "object"
@@ -2779,6 +3086,24 @@
         "title": "MfaLoginRequest",
         "type": "object"
       },
+      "ModeIn": {
+        "properties": {
+          "mode": {
+            "enum": [
+              "off",
+              "accept_new",
+              "strict"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "ModeIn",
+        "type": "object"
+      },
       "PasswordConfirmRequest": {
         "properties": {
           "current_password": {
@@ -2790,6 +3115,103 @@
           "current_password"
         ],
         "title": "PasswordConfirmRequest",
+        "type": "object"
+      },
+      "PasteIn": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "known_hosts": {
+            "maxLength": 262144,
+            "minLength": 1,
+            "title": "Known Hosts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "known_hosts"
+        ],
+        "title": "PasteIn",
+        "type": "object"
+      },
+      "PasteOut": {
+        "properties": {
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/PastedKey"
+            },
+            "title": "Keys",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "keys",
+          "warnings"
+        ],
+        "title": "PasteOut",
+        "type": "object"
+      },
+      "PastedKey": {
+        "properties": {
+          "change": {
+            "enum": [
+              "new",
+              "replace",
+              "confirm",
+              "same"
+            ],
+            "title": "Change",
+            "type": "string"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "hosts": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Hosts",
+            "type": "array"
+          },
+          "key_type": {
+            "title": "Key Type",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous"
+          }
+        },
+        "required": [
+          "name",
+          "key_type",
+          "fingerprint",
+          "change"
+        ],
+        "title": "PastedKey",
         "type": "object"
       },
       "PlaybookCreate": {
@@ -3608,6 +4030,42 @@
               }
             ],
             "title": "Group Name"
+          },
+          "host_key_checking": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Key Checking"
+          },
+          "host_key_problems": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/HostKeyProblem"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Key Problems"
+          },
+          "host_keys_learned": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Keys Learned"
           },
           "hosts_changed": {
             "anyOf": [
@@ -5420,6 +5878,17 @@
             "format": "date-time",
             "title": "First Seen At",
             "type": "string"
+          },
+          "host_keys": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Keys"
           },
           "id": {
             "title": "Id",
@@ -8221,6 +8690,445 @@
           }
         },
         "summary": "Update Group",
+        "tags": [
+          "inventories"
+        ]
+      }
+    },
+    "/api/inventories/{inventory_id}/host-keys": {
+      "get": {
+        "description": "The inventory's trusted keys and, for each host (a page, filtered by `q` on the host or\nits address), whether a run can check it.",
+        "operationId": "list_host_keys_api_inventories__inventory_id__host_keys_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inventory_id",
+            "required": true,
+            "schema": {
+              "title": "Inventory Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostKeysOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Host Keys",
+        "tags": [
+          "inventories"
+        ]
+      }
+    },
+    "/api/inventories/{inventory_id}/host-keys/confirm": {
+      "post": {
+        "description": "Confirms learned keys, so strict runs trust them too. Ids of other inventories' keys\nare ignored.",
+        "operationId": "confirm_host_keys_api_inventories__inventory_id__host_keys_confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inventory_id",
+            "required": true,
+            "schema": {
+              "title": "Inventory Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/HostKeyOut"
+                  },
+                  "title": "Response Confirm Host Keys Api Inventories  Inventory Id  Host Keys Confirm Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm Host Keys",
+        "tags": [
+          "inventories"
+        ]
+      }
+    },
+    "/api/inventories/{inventory_id}/host-keys/mode": {
+      "put": {
+        "description": "Applies to runs claimed from now on (queued ones included).",
+        "operationId": "set_mode_api_inventories__inventory_id__host_keys_mode_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inventory_id",
+            "required": true,
+            "schema": {
+              "title": "Inventory Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModeIn"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Mode",
+        "tags": [
+          "inventories"
+        ]
+      }
+    },
+    "/api/inventories/{inventory_id}/host-keys/paste": {
+      "post": {
+        "description": "Trusts the keys in known_hosts text (one plain name per key; a key replaces the\ninventory's key of the same name and type). With dry_run, only says what would change.",
+        "operationId": "paste_host_keys_api_inventories__inventory_id__host_keys_paste_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inventory_id",
+            "required": true,
+            "schema": {
+              "title": "Inventory Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasteOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Paste Host Keys",
+        "tags": [
+          "inventories"
+        ]
+      }
+    },
+    "/api/inventories/{inventory_id}/host-keys/{key_id}": {
+      "delete": {
+        "description": "Forgets a key: in accept_new mode the host's next key is learned again, in strict mode\nits runs fail until a key is trusted.",
+        "operationId": "remove_host_key_api_inventories__inventory_id__host_keys__key_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inventory_id",
+            "required": true,
+            "schema": {
+              "title": "Inventory Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "title": "Key Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Host Key",
         "tags": [
           "inventories"
         ]

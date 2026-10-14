@@ -51,7 +51,9 @@ def test_a_run_whose_worker_stopped_heartbeating_is_failed_and_its_inventory_fre
     # ...and the inventory is free for the next run.
     second = client.post("/api/runs", json=_same_run(client, claimed.run_id)).json()["id"]
     http = claimed.http
-    claim = http.post("/internal/claim", json={"worker_id": "w2", "wait_seconds": 0}).json()
+    claim = http.post(
+        "/internal/claim", json={"worker_id": "w2", "wait_seconds": 0, "host_keys": True}
+    ).json()
     assert claim["run_id"] == second
 
 
