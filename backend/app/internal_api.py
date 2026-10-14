@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import threading
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -52,6 +53,19 @@ logger = logging.getLogger(__name__)
 MAX_BODY_BYTES = 4 * 1024 * 1024
 MAX_CLAIM_WAIT_SECONDS = 25.0
 _CLAIM_RECHECK_SECONDS = 2.0
+# Set while the API shuts down: claim long polls answer "nothing to run" at once instead of
+# holding the shutdown (and a dev server's reload) for up to MAX_CLAIM_WAIT_SECONDS.
+_stopping = threading.Event()
+
+
+def accept_long_polls() -> None:
+    _stopping.clear()
+
+
+def end_long_polls() -> None:
+    _stopping.set()
+
+
 _HOST_COUNT_COLUMNS = (
     "hosts_total",
     "hosts_ok",
@@ -323,7 +337,7 @@ async def claim(body: ClaimIn) -> ClaimOut | Response:
                     job_token=claimed.job_token,
                 )
             remaining = deadline - loop.time()
-            if remaining <= 0:
+            if remaining <= 0 or _stopping.is_set():
                 return Response(status_code=status.HTTP_204_NO_CONTENT)
             await listener.wait(min(_CLAIM_RECHECK_SECONDS, remaining))
 
