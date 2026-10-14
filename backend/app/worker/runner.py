@@ -122,6 +122,67 @@ def scrub_findings(findings: list[dict], secrets: list[str]) -> tuple[list[dict]
     return cleaned, scrubbed
 
 
+_ARTIFACTS_UPLOAD_SECONDS = 600
+
+
+class _Artifacts:
+    """A run's artifacts as its process sends them: base64 chunks of a gzipped tar into a
+    temporary file (hashed on the way), then their listing. Never more than the run's limit
+    (with room for the tar's own overhead)."""
+
+    def __init__(self, limits: dict | None) -> None:
+        self.limit = int((limits or {}).get("max_bytes", 0)) * 2 + 1024 * 1024
+        self.file = None  # a temporary file, from the first chunk on; closed by close()
+        self.digest = hashlib.sha256()
+        self.size = 0
+        self.done: dict | None = None
+        self.error: str | None = None
+
+    def receive(self, message: dict) -> None:
+        import base64
+
+        if self.error or self.done:
+            return
+        if message["type"] == "artifacts":
+            if message.get("error"):
+                self.error = str(message["error"])[:300]
+            else:
+                self.done = message
+            return
+        chunk = base64.b64decode(str(message.get("data", "")))
+        self.size += len(chunk)
+        if self.size > self.limit:
+            self.error = "the artifacts exceeded their limit"
+            return
+        if self.file is None:
+            import tempfile
+
+            self.file = tempfile.TemporaryFile()  # noqa: SIM115 - closed by close()
+        self.digest.update(chunk)
+        self.file.write(chunk)
+
+    def summary(self) -> dict | None:
+        if self.error:
+            return {"error": self.error}
+        if self.done is None:
+            return None
+        if self.size != self.done.get("tar_bytes") or self.digest.hexdigest() != self.done.get(
+            "sha256"
+        ):
+            return {"error": "the artifacts didn't arrive intact"}
+        return {
+            "files": self.done.get("files") or [],
+            "bytes": self.done.get("bytes"),
+            "tar_bytes": self.size,
+            "sha256": self.digest.hexdigest(),
+        }
+
+    def close(self) -> None:
+        if self.file is not None:
+            self.file.close()
+            self.file = None
+
+
 class RunTask:
     """A claimed run, or (kind "refresh" / "lint") an inventory refresh or a playbook check:
     run_id is then its id."""
@@ -491,12 +552,16 @@ class Worker:
                 host_keys["problems"].append(problem)
             sender.add(_bounded(scrub(event)))
 
+        artifacts = _Artifacts(job.get("artifacts"))
+
         def on_message(message: dict) -> None:
             lines = message.get("lines")
             if message.get("type") == "host_keys_learned" and isinstance(lines, list):
                 host_keys["learned"] = [
                     line for line in lines[:MAX_LEARNED_LINES] if isinstance(line, str)
                 ]
+            elif message.get("type") in ("artifacts_chunk", "artifacts"):
+                artifacts.receive(message)
 
         status: str | None = None
         return_code: int | None = None
@@ -517,6 +582,7 @@ class Worker:
                     "extravars": job["extravars"],
                     "host_keys": job.get("host_keys"),
                     "env": job.get("env") or None,
+                    "artifacts": job.get("artifacts"),
                     "passwords": (
                         {r"Vault password:\s*?$": vault_password}
                         if vault_password is not None
@@ -543,14 +609,55 @@ class Worker:
         reason = task.handle.stop_reason
         if reason == GONE:
             logger.info("run %s: the API ended this claim; not reporting", task.run_id)
+            artifacts.close()
             return
         if not flushed:
             logger.error("run %s: output could not be delivered; not reporting", task.run_id)
+            artifacts.close()
             return
         outcome, why = self._outcome(task, reason, status, crashed)
         if refused is not None and reason is None:
             outcome, why = "failed", f"not run: {refused}"
-        self._complete(task, sender.last_seq, outcome, why, return_code, recap, host_keys)
+        summary = self._upload_artifacts(task, artifacts) if reason is None else None
+        self._complete(task, sender.last_seq, outcome, why, return_code, recap, host_keys, summary)
+        artifacts.close()
+
+    def _upload_artifacts(self, task: RunTask, artifacts: "_Artifacts") -> dict | None:
+        """Sends the run's artifacts tar to the API in chunks; returns what /complete reports
+        about them (or why they weren't kept)."""
+        try:
+            summary = artifacts.summary()
+            if summary is None or "error" in summary:
+                return summary
+            offset, size = 0, summary["tar_bytes"]
+            deadline = time.monotonic() + _ARTIFACTS_UPLOAD_SECONDS
+            while offset < size and time.monotonic() < deadline:
+                artifacts.file.seek(offset)
+                chunk = artifacts.file.read(_REFRESH_CHUNK_BYTES)
+                try:
+                    response = self.client.post_bytes(
+                        f"/internal/runs/{task.run_id}/artifacts",
+                        chunk,
+                        claim_token=task.claim_token,
+                        headers={"X-Offset": str(offset)},
+                    )
+                except ApiUnavailable as exc:
+                    logger.warning(
+                        "run %s: artifact upload failed (%s); retrying", task.run_id, exc
+                    )
+                    time.sleep(1)
+                    continue
+                if response.status_code == 200:
+                    offset = response.json()["offset"]
+                elif response.status_code == 409:
+                    offset = response.json()["expected_offset"]
+                else:
+                    return {"error": f"the API refused the artifacts (HTTP {response.status_code})"}
+            if offset < size:
+                return {"error": "the artifacts could not be uploaded in time"}
+            return summary
+        finally:
+            artifacts.close()
 
     # ------------------------------------------------------------------ refreshes
 
@@ -835,6 +942,7 @@ class Worker:
         return_code: int | None,
         recap: dict[str, int],
         host_keys: dict | None = None,
+        artifacts: dict | None = None,
     ) -> None:
         body = {
             "last_seq": last_seq,
@@ -847,6 +955,8 @@ class Worker:
             body["learned_host_keys"] = host_keys["learned"]
         if host_keys and host_keys["problems"]:
             body["host_key_problems"] = host_keys["problems"]
+        if artifacts:
+            body["artifacts"] = artifacts
         deadline = time.monotonic() + _FLUSH_TIMEOUT_SECONDS
         delay = 0.5
         while time.monotonic() < deadline:

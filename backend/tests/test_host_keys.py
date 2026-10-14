@@ -218,7 +218,11 @@ def _prepared(monkeypatch, host_keys, **extra) -> tuple[dict, Path]:
 @pytest.mark.usefixtures("_clean_tmp")
 def test_a_run_without_checking_gets_nothing_extra(monkeypatch) -> None:
     job, pdd = _prepared(monkeypatch, None)
-    assert job["extravars"] == {"keep": 1, "ansible_ssh_args": "-o StrictHostKeyChecking=no"}
+    assert job["extravars"] == {
+        "keep": 1,
+        "ansible_ssh_args": "-o StrictHostKeyChecking=no",
+        "ansideck_artifacts_dir": str(pdd / "ansideck-artifacts"),
+    }
     assert not (pdd / "known_hosts").exists()
     assert "host_keys" not in job
 

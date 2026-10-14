@@ -23,6 +23,11 @@ def run_log_path(run_id: int) -> Path:
     return runs_dir() / f"{run_id}.jsonl"
 
 
+def run_artifacts_path(run_id: int) -> Path:
+    """A run's artifacts: a gzipped tar (files under artifacts/)."""
+    return runs_dir() / f"{run_id}.artifacts.tar.gz"
+
+
 def galaxy_dir() -> Path:
     path = Path(get_settings().data_dir) / "galaxy"
     path.mkdir(parents=True, exist_ok=True)

@@ -31,6 +31,11 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Added
 
+- **Run artifacts**: files a playbook leaves in `$ARTIFACTS_DIR` (or `ansideck_artifacts_dir`) are kept with
+  the run, listed on its page and downloadable (one file or a `.tar.gz`) by people who can start runs and
+  trigger API keys; they aren't scrubbed of secrets. Limits and retention: `RUN_ARTIFACT_MAX_MB` (100),
+  `RUN_ARTIFACT_MAX_FILES` (1000), `RUN_ARTIFACT_RETENTION_DAYS` (30). Credentials may not set
+  `ARTIFACTS_DIR`.
 - **API key limits**: a key can be limited to source addresses (CIDRs) and to the playbooks and inventories
   it may start runs of; limits can be changed without a new token (audited) and survive rotation.
 - **Environment credentials for runs**: a run (or template) can get up to five environment-variable

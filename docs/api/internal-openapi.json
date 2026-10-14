@@ -1,6 +1,78 @@
 {
   "components": {
     "schemas": {
+      "ArtifactFile": {
+        "properties": {
+          "path": {
+            "maxLength": 1024,
+            "title": "Path",
+            "type": "string"
+          },
+          "size": {
+            "minimum": 0.0,
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "size"
+        ],
+        "title": "ArtifactFile",
+        "type": "object"
+      },
+      "ArtifactsIn": {
+        "description": "The run's artifacts as uploaded (POST /runs/{id}/artifacts), or why they weren't kept.",
+        "properties": {
+          "bytes": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "files": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ArtifactFile"
+            },
+            "maxItems": 100000,
+            "title": "Files",
+            "type": "array"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "tar_bytes": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Tar Bytes",
+            "type": "integer"
+          }
+        },
+        "title": "ArtifactsIn",
+        "type": "object"
+      },
       "ClaimIn": {
         "properties": {
           "egress_filtered": {
@@ -111,6 +183,16 @@
       },
       "CompleteIn": {
         "properties": {
+          "artifacts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactsIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "host_counts": {
             "anyOf": [
               {
@@ -1353,6 +1435,66 @@
           }
         },
         "summary": "Refresh Output"
+      }
+    },
+    "/internal/runs/{run_id}/artifacts": {
+      "post": {
+        "description": "Appends a chunk of the run's artifacts tar at X-Offset (a resent chunk is accepted\nagain; a gap is refused with the offset to resend from).",
+        "operationId": "run_artifacts_internal_runs__run_id__artifacts_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-claim-token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "title": "X-Claim-Token",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-offset",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "X-Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Run Artifacts Internal Runs  Run Id  Artifacts Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Artifacts"
       }
     },
     "/internal/runs/{run_id}/complete": {

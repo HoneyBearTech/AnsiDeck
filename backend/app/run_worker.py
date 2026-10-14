@@ -12,14 +12,15 @@ Protocol: one JSON job line on stdin: ansible_runner.run kwargs plus "event_fd",
 "project" (a run of a playbook synced from git: {"playbook": its path in the repository}; the
 repository itself, a tar, follows the job line on stdin and is unpacked as the project) and
 "host_keys" (None, or {"mode": "accept_new" | "strict", "known_hosts": text}: see
-host_key_ssh_args) and "env" (variables of the run's environment-variable credentials, set in
+host_key_ssh_args), "env" (variables of the run's environment-variable credentials, set in
 this process's environment, which ansible-runner hands to the playbook; never written to a
-file).
+file) and "artifacts" ({"max_bytes", "max_files"}: see collect_artifacts).
 One JSON line per message on the inherited event_fd: {"type": "refused", "reason": ...} alone
 if the run can't be set up (e.g. its repository won't unpack), else {"type": "started",
 "private_data_dir": ...} first, then {"type": "event", "event": {...}} for each
 ansible-runner event (see bounded_event), {"type": "host_keys_learned", "lines": [...]} if ssh
-learned host keys, then a final {"type": "result", "status": ..., "rc": ...}.
+learned host keys, the run's artifacts ("artifacts_chunk" messages, then "artifacts"), then a
+final {"type": "result", "status": ..., "rc": ...}.
 No line is longer than MAX_MESSAGE_BYTES (app.run_executor stops
 a run process that sends one).
 SIGTERM is turned into a clean ansible-runner cancel by ansible-runner itself (it
@@ -243,6 +244,80 @@ def read_learned(pdd: Path) -> list[str]:
     return lines[:_MAX_LEARNED_LINES]
 
 
+# Not "artifacts": ansible-runner keeps its own files (unscrubbed output) in <pdd>/artifacts.
+ARTIFACTS = "ansideck-artifacts"
+_ARTIFACT_CHUNK = 1024 * 1024
+
+
+def collect_artifacts(pdd: Path, max_bytes: int, max_files: int) -> dict:
+    """What the playbook left in ARTIFACTS_DIR, as a gzipped tar: {"tar", "files" [{path,
+    size}], "bytes"}, or {"error"} when over the limits. Regular files only, never through a
+    link (the playbook owns the directory and could plant one pointing anywhere its user can
+    read, which is no more than it could copy in itself)."""
+    import tarfile
+
+    root = pdd / ARTIFACTS
+    files: list[dict] = []
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames.sort()
+        for name in sorted(filenames):
+            path = os.path.join(dirpath, name)
+            info = os.lstat(path)
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            files.append({"path": os.path.relpath(path, root), "size": info.st_size})
+            total += info.st_size
+            if len(files) > max_files:
+                return {"error": f"more than {max_files} files in ARTIFACTS_DIR: none were kept"}
+            if total > max_bytes:
+                mb = 1024 * 1024
+                limit = f"{max_bytes // mb} MB" if max_bytes >= mb else f"{max_bytes} bytes"
+                return {"error": f"over {limit} in ARTIFACTS_DIR: none were kept"}
+    if not files:
+        return {}
+    tar_path = pdd / "artifacts.tar.gz"
+    with tarfile.open(tar_path, "w:gz") as tar:
+        for item in files:
+            fd = os.open(root / item["path"], os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, "rb") as handle:
+                member = tarfile.TarInfo(f"artifacts/{item['path']}")
+                member.size = os.fstat(handle.fileno()).st_size
+                member.mode = 0o644
+                member.mtime = int(time.time())
+                tar.addfile(member, handle)
+                item["size"] = member.size
+    return {"tar": tar_path, "files": files, "bytes": sum(f["size"] for f in files)}
+
+
+def send_artifacts(pdd: Path, limits: dict, emit) -> None:
+    import base64
+    import hashlib
+
+    found = collect_artifacts(pdd, limits["max_bytes"], limits["max_files"])
+    if "error" in found:
+        emit({"type": "artifacts", "error": found["error"]})
+        return
+    if not found:
+        return
+    digest = hashlib.sha256()
+    size = 0
+    with open(found["tar"], "rb") as tar:
+        while chunk := tar.read(_ARTIFACT_CHUNK):
+            digest.update(chunk)
+            size += len(chunk)
+            emit({"type": "artifacts_chunk", "data": base64.b64encode(chunk).decode()})
+    emit(
+        {
+            "type": "artifacts",
+            "files": found["files"],
+            "bytes": found["bytes"],
+            "tar_bytes": size,
+            "sha256": digest.hexdigest(),
+        }
+    )
+
+
 def prepare(job: dict) -> str:
     """Creates the run's private data dir (0700) with its playbook and inventory, and gives
     ansible a home of its own in it: its SSH ControlPersist sockets (~/.ansible/cp) would
@@ -297,6 +372,13 @@ def prepare(job: dict) -> str:
     # The API checked the names (app.env_credentials); none can touch ansible, Python, the
     # loader or what was set above.
     os.environ.update({name: value for name, value in env.items() if name not in os.environ})
+    # Files the playbook leaves here are kept with the run (send_artifacts).
+    (pdd / ARTIFACTS).mkdir(mode=0o700)
+    os.environ["ARTIFACTS_DIR"] = str(pdd / ARTIFACTS)
+    job["extravars"] = {
+        **(job.get("extravars") or {}),
+        "ansideck_artifacts_dir": str(pdd / ARTIFACTS),
+    }
     job["private_data_dir"] = str(pdd)
     job["playbook"] = playbook
     job["inventory"] = str(pdd / "inventory" / "hosts.yml")
@@ -705,6 +787,7 @@ def run(job: dict) -> None:
 
     import ansible_runner  # here, not at the top: --sweep should start fast
 
+    artifacts = job.pop("artifacts", None)
     try:
         pdd = prepare(job)
     except Exception as exc:  # noqa: BLE001 - reported, the run fails with this reason
@@ -715,6 +798,13 @@ def run(job: dict) -> None:
         runner = ansible_runner.run(event_handler=on_event, **job)
         if learned := read_learned(Path(pdd)):
             emit({"type": "host_keys_learned", "lines": learned})
+        if artifacts:
+            try:
+                send_artifacts(Path(pdd), artifacts, emit)
+            except Exception as exc:  # noqa: BLE001 - the run's own result still counts
+                emit(
+                    {"type": "artifacts", "error": f"could not collect the artifacts: {exc}"[:300]}
+                )
         emit({"type": "result", "status": runner.status, "rc": runner.rc})
     finally:
         shutil.rmtree(pdd, ignore_errors=True)

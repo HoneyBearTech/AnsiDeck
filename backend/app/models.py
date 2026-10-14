@@ -711,6 +711,18 @@ class Run(Base):
     git_commit: Mapped[str | None] = mapped_column(String(64), default=None)
     playbook_path: Mapped[str | None] = mapped_column(String(1024), default=None)
 
+    # Files the playbook left in its ARTIFACTS_DIR, kept as a tar (app.storage.run_artifacts_path):
+    # [{"path", "size"}], their total size, the tar's size and sha256; or why they weren't kept;
+    # and when the retention removed them.
+    artifacts_files: Mapped[list | None] = mapped_column(JSON(none_as_null=True), default=None)
+    artifacts_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    artifacts_tar_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    artifacts_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
+    artifacts_error: Mapped[str | None] = mapped_column(String(300), default=None)
+    artifacts_deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+
     # Log appends are idempotent and crash-safe: the last event sequence number written and
     # the log file's committed length (anything past it is an unfinished write, cut off).
     log_seq: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

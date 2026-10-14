@@ -17,7 +17,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -53,9 +53,9 @@ from app.permissions import (
     project_permissions,
 )
 from app.queue import QUEUE_TOPIC, fail_run, wait_reason
-from app.schemas.runs import RunCreate, RunOut
+from app.schemas.runs import ArtifactsOut, RunCreate, RunOut
 from app.scoping import get_scoped, readable_project_ids
-from app.storage import playbook_path, run_log_path
+from app.storage import playbook_path, run_artifacts_path, run_log_path
 
 router = APIRouter()
 
@@ -87,6 +87,7 @@ def _run_out(db: Session, run: Run, user: User) -> RunOut:
     can_see = Permission.RUNS_READ_EXTRA_VARS in project_permissions(db, user, run.project_id)
     if out.extra_vars and not can_see:
         out.extra_vars = dict.fromkeys(out.extra_vars, HIDDEN)
+    out.artifacts_count = len(run.artifacts_files or [])
     return out
 
 
@@ -686,6 +687,99 @@ def export_log(
         headers={
             "Content-Disposition": f'attachment; filename="ansideck-run-{run.id}.{extension}"'
         },
+    )
+
+
+@router.get("/{run_id}/artifacts", response_model=ArtifactsOut)
+def list_artifacts(
+    run_id: int,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> ArtifactsOut:
+    """The files the run left in its ARTIFACTS_DIR (names and sizes), for anyone who can see
+    the run; downloading them needs runs:trigger."""
+    run = get_scoped(db, user, request, Run, run_id, Permission.CONTENT_READ, "Run not found")
+    return ArtifactsOut(
+        files=run.artifacts_files or [],
+        bytes=run.artifacts_bytes,
+        error=run.artifacts_error,
+        deleted_at=run.artifacts_deleted_at,
+        can_download=Permission.RUNS_TRIGGER in project_permissions(db, user, run.project_id),
+    )
+
+
+def _artifacts_tar(db: Session, user: User, request: Request, run_id: int) -> tuple[Run, Path]:
+    run = get_scoped(db, user, request, Run, run_id, Permission.RUNS_TRIGGER, "Run not found")
+    path = run_artifacts_path(run.id)
+    if not run.artifacts_files or run.artifacts_deleted_at is not None or not path.is_file():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "This run has no artifacts")
+    return run, path
+
+
+@router.get(
+    "/{run_id}/artifacts/download",
+    response_class=FileResponse,
+    responses={200: {"content": {"application/gzip": {}}}},
+)
+def download_artifacts(
+    run_id: int,
+    request: Request,
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    """All of the run's artifacts as a gzipped tar (files under artifacts/). They are not
+    scrubbed of secrets, so this needs runs:trigger."""
+    run, path = _artifacts_tar(db, user, request, run_id)
+    audit.record(
+        db, "run.artifacts_download", actor=user, target_type="run", target_id=run.id,
+        ip=client_ip(request), project_id=run.project_id,
+    )  # fmt: skip
+    return FileResponse(
+        path,
+        media_type="application/gzip",
+        filename=f"ansideck-run-{run.id}-artifacts.tar.gz",
+    )
+
+
+@router.get(
+    "/{run_id}/artifacts/file",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"application/octet-stream": {}}}},
+)
+def download_artifact(
+    run_id: int,
+    request: Request,
+    path: str = Query(min_length=1, max_length=1024),
+    user: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """One artifact (its path as listed). Needs runs:trigger, like the whole set."""
+    run, tar_path = _artifacts_tar(db, user, request, run_id)
+    if path not in {f["path"] for f in run.artifacts_files or []}:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such artifact")
+    audit.record(
+        db, "run.artifacts_download", actor=user, target_type="run", target_id=run.id,
+        ip=client_ip(request), project_id=run.project_id, detail={"path": path},
+    )  # fmt: skip
+
+    def body() -> Iterator[bytes]:
+        import tarfile
+
+        with tarfile.open(tar_path, "r:gz") as tar:
+            member = tar.getmember(f"artifacts/{path}")
+            handle = tar.extractfile(member) if member.isreg() else None
+            if handle is None:
+                return
+            while chunk := handle.read(1 << 20):
+                yield chunk
+
+    # The name comes from the playbook: only plain characters go into the header.
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(path).name)[:200] or "artifact"
+    return StreamingResponse(
+        body(),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
     )
 
 

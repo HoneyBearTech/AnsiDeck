@@ -112,6 +112,11 @@ class Settings(BaseSettings):
     audit_retention_days: int = 365
     # API keys revoked or expired longer ago than this are deleted; 0 keeps them forever.
     api_key_retention_days: int = Field(90, ge=0)
+    # Run artifacts (files a playbook leaves in ARTIFACTS_DIR): per run at most this many MB
+    # (uncompressed) and files, deleted this many days after the run ended (0 = keep).
+    run_artifact_max_mb: int = Field(100, ge=1, le=10240)
+    run_artifact_max_files: int = Field(1000, ge=1, le=100_000)
+    run_artifact_retention_days: int = Field(30, ge=0)
 
     # Notifications (app.notifications). Webhooks to loopback, private, link-local and other
     # non-public addresses are refused unless their host name, address or CIDR is listed here

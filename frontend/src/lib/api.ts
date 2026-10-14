@@ -519,6 +519,11 @@ export interface Run {
   hosts_changed: number | null;
   hosts_failed: number | null;
   hosts_unreachable: number | null;
+  // Files it left in ARTIFACTS_DIR (listed by getRunArtifacts), or why they weren't kept.
+  artifacts_count: number;
+  artifacts_bytes: number | null;
+  artifacts_error: string | null;
+  artifacts_deleted_at: string | null;
   // Why a queued run hasn't started (getRun only; null otherwise).
   waiting_reason: string | null;
   // It refreshed its inventory's sources first (waiting for that refresh while queued).
@@ -595,6 +600,15 @@ export interface RunTemplate {
 }
 
 export type RunLogFormat = "text" | "jsonl";
+
+export interface RunArtifacts {
+  files: { path: string; size: number }[];
+  bytes: number | null;
+  error: string | null;
+  deleted_at: string | null;
+  // Downloading needs runs:trigger (artifacts aren't scrubbed of secrets).
+  can_download: boolean;
+}
 
 export interface LintFinding {
   rule: string;
@@ -1209,6 +1223,10 @@ export const api = {
   rerun: (id: number) => request<Run>(`/runs/${id}/rerun`, { method: "POST" }),
   /** A link that downloads the run's output (what it has produced so far, if still going). */
   runLogUrl: (id: number, format: RunLogFormat) => `${API_BASE_URL}/runs/${id}/log?format=${format}`,
+  getRunArtifacts: (id: number) => request<RunArtifacts>(`/runs/${id}/artifacts`),
+  runArtifactsUrl: (id: number) => `${API_BASE_URL}/runs/${id}/artifacts/download`,
+  runArtifactUrl: (id: number, path: string) =>
+    `${API_BASE_URL}/runs/${id}/artifacts/file?path=${encodeURIComponent(path)}`,
 
   listRunTemplates: () => request<RunTemplate[]>(scoped("/run-templates")),
   getRunTemplate: (id: number) => request<RunTemplate>(`/run-templates/${id}`),

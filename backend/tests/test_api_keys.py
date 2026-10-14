@@ -303,6 +303,9 @@ def test_a_key_is_refused_on_every_served_operation_except_the_run_routes(world)
         ("GET", "/api/runs/{run_id}"),
         ("POST", "/api/runs/{run_id}/cancel"),
         ("GET", "/api/runs/{run_id}/log"),
+        ("GET", "/api/runs/{run_id}/artifacts"),
+        ("GET", "/api/runs/{run_id}/artifacts/download"),
+        ("GET", "/api/runs/{run_id}/artifacts/file"),
         ("POST", "/api/run-templates/{template_id}/launch"),
     }
     probed = 0
@@ -328,6 +331,9 @@ def test_only_the_run_routes_are_enabled_for_api_keys() -> None:
         ("GET", "/api/runs/{run_id}"),
         ("POST", "/api/runs/{run_id}/cancel"),
         ("GET", "/api/runs/{run_id}/log"),
+        ("GET", "/api/runs/{run_id}/artifacts"),
+        ("GET", "/api/runs/{run_id}/artifacts/download"),
+        ("GET", "/api/runs/{run_id}/artifacts/file"),
         ("POST", "/api/run-templates/{template_id}/launch"),
     }
 

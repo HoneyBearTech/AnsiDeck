@@ -45,6 +45,15 @@ class HostKeyProblem(BaseModel):
     presented: str | None = None
 
 
+class ArtifactsOut(BaseModel):
+    files: list[dict]  # [{"path", "size"}]
+    bytes: int | None
+    error: str | None
+    deleted_at: datetime | None
+    # Downloading needs runs:trigger in the run's project (artifacts aren't scrubbed of secrets).
+    can_download: bool
+
+
 class RunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -103,6 +112,12 @@ class RunOut(BaseModel):
     git_commit: str | None = None
     playbook_path: str | None = None
     commit_url: str | None = None
+    # Files it left in ARTIFACTS_DIR (GET /runs/{id}/artifacts lists them), or why they weren't
+    # kept, and when the retention deleted them.
+    artifacts_count: int = 0
+    artifacts_bytes: int | None = None
+    artifacts_error: str | None = None
+    artifacts_deleted_at: datetime | None = None
     # Why a queued run hasn't started (only on GET /runs/{id}; None otherwise).
     waiting_reason: str | None = None
 

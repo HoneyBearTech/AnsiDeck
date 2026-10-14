@@ -33,6 +33,8 @@ _DENIED = frozenset(
         "CREDENTIAL_ENCRYPTION_KEY", "DATABASE_URL", "AUTH_SECRET_KEY",
         "SECRETS_STORE_TOKEN_FILE", "SECRETS_STORE_SECRET_ID_FILE", "SECRETS_STORE_ROLE_ID",
         "VAULT_TOKEN", "BAO_TOKEN",
+        # where a run's artifacts go (app.run_worker)
+        "ARTIFACTS_DIR",
     }
 )  # fmt: skip
 _DENIED_PREFIXES = (
