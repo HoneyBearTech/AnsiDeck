@@ -37,7 +37,10 @@ RUN uv sync --frozen --no-dev
 
 FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 AS runtime
 # upgrade: security fixes published since the pinned base image (the release scan fails on any
-# fixable HIGH or CRITICAL vulnerability).
+# fixable HIGH or CRITICAL vulnerability). A release passes its run id as SECURITY_UPDATES, so a
+# build cache can't hand it an upgrade from an earlier build (v0.6.0's first build got a stale
+# libcurl that way).
+ARG SECURITY_UPDATES=
 RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends openssh-client git nftables \
