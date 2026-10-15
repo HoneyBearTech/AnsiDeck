@@ -7,6 +7,15 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-15
+
+Runs check SSH host keys and can be limited to their inventory's hosts; workers keep runs away from the
+API and cloud metadata. Passkeys and `REQUIRE_ADMIN_2FA`, short-lived SSH certificates from the secret
+store, environment credentials and artifacts for runs, API key limits and rotation, ntfy and Gotify. Dynamic
+inventory sources now run on their own (each with its own credential and schedule), can be inventory files
+and scripts from a git source, and the AWS and Proxmox plugins work. Upgrading needs this release's
+`compose.yaml` and workers of this release: see Upgrading.
+
 ### Upgrading
 
 - The API applies database migrations 0017 to 0032 when it starts. Each inventory's first refresh after
@@ -484,7 +493,8 @@ come with SBOM and provenance attestations; see [docs/verifying-releases.md](doc
   need the usual pull-and-restart: database migrations run on start-up. An installation still on the
   old SQLite database must run the one-time import first (see [docs/upgrading.md](docs/upgrading.md)).
 
-[Unreleased]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/HoneyBearTech/AnsiDeck/compare/v0.2.0...v0.3.0
