@@ -227,6 +227,109 @@ export function EditReferenceDialog({
   );
 }
 
+/** "Move to OpenBao": writes a secret stored in AnsiDeck into the store as a new secret (never
+ * over an existing one) and keeps a reference instead. One way: AnsiDeck's copy is deleted. */
+export function MoveToStoreDialog({
+  row,
+  info,
+  defaultKey,
+  wholeSecret = false,
+  keys,
+  move,
+  onMoved,
+  idPrefix,
+}: {
+  row: SecretRef & { name: string };
+  info: SecretStoreInfo | null;
+  defaultKey: string;
+  /** An env credential: each variable becomes a key of the secret (named in `keys`). */
+  wholeSecret?: boolean;
+  keys?: string[] | null;
+  move: (update: ReferenceUpdate) => Promise<unknown>;
+  onMoved: () => void;
+  idPrefix: string;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [path, setPath] = React.useState("");
+  const [key, setKey] = React.useState(defaultKey);
+  const [error, setError] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+
+  function handleOpenChange(next: boolean) {
+    if (next) {
+      setPath("");
+      setKey(defaultKey);
+      setError(null);
+    }
+    setOpen(next);
+  }
+
+  async function handleMove() {
+    setError(null);
+    setSaving(true);
+    try {
+      await move(
+        wholeSecret ? { store_path: path.trim() } : { store_path: path.trim(), store_key: key.trim() },
+      );
+      setOpen(false);
+      onMoved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!info?.enabled || !info.move_enabled || row.store !== "ansideck") return null;
+  const target = `${info.base_path ?? ""}${path.trim() || "…"}${wholeSecret ? "" : `#${key.trim() || "…"}`}`;
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          Move to {info.label}
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            Move "{row.name}" to {info.label}
+          </DialogTitle>
+          <DialogDescription>
+            AnsiDeck writes it to {info.label} as a new secret, reads it back, then deletes its own copy and
+            keeps a reference. This can&apos;t be undone here, and it never overwrites a secret already in{" "}
+            {info.label}.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-4">
+          <StorePathFields
+            info={info}
+            path={path}
+            onPathChange={setPath}
+            secretKey={wholeSecret ? undefined : key}
+            onSecretKeyChange={wholeSecret ? undefined : setKey}
+            idPrefix={idPrefix}
+          />
+          <p className="text-sm">
+            Goes to <span className="font-mono wrap-anywhere">{target}</span>
+            {wholeSecret && keys && keys.length > 0 && (
+              <>
+                {" "}
+                with the keys <span className="font-mono wrap-anywhere">{keys.join(" · ")}</span>
+              </>
+            )}
+          </p>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button onClick={handleMove} disabled={saving || !path.trim() || (!wholeSecret && !key.trim())}>
+            {saving ? "Moving…" : `Move to ${info.label}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /** Where a secret lives, for list cards. */
 export function SecretLocation({ row, label }: { row: SecretRef; label: string | undefined }) {
   if (row.store !== "external") return null;

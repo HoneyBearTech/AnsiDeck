@@ -3853,6 +3853,35 @@
         "title": "ModeIn",
         "type": "object"
       },
+      "MoveToStore": {
+        "description": "Where in the secret store a secret stored in AnsiDeck goes: a new `store_path` under the\nproject's subtree and the key to hold it (default private_key or password; an env\ncredential has none: each variable becomes a key).",
+        "properties": {
+          "store_key": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Store Key"
+          },
+          "store_path": {
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Store Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "store_path"
+        ],
+        "title": "MoveToStore",
+        "type": "object"
+      },
       "PasskeyAddedOut": {
         "properties": {
           "passkey": {
@@ -6267,6 +6296,11 @@
           "label": {
             "title": "Label",
             "type": "string"
+          },
+          "move_enabled": {
+            "default": false,
+            "title": "Move Enabled",
+            "type": "boolean"
           },
           "path_rules": {
             "title": "Path Rules",
@@ -10272,6 +10306,91 @@
           }
         },
         "summary": "Check Credential",
+        "tags": [
+          "credentials"
+        ]
+      }
+    },
+    "/api/credentials/{credential_id}/move-to-store": {
+      "post": {
+        "description": "Moves a key or variables stored here into the secret store (see move_to_store).",
+        "operationId": "move_credential_to_store_api_credentials__credential_id__move_to_store_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "title": "Credential Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveToStore"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Move Credential To Store",
         "tags": [
           "credentials"
         ]
@@ -19550,6 +19669,91 @@
           }
         },
         "summary": "Check Vault Password",
+        "tags": [
+          "vault-passwords"
+        ]
+      }
+    },
+    "/api/vault-passwords/{vault_password_id}/move-to-store": {
+      "post": {
+        "description": "Moves a password stored here into the secret store (see move_to_store).",
+        "operationId": "move_vault_password_to_store_api_vault_passwords__vault_password_id__move_to_store_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vault_password_id",
+            "required": true,
+            "schema": {
+              "title": "Vault Password Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveToStore"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultPasswordOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Move Vault Password To Store",
         "tags": [
           "vault-passwords"
         ]

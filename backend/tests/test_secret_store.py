@@ -40,6 +40,9 @@ def store(monkeypatch, tmp_path):
         "secrets": {"/v1/secret/data/ansideck/7/web/ssh": {"private_key": VALUE, "n": 5}},
         "status": {},
         "versions": {},  # a secret's KV version (default 3)
+        "writes": [],  # (path, body) of every write
+        "write_status": {},  # like status, for writes
+        "deleted": set(),  # paths whose versions are all deleted (reads: 404, cas 0: mismatch)
         "once": {},  # like status, for one request only
         "token_file": token_file,
         "tmp": tmp_path,
@@ -69,6 +72,23 @@ def store(monkeypatch, tmp_path):
             body = json.loads(request.content)
             state["child_request"] = body
             return httpx.Response(200, json={"auth": {"client_token": "child-token"}})
+        if request.method == "POST" and path.startswith("/v1/secret/data/"):
+            # KV v2 with check-and-set: cas 0 only creates (any version there, even a deleted
+            # one in "deleted", is a mismatch).
+            body = json.loads(request.content)
+            state["writes"].append((path, body))
+            if path in state["write_status"]:
+                code, answer = state["write_status"][path]
+                return httpx.Response(code, json=answer)
+            cas = (body.get("options") or {}).get("cas")
+            if cas is not None and (path in state["secrets"] or path in state["deleted"]):
+                return httpx.Response(
+                    400,
+                    json={"errors": ["check-and-set parameter did not match the current version"]},
+                )
+            state["secrets"][path] = body["data"]
+            state["versions"][path] = state["versions"].get(path, 0) + 1
+            return httpx.Response(200, json={"data": {"version": state["versions"][path]}})
         if path in state["secrets"]:
             return httpx.Response(
                 200,

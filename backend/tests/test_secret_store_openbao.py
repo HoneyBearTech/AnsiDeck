@@ -547,3 +547,70 @@ def test_a_reference_is_pointed_elsewhere_in_the_real_store(store, client) -> No
         db.close()
     assert detail["version"] == 2
     assert detail["location_before"] == f"secret/{PREFIX}/1/{base}/a#password"
+
+
+def test_a_secret_moves_into_the_store_with_a_create_only_policy(
+    client, approle, monkeypatch, tmp_path
+) -> None:
+    """The README's Move policy (read and create, never update): a new path is written once,
+    and neither an existing secret nor a deleted one is ever overwritten."""
+    from app.models import Credential
+
+    with _admin() as bao:
+        rules = f'path "secret/data/{PREFIX}/*" {{ capabilities = ["read", "create"] }}'
+        bao.put("/v1/sys/policies/acl/ansideck-test-move", json={"policy": rules})
+        token = bao.post(
+            "/v1/auth/token/create", json={"policies": ["ansideck-test-move"], "ttl": "10m"}
+        ).json()["auth"]["client_token"]
+    token_file = tmp_path / "token"
+    token_file.write_text(token)
+    for name, value in {
+        "SECRETS_STORE_URL": ADDR,
+        "SECRETS_STORE_AUTH": "token",
+        "SECRETS_STORE_TOKEN_FILE": str(token_file),
+        "SECRETS_STORE_PATH_PREFIX": PREFIX,
+        "SECRETS_STORE_ALLOW_MOVE": "true",
+    }.items():
+        monkeypatch.setenv(name, value)
+    get_settings.cache_clear()
+    secret_store.reset()
+    try:
+        _login(client)
+        base = f"move-{uuid.uuid4().hex[:8]}"
+        key = _generate_key_pem()
+        ids = [
+            client.post(
+                "/api/credentials", json={"name": f"{base}-{n}", "private_key": key}
+            ).json()["id"]
+            for n in range(3)
+        ]
+        moved = client.post(
+            f"/api/credentials/{ids[0]}/move-to-store", json={"store_path": f"{base}/a"}
+        )
+        assert moved.status_code == 200, moved.text
+        with _admin() as bao:
+            stored = bao.get(f"/v1/secret/data/{PREFIX}/1/{base}/a").json()["data"]
+        assert stored["data"] == {"private_key": key} and stored["metadata"]["version"] == 1
+        db = get_sessionmaker()()
+        row = db.get(Credential, ids[0])
+        assert row.encrypted_private_key is None
+        assert secret_store.resolve_credential(row) == key
+        db.close()
+
+        taken = client.post(
+            f"/api/credentials/{ids[1]}/move-to-store", json={"store_path": f"{base}/a"}
+        )
+        assert taken.status_code == 409 and "already has a secret" in taken.text
+
+        with _admin() as bao:  # deleted: reads as missing, but its versions remain
+            bao.delete(f"/v1/secret/data/{PREFIX}/1/{base}/a")
+        deleted = client.post(
+            f"/api/credentials/{ids[2]}/move-to-store", json={"store_path": f"{base}/a"}
+        )
+        assert deleted.status_code == 400 and "needs create" in deleted.text
+        with _admin() as bao:
+            versions = bao.get(f"/v1/secret/metadata/{PREFIX}/1/{base}/a").json()["data"]
+        assert versions["current_version"] == 1  # never written again
+    finally:
+        secret_store.reset()
+        get_settings.cache_clear()

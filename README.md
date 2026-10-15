@@ -223,6 +223,20 @@ enforce it too, set `SECRETS_STORE_PROJECT_POLICY=ansideck-project-{project_id}`
 `token_policies`, and add `path "auth/token/create" { capabilities = ["update"] }` to its policy: each read then
 uses a single-use child token that holds only that project's policy.
 
+**Moving secrets into the store (opt-in).** With `SECRETS_STORE_ALLOW_MOVE=true`, a key, vault password or set of
+environment variables stored in AnsiDeck gets **Move to OpenBao**: AnsiDeck writes it to a new path in the
+project's subtree, reads it back, and only then deletes its own encrypted copy and keeps a reference. It never
+overwrites anything: it checks that nothing is at the path, writes with check-and-set 0, and AnsiDeck's policy
+gets `create` but never `update` or `delete`, so the store refuses an overwrite itself:
+
+```sh
+path "secret/data/ansideck/*" { capabilities = ["read", "create"] }
+```
+
+(With `SECRETS_STORE_PROJECT_POLICY`, give each project policy `create` on its own subtree the same way.) A
+deleted secret's path stays taken until its metadata is deleted (`bao kv metadata delete`). Database backups
+taken before a move still hold the encrypted copy, readable with `CREDENTIAL_ENCRYPTION_KEY`.
+
 If the store can't be reached, is sealed, or refuses AnsiDeck's login, runs that need its secrets fail with that
 reason, and a **Secret store unavailable** notification goes to global channels once (and again when it works).
 The **Workers** page shows the store's status as AnsiDeck last checked it (every minute). Never give workers the

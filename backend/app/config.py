@@ -187,6 +187,10 @@ class Settings(BaseSettings):
     # Optional: the store's SSH secrets engine mounts (comma list) that "SSH certificate"
     # credentials may sign with (app.ssh_certificates). Empty: that kind isn't offered.
     secrets_store_ssh_mounts: str = ""
+    # Opt-in: "Move to the store" writes a secret stored here into the store (only ever
+    # creating a secret, never overwriting one) and keeps a reference instead. AnsiDeck's
+    # policy then needs "create" (never "update" or "delete") on its prefix.
+    secrets_store_allow_move: bool = False
 
     # Test-only escape hatch: lets requirements.yml reference local tarballs/dirs
     # so tests can install offline. Must stay False in any real deployment —

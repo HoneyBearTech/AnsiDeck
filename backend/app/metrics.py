@@ -172,6 +172,15 @@ SECRET_STORE_UP = Gauge(
 )
 for _outcome in ("ok", "unreachable", "denied", "not_found", "auth_failed", "sealed"):
     SECRET_STORE_READS.labels(_outcome)
+SECRET_STORE_WRITES = Counter(
+    "ansideck_secret_store_writes",
+    "Secrets AnsiDeck created in the secret store (Move to the store), by outcome (ok or the "
+    "error kind)",
+    ["outcome"],
+    registry=REGISTRY,
+)
+for _outcome in ("ok", "exists", "write_denied", "unreachable"):
+    SECRET_STORE_WRITES.labels(_outcome)
 SSH_CERTIFICATES = Counter(
     "ansideck_ssh_certificates",
     "SSH certificates the secret store signed for runs and tests, by outcome (ok or the "
@@ -248,6 +257,10 @@ def run_claimed(wait_seconds: float) -> None:
 
 def secret_store_read(outcome: str) -> None:
     SECRET_STORE_READS.labels(outcome[:20]).inc()
+
+
+def secret_store_write(outcome: str) -> None:
+    SECRET_STORE_WRITES.labels(outcome[:20]).inc()
 
 
 def ssh_certificate_signed(outcome: str) -> None:

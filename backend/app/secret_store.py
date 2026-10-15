@@ -62,6 +62,10 @@ _KIND_TEXT = {
     "missing_key": "the secret has no such key",
     "bad_value": "the value is not text",
     "bad_response": "unexpected answer from the secret store",
+    "exists": "a secret already exists at that path (AnsiDeck never overwrites one; a deleted "
+    "secret's versions count until its metadata is deleted)",
+    "write_denied": "the secret store refused the write: AnsiDeck's policy needs create on that "
+    "path, and a deleted secret there (until its metadata is deleted) blocks it",
     "ssh_disabled": "SSH certificates aren't enabled for that mount (SECRETS_STORE_SSH_MOUNTS)",
     "no_ssh_role": "no SSH role by that name (or no SSH secrets engine at that mount)",
     "principal_refused": "the SSH role doesn't allow one of the credential's principals",
@@ -428,6 +432,34 @@ class _Client:
             raise SecretStoreError("bad_response")
         return data, version
 
+    # --- writing -------------------------------------------------------------------------
+
+    def create(self, project_id: int, path: str, data: dict, deadline: float) -> int:
+        """Creates a project's secret that doesn't exist yet (check-and-set 0: the store
+        refuses if the path has any version, even a deleted one); its version."""
+        settings = get_settings()
+        segments = check_path(path)
+        api_path = _api_path(
+            settings.secrets_store_kv_mount,
+            "data",
+            settings.secrets_store_path_prefix,
+            str(int(project_id)),
+            *segments,
+        )
+        response = self._project_request(
+            project_id, "POST", api_path, deadline, json={"options": {"cas": 0}, "data": data}
+        )
+        if response.status_code == 400 and b"check-and-set" in response.content:
+            raise SecretStoreError("exists")
+        if response.status_code != 200:
+            # A create-only policy answers 403 for an existing path too: the caller read it
+            # first, so 403 here means the policy lacks create (or it appeared meanwhile).
+            raise self._fail(response, forbidden="write_denied")
+        try:
+            return int(response.json()["data"]["version"])
+        except (ValueError, KeyError, TypeError):
+            raise SecretStoreError("bad_response") from None
+
     # --- signing -------------------------------------------------------------------------
 
     def sign_ssh(
@@ -558,6 +590,22 @@ def read_all_versioned(
         raise
     metrics.secret_store_read("ok")
     return result
+
+
+def create_secret(
+    project_id: int, path: str, data: dict[str, str], deadline: float | None = None
+) -> int:
+    """Writes a new secret under a project's subtree (never overwriting one): its version.
+    SecretStoreError "exists" when the path is taken."""
+    if not enabled():
+        raise SecretStoreError("disabled")
+    try:
+        version = _client.create(project_id, path, data, deadline or _deadline())
+    except SecretStoreError as exc:
+        metrics.secret_store_write(exc.kind)
+        raise
+    metrics.secret_store_write("ok")
+    return version
 
 
 def sign_ssh_key(

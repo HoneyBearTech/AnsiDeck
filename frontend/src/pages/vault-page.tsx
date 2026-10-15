@@ -2,6 +2,7 @@ import * as React from "react";
 
 import {
   EditReferenceDialog,
+  MoveToStoreDialog,
   SecretCheckButton,
   SecretLocation,
   SecretSourcePicker,
@@ -388,6 +389,14 @@ export function VaultPage() {
                   {vaultPassword.store === "external" && (
                     <SecretCheckButton check={() => api.checkVaultPassword(vaultPassword.id)} />
                   )}
+                  <MoveToStoreDialog
+                    row={vaultPassword}
+                    info={store}
+                    defaultKey="password"
+                    move={(update) => api.moveVaultPasswordToStore(vaultPassword.id, update)}
+                    onMoved={refresh}
+                    idPrefix={`move-${vaultPassword.id}`}
+                  />
                   <EditReferenceDialog
                     row={vaultPassword}
                     info={store}

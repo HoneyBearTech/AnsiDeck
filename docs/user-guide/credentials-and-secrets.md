@@ -64,6 +64,11 @@ When the server is connected to a secret store (see the README's
 - **Edit reference** points it at another path or key (an environment credential: another secret).
   AnsiDeck reads the new one once to check it before saving; queued runs use it when they start. The audit
   log records the old and new locations and the version read.
+- **Move to OpenBao** (only when the server allows it, `SECRETS_STORE_ALLOW_MOVE`) takes a key, vault password
+  or set of variables stored in AnsiDeck into the store: give a new path (and for a key or password, the key
+  name). AnsiDeck writes it there as a new secret (never over an existing one, even a deleted one), reads it
+  back, and only then deletes its own copy. It can't be undone in AnsiDeck; the audit log records where it
+  went and the version.
 - A run's page lists which version of each reference its job read, so a change in the store can be traced
   to the runs that used it (the locations only for people who may see the project's secrets).
 - If the store is unreachable, runs that need it fail with the reason, and global admins can be notified

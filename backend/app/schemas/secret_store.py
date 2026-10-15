@@ -10,6 +10,8 @@ class SecretStoreInfo(BaseModel):
     # that kind isn't offered), and what the project's role names start with ("ansideck-7-").
     ssh_mounts: list[str] = []
     ssh_role_prefix: str | None = None
+    # Secrets stored in AnsiDeck can be moved into the store (SECRETS_STORE_ALLOW_MOVE).
+    move_enabled: bool = False
 
 
 class SecretStoreStatus(BaseModel):

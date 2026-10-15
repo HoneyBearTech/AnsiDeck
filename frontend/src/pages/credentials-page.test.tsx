@@ -38,6 +38,7 @@ describe("credentials", () => {
     expect(screen.getByText("NETBOX_TOKEN · NETBOX_URL")).toBeInTheDocument();
     expect(screen.getByText("secret/ansideck/1/web")).toBeInTheDocument();
     expect(screen.getAllByText("Environment variables")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Move to OpenBao" })).not.toBeInTheDocument(); // off
   });
 
   it("creates an SSH key credential, uploading the key from a file", async () => {
@@ -180,6 +181,75 @@ describe("credentials", () => {
     await user.click(dialog.getByRole("button", { name: "Save" }));
     await vi.waitFor(() =>
       expect(api.requests("PATCH /credentials/6")[0]?.body).toEqual({ store_path: "cloud/gcp" }),
+    );
+  });
+
+  it("moves a key stored in AnsiDeck into the secret store when that is allowed", async () => {
+    const here = credential({ id: 7, name: "deploy" });
+    const { api, user, screen } = renderApp("/credentials", {
+      routes: {
+        "GET /secret-store/info": { ...STORE["GET /secret-store/info"], move_enabled: true },
+        "GET /credentials": [here, sshCertCredential({ id: 8 })],
+        "POST /credentials/:id/move-to-store": reply(409, {
+          detail: "OpenBao already has a secret at secret/ansideck/1/web/deploy: choose another path",
+        }),
+      },
+    });
+    const buttons = await screen.findAllByRole("button", { name: "Move to OpenBao" });
+    expect(buttons).toHaveLength(1); // not for a certificate credential
+    await user.click(buttons[0]!);
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByText(/can't be undone here/)).toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Move to OpenBao" })).toBeDisabled();
+    await user.type(dialog.getByLabelText("Path in OpenBao"), "web/deploy");
+    expect(dialog.getByText("secret/ansideck/1/web/deploy#private_key")).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Move to OpenBao" }));
+    expect(await dialog.findByText(/already has a secret/)).toBeInTheDocument();
+
+    api.set({
+      "POST /credentials/:id/move-to-store": { ...here, store: "external" },
+      "GET /credentials": [
+        {
+          ...here,
+          store: "external",
+          store_path: "web/key",
+          store_location: "secret/ansideck/1/web/key#private_key",
+        },
+      ],
+    });
+    await user.clear(dialog.getByLabelText("Path in OpenBao"));
+    await user.type(dialog.getByLabelText("Path in OpenBao"), "web/key");
+    await user.click(dialog.getByRole("button", { name: "Move to OpenBao" }));
+    expect(await screen.findByText("secret/ansideck/1/web/key#private_key")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Move to OpenBao" })).not.toBeInTheDocument();
+    expect(api.requests("POST /credentials/7/move-to-store").at(-1)?.body).toEqual({
+      store_path: "web/key",
+      store_key: "private_key",
+    });
+  });
+
+  it("moves environment variables as the keys of one secret", async () => {
+    const env = credential({
+      id: 9,
+      name: "aws",
+      kind: "env",
+      env_names: ["AWS_ACCESS_KEY_ID", "AWS_REGION"],
+    });
+    const { api, user, screen } = renderApp("/credentials", {
+      routes: {
+        "GET /secret-store/info": { ...STORE["GET /secret-store/info"], move_enabled: true },
+        "GET /credentials": [env],
+        "POST /credentials/:id/move-to-store": { ...env, store: "external" },
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "Move to OpenBao" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.queryByLabelText("Key in that secret")).not.toBeInTheDocument();
+    expect(dialog.getByText("AWS_ACCESS_KEY_ID · AWS_REGION")).toBeInTheDocument();
+    await user.type(dialog.getByLabelText("Path in OpenBao"), "cloud/aws");
+    await user.click(dialog.getByRole("button", { name: "Move to OpenBao" }));
+    await vi.waitFor(() =>
+      expect(api.requests("POST /credentials/9/move-to-store")[0]?.body).toEqual({ store_path: "cloud/aws" }),
     );
   });
 

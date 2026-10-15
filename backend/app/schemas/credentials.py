@@ -70,6 +70,15 @@ class ReferenceUpdate(BaseModel):
         return self
 
 
+class MoveToStore(BaseModel):
+    """Where in the secret store a secret stored in AnsiDeck goes: a new `store_path` under the
+    project's subtree and the key to hold it (default private_key or password; an env
+    credential has none: each variable becomes a key)."""
+
+    store_path: str = Field(min_length=1, max_length=400)
+    store_key: str | None = Field(None, min_length=1, max_length=100)
+
+
 class CredentialOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
