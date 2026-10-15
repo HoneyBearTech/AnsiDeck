@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import audit, git_sync
+from app import audit, git_sync, secret_store
 from app.crypto import encrypt_secret
 from app.db import get_db
 from app.hardening import client_ip
@@ -24,7 +24,8 @@ from app.models import (
     User,
 )
 from app.notify import notifier
-from app.permissions import Permission, Scope, guard
+from app.permissions import Permission, Scope, guard, project_permissions
+from app.routers.credentials import read_reference
 from app.schemas.git_sources import (
     GitSourceCreate,
     GitSourceOut,
@@ -65,7 +66,16 @@ def _host_keys(source: GitSource) -> list[dict]:
     return keys
 
 
-def _out(db: Session, source: GitSource) -> dict:
+def _token_location(source: GitSource) -> str | None:
+    """Where the source's token is in the secret store (None: not there)."""
+    if not source.token_store_path:
+        return None
+    return secret_store.location(source.project_id, source.token_store_path, source.token_store_key)
+
+
+def _out(db: Session, source: GitSource, user: User) -> dict:
+    # where the token lives is shown only to those who may list the project's secrets
+    sees_location = Permission.SECRETS_LIST in project_permissions(db, user, source.project_id)
     snapshot = (
         db.get(GitSnapshot, source.current_snapshot_id) if source.current_snapshot_id else None
     )
@@ -90,7 +100,17 @@ def _out(db: Session, source: GitSource) -> dict:
         "credential_id": source.credential_id,
         "credential_name": credential.name if credential else None,
         "https_username": source.https_username,
-        "has_token": source.encrypted_token is not None,
+        "has_token": source.encrypted_token is not None or source.token_store_path is not None,
+        "token_store": (
+            "external"
+            if source.token_store_path
+            else "ansideck"
+            if source.encrypted_token is not None
+            else None
+        ),
+        "token_store_path": source.token_store_path if sees_location else None,
+        "token_store_key": source.token_store_key if sees_location else None,
+        "token_location": _token_location(source) if sees_location else None,
         "host_keys": _host_keys(source),
         "auto_sync_seconds": source.auto_sync_seconds,
         "enabled": source.enabled,
@@ -162,14 +182,27 @@ def _apply_settings(db: Session, source: GitSource, values: dict, *, creating: b
     else:
         source.credential_id = None
     if source.auth_kind == "https_token":
-        if values.get("token"):
+        if values.get("token") and values.get("token_store_path"):
+            raise _bad("give a token or token_store_path, not both")
+        if values.get("token_store_path"):
+            path = values["token_store_path"].strip()
+            key = (values.get("token_store_key") or "token").strip()
+            # Read once to check it is there; never stored here.
+            value, _version = read_reference(source.project_id, path, key)
+            if not value.strip():
+                raise _bad("the token in the secret store is empty")
+            source.token_store_path, source.token_store_key = path, key
+            source.encrypted_token = None
+        elif values.get("token"):
             source.encrypted_token = encrypt_secret(values["token"].encode())
-        if source.encrypted_token is None:
+            source.token_store_path = source.token_store_key = None
+        if source.encrypted_token is None and source.token_store_path is None:
             raise _bad("an HTTPS token source needs a token")
         if "https_username" in values:
             source.https_username = (values["https_username"] or "").strip() or None
     else:
         source.encrypted_token = None
+        source.token_store_path = source.token_store_key = None
         source.https_username = None
     new_alias = remote.host_key_alias if remote.kind == "ssh" else None
     if old_alias != new_alias:
@@ -202,7 +235,7 @@ def list_sources(
     sources = db.scalars(
         select(GitSource).where(GitSource.project_id == project_id).order_by(GitSource.name)
     ).all()
-    return [_out(db, source) for source in sources]
+    return [_out(db, source, user) for source in sources]
 
 
 @router.post("", response_model=GitSourceOut, status_code=status.HTTP_201_CREATED)
@@ -240,7 +273,7 @@ def create_source(
     db.refresh(source)
     _audit(db, "git_source.create", user, request, source, url=source.url, branch=source.branch)
     notifier.notify(git_sync.SYNC_TOPIC)
-    return _out(db, source)
+    return _out(db, source, user)
 
 
 @router.get("/{source_id}", response_model=GitSourceOut)
@@ -252,7 +285,7 @@ def get_source(
     db: Session = Depends(get_db),
 ) -> dict:
     require_project_permission(db, user, request, project_id, Permission.CONTENT_READ)
-    return _out(db, _load(db, project_id, source_id))
+    return _out(db, _load(db, project_id, source_id), user)
 
 
 @router.patch("/{source_id}", response_model=GitSourceOut)
@@ -276,8 +309,9 @@ def update_source(
             status.HTTP_409_CONFLICT, "A git source with that name already exists"
         ) from exc
     changed = sorted(k for k in values if k != "token") + (["token"] if values.get("token") else [])
-    _audit(db, "git_source.update", user, request, source, changed=changed)
-    return _out(db, source)
+    location = _token_location(source)
+    _audit(db, "git_source.update", user, request, source, changed=changed, token_location=location)
+    return _out(db, source, user)
 
 
 @router.delete("/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -451,7 +485,7 @@ def trust_host_key(
         fingerprints=[k["fingerprint"] for k in _host_keys(source)],
     )
     notifier.notify(git_sync.SYNC_TOPIC)
-    return _out(db, source)
+    return _out(db, source, user)
 
 
 @router.post("/{source_id}/sync", status_code=status.HTTP_202_ACCEPTED)

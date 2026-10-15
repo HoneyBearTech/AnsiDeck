@@ -747,7 +747,16 @@ def test_roles(admin, tmp_path) -> None:
     )
     assert operator.post(f"{path}/test").status_code == 403
     assert operator.delete(path).status_code == 403
-    assert "token" not in str(viewer.get(path).json()).lower().replace("has_token", "")
+    seen = viewer.get(path).json()
+    for field in (
+        "has_token",
+        "token_store",
+        "token_store_path",
+        "token_store_key",
+        "token_location",
+    ):
+        seen.pop(field)
+    assert "token" not in str(seen).lower()
 
 
 def test_another_projects_sources_are_invisible(admin, tmp_path) -> None:

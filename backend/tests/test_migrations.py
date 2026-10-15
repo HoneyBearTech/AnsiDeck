@@ -811,3 +811,64 @@ def test_0032_allows_script_sources_and_refuses_to_drop_them() -> None:
         with admin.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
         admin.dispose()
+
+
+def test_0033_adds_git_token_references_and_refuses_to_drop_them() -> None:
+    url = make_url(TEST_DATABASE_URL)
+    scratch = url.database.removesuffix("_test") + "_migration_test"
+    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{scratch}"'))
+    engine = create_engine(url.set(database=scratch))
+    config = alembic_config()
+
+    def migrate(step, revision: str) -> None:
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            step(config, revision)
+
+    def source(conn, name: str, columns: str = "", values: str = "") -> None:
+        conn.execute(
+            text(
+                "INSERT INTO git_sources (project_id, name, url, branch, playbook_globs, "
+                f"auth_kind, auto_sync_seconds, enabled, created_by{columns}) VALUES "
+                f"(1, '{name}', 'https://example.com/r.git', 'main', '[]', 'https_token', 300, "
+                f"true, 'a'{values})"
+            )
+        )
+
+    try:
+        migrate(command.upgrade, "0032")
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO projects (name, description) VALUES ('P', '')"))
+            source(conn, "old", ", encrypted_token", ", 'x'")
+        migrate(command.upgrade, "0033")
+        with engine.begin() as conn:
+            source(conn, "ref", ", token_store_path, token_store_key", ", 'git/t', 'token'")
+        for name, columns, values in [
+            ("b1", ", token_store_path", ", 'git/t'"),  # no key
+            ("b2", ", encrypted_token, token_store_path, token_store_key", ", 'x', 'p', 'k'"),
+        ]:
+            with engine.begin() as conn, pytest.raises(IntegrityError):
+                source(conn, name, columns, values)
+        with engine.begin() as conn, pytest.raises(IntegrityError):
+            conn.execute(
+                text(
+                    "INSERT INTO git_sources (project_id, name, url, branch, playbook_globs, "
+                    "auth_kind, auto_sync_seconds, enabled, created_by, token_store_path, "
+                    "token_store_key) VALUES (1, 'b3', 'https://example.com/r.git', 'main', "
+                    "'[]', 'none', 300, true, 'a', 'p', 'k')"
+                )
+            )
+        with pytest.raises(RuntimeError, match="read their token from the secret store"):
+            migrate(command.downgrade, "0032")
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM git_sources WHERE token_store_path IS NOT NULL"))
+        migrate(command.downgrade, "0032")
+        migrate(command.upgrade, "0033")
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        admin.dispose()

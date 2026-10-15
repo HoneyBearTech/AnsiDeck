@@ -831,6 +831,11 @@ export interface GitSource {
   credential_name: string | null;
   https_username: string | null;
   has_token: boolean;
+  // Where the token is: encrypted in AnsiDeck, or a reference into the secret store.
+  token_store?: "ansideck" | "external" | null;
+  token_store_path?: string | null;
+  token_store_key?: string | null;
+  token_location?: string | null;
   host_keys: { type: string; fingerprint: string }[];
   auto_sync_seconds: number;
   enabled: boolean;
@@ -860,6 +865,9 @@ export interface GitSourceInput {
   credential_id?: number | null;
   https_username?: string | null;
   token?: string; // write-only; omit to keep the stored one
+  // Or the token in the secret store (path under the project's subtree, key; default "token").
+  token_store_path?: string;
+  token_store_key?: string;
   auto_sync_seconds?: number;
   enabled?: boolean;
 }

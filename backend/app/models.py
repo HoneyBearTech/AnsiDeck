@@ -305,7 +305,14 @@ class GitSource(Base):
     deploy key, and syncs only once an admin trusted the server's host key."""
 
     __tablename__ = "git_sources"
-    __table_args__ = (UniqueConstraint("project_id", "name"),)
+    __table_args__ = (
+        UniqueConstraint("project_id", "name"),
+        CheckConstraint("(token_store_path IS NULL) = (token_store_key IS NULL)", name="token_ref"),
+        CheckConstraint("encrypted_token IS NULL OR token_store_path IS NULL", name="one_token"),
+        CheckConstraint(
+            "token_store_path IS NULL OR auth_kind = 'https_token'", name="token_ref_kind"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(
@@ -322,7 +329,11 @@ class GitSource(Base):
         ForeignKey("credentials.id", ondelete="RESTRICT"), index=True, default=None
     )
     https_username: Mapped[str | None] = mapped_column(String(255), default=None)
+    # An HTTPS token: encrypted here, or a reference into the secret store (a path under the
+    # project's subtree and a key), read at each sync and connection test. Never both.
     encrypted_token: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
+    token_store_path: Mapped[str | None] = mapped_column(String(400), default=None)
+    token_store_key: Mapped[str | None] = mapped_column(String(100), default=None)
     ssh_known_hosts: Mapped[str | None] = mapped_column(Text, default=None)
     auto_sync_seconds: Mapped[int] = mapped_column(Integer, default=300)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)

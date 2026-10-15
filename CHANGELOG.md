@@ -7,6 +7,15 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ## [Unreleased]
 
+### Upgrading
+
+- The API applies database migration 0033 when it starts.
+
+### Added
+
+- A git source's HTTPS token can live in the secret store: pick **In OpenBao** (or your store's label) for
+  the token and give its path and key; AnsiDeck reads it at each sync and connection test and never stores it.
+
 ## [0.6.0] - 2026-10-15
 
 Runs check SSH host keys and can be limited to their inventory's hosts; workers keep runs away from the

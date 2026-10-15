@@ -50,7 +50,7 @@ from app.db import get_engine, get_sessionmaker
 from app.models import Credential, GitSnapshot, GitSource, LintJob, Playbook, Run, RunStatus
 from app.netguard import DestinationError, literal, resolve, vet
 from app.scrub import _PlaybookLoader
-from app.secret_store import SecretStoreError, explain, resolve_credential
+from app.secret_store import SecretStoreError, explain, read_secret, resolve_credential
 from app.storage import git_mirror_path, git_snapshot_dir, playbook_path
 from app.subprocess_env import clean_env
 
@@ -793,7 +793,17 @@ def remote_for(source: GitSource) -> Remote:
 
 def auth_for(db: Session, source: GitSource) -> Auth:
     auth = Auth(known_hosts=source.ssh_known_hosts)
-    if source.auth_kind == "https_token" and source.encrypted_token:
+    if source.auth_kind == "https_token" and source.token_store_path:
+        try:
+            auth.token = read_secret(
+                source.project_id, source.token_store_path, source.token_store_key
+            )
+        except SecretStoreError as exc:
+            raise SyncError(
+                f"could not read the token from the secret store: {explain(exc.kind)}"
+            ) from None
+        auth.username = source.https_username
+    elif source.auth_kind == "https_token" and source.encrypted_token:
         auth.token = decrypt_secret(source.encrypted_token).decode()
         auth.username = source.https_username
     elif source.auth_kind == "ssh_key" and source.credential_id is not None:
