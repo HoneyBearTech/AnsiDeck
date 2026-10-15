@@ -9,7 +9,7 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Upgrading
 
-- The API applies database migrations 0017 to 0030 when it starts. Each inventory's first refresh after
+- The API applies database migrations 0017 to 0031 when it starts. Each inventory's first refresh after
   the upgrade runs all its sources.
 - **Inventory refreshes need workers of this release** (they run each source on its own); older workers
   take no refreshes. A failed source no longer fails the whole snapshot: the other sources' hosts are
@@ -48,6 +48,10 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 - Each dynamic inventory source runs on its own, with only its own credential, and shows what it found
   last or why it failed; the refresh history says what each source did.
+- **Inventory files from a git source**: a dynamic source can be an INI or YAML inventory file (or a
+  directory of them) in a synced git source, with the `group_vars/` and `host_vars/` beside it, read from its
+  current commit and refreshed when a sync changes those files. A git source that inventory sources read from
+  can't be deleted.
 - **Per-source schedules**: a source can refresh on its own interval (or the inventory's, now the default
   for its sources), and a scheduled refresh calls only the sources that are due. Adding or editing a source
   runs just that source, edits of the inventory's own hosts only combine again, and each source has a

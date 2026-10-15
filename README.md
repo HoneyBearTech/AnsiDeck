@@ -323,7 +323,10 @@ repository's `ansible.cfg` sets: YAML output can fold a long secret across lines
 ## Dynamic inventory sources (optional)
 
 An inventory can also get hosts and groups from **sources**: inventory plugin configs (YAML with a `plugin:`
-key, for example `netbox.netbox.nb_inventory`, or `ansible.builtin.constructed` to group hosts by their vars).
+key, for example `netbox.netbox.nb_inventory`, or `ansible.builtin.constructed` to group hosts by their vars),
+or **inventory files from a git source** (an INI or YAML file, or a directory of them, in a repository AnsiDeck
+syncs, with the `group_vars/` and `host_vars/` beside it; read from the source's current commit, refreshed when
+a new commit changes them).
 A refresh runs each source with `ansible-inventory` in an isolated worker slot, on its own (with only its own
 credential), keeps what each one found, then combines them with the inventory's own hosts and applies the
 `constructed` sources over the lot (so they can group those too; they read every source's and host's vars as

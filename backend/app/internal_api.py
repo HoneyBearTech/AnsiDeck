@@ -32,6 +32,7 @@ from app.host_key_scans import MAX_RESULTS, build_scan_job, end_scan, scanned_ke
 from app.host_key_store import record_learned, record_problems
 from app.host_keys import MAX_LEARNED_LINES, MAX_PROBLEMS
 from app.inventory_sources import (
+    SCRUBBED,
     SourceError,
     build_combine_job,
     build_refresh_job,
@@ -54,7 +55,6 @@ from app.models import (
     HostKeyScan,
     Inventory,
     InventoryRefresh,
-    InventorySourceOutput,
     LintJob,
     Run,
     RunStatus,
@@ -1057,9 +1057,6 @@ def _read_part(refresh: InventoryRefresh, part: str, size: int, sha256: str | No
     return raw
 
 
-_SCRUBBED = "a credential's value appeared in the output and was redacted"
-
-
 def _finish_refresh(
     db: Session,
     refresh: InventoryRefresh,
@@ -1131,6 +1128,8 @@ def _store_results(db: Session, refresh: InventoryRefresh, body: RefreshSourcesI
         return JSONResponse({"detail": "Results for sources this refresh didn't run"}, 409)
     for source_id, row in rows.items():
         result = reported.get(source_id)
+        if row.status is not None:
+            continue  # already settled when the job was built (e.g. its file is gone)
         if result is None:
             record_source_failure(db, row, "the worker reported no result")
         elif result.status != RunStatus.SUCCESS.value:
@@ -1142,10 +1141,7 @@ def _store_results(db: Session, refresh: InventoryRefresh, body: RefreshSourcesI
                     {"detail": f"The output of source {source_id} doesn't match its size and hash"},
                     409,
                 )
-            store_source_output(db, refresh, row, raw)
-            if result.scrubbed and row.status == "success":
-                output = db.get(InventorySourceOutput, source_id)
-                output.warnings = [_SCRUBBED, *(output.warnings or [])]
+            store_source_output(db, refresh, row, raw, scrubbed=result.scrubbed)
     return None
 
 
@@ -1183,7 +1179,7 @@ def refresh_complete(
         return {}
     warnings = combine_warnings(db, inventory) + warnings
     if body.scrubbed:
-        warnings.insert(0, _SCRUBBED)
+        warnings.insert(0, SCRUBBED)
     refresh.output_bytes = len(raw)
     _finish_refresh(db, refresh, inventory, snapshot, warnings)
     return {}

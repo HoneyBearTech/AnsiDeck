@@ -151,6 +151,13 @@ More about sources:
   unless it refreshes the sources first: tick that on **New run** (or in a template, or send
   `"refresh_first": true` with the API), or switch on **Refresh before every run** next to the schedule to
   make it the default. Such a run waits for its own refresh and fails if the refresh does.
+- **Inventory file from git** (in **Add source**) reads an INI or YAML inventory file, or a directory of
+  them, from a git source of the project (see [Playbooks](playbooks.md)), with the `group_vars/` and
+  `host_vars/` beside it. It is read from the git source's current commit at each refresh, and a sync that
+  changes those files refreshes it (it defaults to the inventory's schedule too). Only YAML and INI are
+  read: a plugin config or a script in the repository doesn't run, and the repository's `ansible.cfg` isn't
+  used. If a commit removes the file, the source fails (marked **missing upstream**) and keeps what it found
+  last; delete the source to drop its hosts. A git source that inventory sources read from can't be deleted.
 - Turn a source off with its switch, **Edit** it, or **Delete** it (after a confirmation).
 - A source can say where and as whom to connect to a host, but not how: of Ansible's own variables it may
   only set `ansible_host`, `ansible_port`, `ansible_user` (and their `ansible_ssh_` forms),

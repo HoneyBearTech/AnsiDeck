@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.env_credentials import env_problem, resolve_env
+from app.inventory_files import InventoryFileError, read_inventory_files
 from app.inventory_render import (
     group_problem,
     hostname_problem,
@@ -35,6 +36,8 @@ from app.inventory_render import (
 from app.json_limits import TooDeep, loads_bounded
 from app.models import (
     Credential,
+    GitSnapshot,
+    GitSource,
     Inventory,
     InventoryRefresh,
     InventoryRefreshSource,
@@ -53,7 +56,7 @@ MAX_CONFIG_BYTES = 64 * 1024
 MAX_VARS_DEPTH = 32
 MAX_EDGES = 200_000
 KEEP_SNAPSHOTS = 5
-TRIGGERS = ("manual", "schedule", "sources_changed", "static_changed", "run")
+TRIGGERS = ("manual", "schedule", "sources_changed", "static_changed", "run", "git_sync")
 PLUGIN_NAME = re.compile(r"[a-z0-9_]+(\.[a-z0-9_]+\.[a-z0-9_]+)?")
 # Plugins that read files or run executables by path rather than a config: a source is a
 # plugin config. `auto` would load itself forever.
@@ -244,14 +247,87 @@ def due_sources(db: Session) -> dict[int, list[int]]:
     return due
 
 
+def git_source_synced(
+    db: Session, git_source_id: int, before: GitSnapshot | None, after: GitSnapshot
+) -> None:
+    """A git source moved to a new commit: the inventory files read from it that changed (or
+    are gone) run in a refresh of their own inventories; the others keep what they found."""
+    sources = db.scalars(
+        select(InventorySource).where(
+            InventorySource.git_source_id == git_source_id,
+            InventorySource.kind == "git_file",
+            InventorySource.enabled,
+        )
+    ).all()
+    due: dict[int, list[int]] = {}
+    for source in sources:
+        try:
+            now = read_inventory_files(after, source.path).digest
+            source.missing_at = None
+        except InventoryFileError:
+            now = None
+            if source.missing_at is None:
+                source.missing_at = func.now()
+        try:
+            then = read_inventory_files(before, source.path).digest if before else None
+        except (InventoryFileError, OSError):
+            then = None
+        if now is None or now != then:
+            due.setdefault(source.inventory_id, []).append(source.id)
+    queued = False
+    for inventory_id, source_ids in due.items():
+        inventory = db.get(Inventory, inventory_id)
+        queued = (
+            enqueue_refresh(db, inventory, "git_sync", source_ids=source_ids) is not None or queued
+        )
+    db.commit()
+    if queued:
+        from app.notify import notifier
+        from app.queue import QUEUE_TOPIC
+
+        notifier.notify(QUEUE_TOPIC)
+
+
 # --- the job ------------------------------------------------------------------------------
 
 
 def input_sha256(source: InventorySource) -> str:
-    """What a source's output depends on (its plugin config and credential): an output made
-    from anything else is stale."""
-    material = json.dumps([source.plugin, source.config, source.credential_id])
+    """What a source's output depends on (its plugin config and credential, or its git source
+    and path): an output made from anything else is stale. A new commit isn't: the output is
+    only older."""
+    material = json.dumps(
+        [
+            source.kind,
+            source.plugin,
+            source.config,
+            source.credential_id,
+            source.git_source_id,
+            source.path,
+        ]
+    )
     return hashlib.sha256(material.encode()).hexdigest()
+
+
+def _git_file_call(db: Session, source: InventorySource, row: InventoryRefreshSource) -> dict:
+    """The call for an inventory file from a git source, read from its current commit (which
+    the row records); InventoryFileError when it can't be read."""
+    git_source = db.get(GitSource, source.git_source_id)
+    snapshot = (
+        db.get(GitSnapshot, git_source.current_snapshot_id)
+        if git_source is not None and git_source.current_snapshot_id
+        else None
+    )
+    if snapshot is None or git_source.project_id != source.inventory.project_id:
+        raise InventoryFileError("its git source hasn't synced a commit yet")
+    row.git_snapshot_id, row.git_commit = snapshot.id, snapshot.commit
+    found = read_inventory_files(snapshot, source.path)
+    return {
+        "key": f"s{source.id}",
+        "kind": "git_file",
+        "files": found.files,
+        "target": found.target,
+        "env": {},
+    }
 
 
 def _source_env(
@@ -296,19 +372,24 @@ def build_refresh_job(db: Session, refresh: InventoryRefresh) -> dict:
         runs = not is_constructed(source) and (
             scope is None or source.id in scope or source.last_queued_at is None
         )
-        db.add(
-            InventoryRefreshSource(
-                refresh_id=refresh.id,
-                source_id=source.id,
-                name=source.name,
-                plugin=source.plugin,
-                ran=runs,
-                input_sha256=input_sha256(source),
-            )
+        row = InventoryRefreshSource(
+            refresh_id=refresh.id,
+            source_id=source.id,
+            name=source.name,
+            plugin=source.plugin,
+            ran=runs,
+            input_sha256=input_sha256(source),
         )
+        db.add(row)
         if not runs:
             continue
         source.last_queued_at = func.now()
+        if source.kind == "git_file":
+            try:
+                calls.append(_git_file_call(db, source, row))
+            except InventoryFileError as exc:
+                record_source_failure(db, row, str(exc))  # the others still run
+            continue
         env = _source_env(db, inventory, source, deadline)
         secrets.update(env.values())
         calls.append(
@@ -327,7 +408,7 @@ def build_refresh_job(db: Session, refresh: InventoryRefresh) -> dict:
                 "id": s.id,
                 "name": s.name,
                 "plugin": s.plugin,
-                "sha256": hashlib.sha256(s.config.encode()).hexdigest(),
+                "sha256": hashlib.sha256((s.config or s.path or "").encode()).hexdigest(),
             }
             for s in sources
         ],
@@ -554,8 +635,15 @@ def _refuse_cycles(groups: dict[str, dict]) -> None:
 # `!unsafe`: never a template), the inventory's own hosts and the constructed configs.
 
 
+SCRUBBED = "a credential's value appeared in the output and was redacted"
+
+
 def store_source_output(
-    db: Session, refresh: InventoryRefresh, row: InventoryRefreshSource, raw: bytes
+    db: Session,
+    refresh: InventoryRefresh,
+    row: InventoryRefreshSource,
+    raw: bytes,
+    scrubbed: bool = False,
 ) -> None:
     """A source's output from this refresh becomes its last good output, unless it can't be
     used (the source failed) or the source changed since the job was built (stale). The caller
@@ -565,6 +653,8 @@ def store_source_output(
     except SourceError as exc:
         record_source_failure(db, row, str(exc))
         return
+    if scrubbed:  # the worker redacted a credential's value in it
+        warnings.insert(0, SCRUBBED)
     source = db.get(InventorySource, row.source_id) if row.source_id is not None else None
     if source is None or input_sha256(source) != row.input_sha256:
         row.status = "stale"  # deleted or edited meanwhile: the next refresh runs it again
@@ -590,6 +680,7 @@ def store_source_output(
         "output_bytes": len(raw),
         "warnings": warnings,
         "input_sha256": row.input_sha256,
+        "git_commit": row.git_commit,
         "refreshed_at": func.now(),
     }
     if previous is None:

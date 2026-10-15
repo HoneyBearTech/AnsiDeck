@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 MIN_INTERVAL_SECONDS = 300
 MAX_INTERVAL_SECONDS = 7 * 24 * 3600
@@ -22,8 +22,15 @@ def _check_interval(value: int | None) -> int | None:
 
 
 class SourceCreate(BaseModel):
+    """kind "plugin": `config`, an inventory plugin's config (and an optional env credential).
+    kind "git_file": `git_source_id` (a git source of the project) and `path`, an inventory file
+    or directory in it."""
+
     name: str = Field(min_length=1, max_length=100)
-    config: str = Field(min_length=1, max_length=64 * 1024)
+    kind: Literal["plugin", "git_file"] = "plugin"
+    config: str | None = Field(None, min_length=1, max_length=64 * 1024)
+    git_source_id: int | None = None
+    path: str | None = Field(None, min_length=1, max_length=1024)
     credential_id: int | None = None
     enabled: bool = True
     position: int = Field(0, ge=0, le=1000)
@@ -32,10 +39,28 @@ class SourceCreate(BaseModel):
 
     _interval = field_validator("refresh_interval_seconds")(_check_interval)
 
+    @model_validator(mode="after")
+    def _fields_of_its_kind(self) -> "SourceCreate":
+        if self.kind == "plugin":
+            if self.config is None or self.git_source_id is not None or self.path is not None:
+                raise ValueError("a plugin source holds config (and no git_source_id or path)")
+        elif (
+            self.git_source_id is None
+            or self.path is None
+            or self.config is not None
+            or self.credential_id is not None
+        ):
+            raise ValueError("a git file source holds git_source_id and path only")
+        return self
+
 
 class SourceUpdate(BaseModel):
+    """Fields of the source's own kind only."""
+
     name: str | None = Field(None, min_length=1, max_length=100)
     config: str | None = Field(None, min_length=1, max_length=64 * 1024)
+    git_source_id: int | None = None
+    path: str | None = Field(None, min_length=1, max_length=1024)
     credential_id: int | None = None
     enabled: bool | None = None
     position: int | None = Field(None, ge=0, le=1000)
@@ -51,8 +76,14 @@ class SourceOut(BaseModel):
     id: int
     inventory_id: int
     name: str
+    kind: str = "plugin"
     plugin: str
-    config: str
+    config: str | None
+    # A git file source: its git source, the path in it, and since when the commit lacks it.
+    git_source_id: int | None = None
+    git_source_name: str | None = None
+    path: str | None = None
+    missing_at: datetime | None = None
     credential_id: int | None
     credential_name: str | None = None
     enabled: bool
@@ -74,6 +105,8 @@ class SourceOut(BaseModel):
     output_host_count: int | None = None
     output_group_count: int | None = None
     output_warnings: list[str] = []
+    # A git file source: the commit its last good output was read from.
+    output_git_commit: str | None = None
 
 
 class RefreshSettings(BaseModel):

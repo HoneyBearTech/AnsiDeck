@@ -299,3 +299,29 @@ def test_outputs_go_with_their_source(client: TestClient) -> None:
     db = get_sessionmaker()()
     assert db.scalars(select(InventorySourceOutput)).all() == []
     db.close()
+
+
+def test_a_sources_first_output_with_its_credentials_value_is_scrubbed(client: TestClient) -> None:
+    """The worker redacts a credential's value from a source's output; the API keeps that
+    output (the first the source ever made) with a warning. This answered 500 once: the warning
+    went to an output row that wasn't flushed yet, and the refresh never ended."""
+    _login(client)
+    inventory_id = _inventory(client)
+    credential = client.post(
+        "/api/credentials",
+        json={"name": "tok", "kind": "env", "env": {"GEN_TOKEN": "gen-token-sentinel-42"}},
+    ).json()["id"]
+    leaky = (
+        "plugin: ansible.builtin.generator\nhosts:\n"
+        "  name: \"h-{{ lookup('env', 'GEN_TOKEN') }}-{{ x }}\"\nlayers:\n  x: [a]\n"
+    )
+    _add_source(client, inventory_id, "leaky", leaky, credential_id=credential)
+    refresh = _wait_refresh(client, inventory_id)
+    assert refresh["status"] == "success", refresh
+    (source,) = client.get(f"/api/inventories/{inventory_id}/sources").json()
+    assert (
+        source["output_warnings"][0]
+        == "a credential's value appeared in the output and was redacted"
+    )
+    hosts = client.get(f"/api/inventories/{inventory_id}/hosts").json()["hosts"]
+    assert hosts and "gen-token-sentinel-42" not in str(hosts)

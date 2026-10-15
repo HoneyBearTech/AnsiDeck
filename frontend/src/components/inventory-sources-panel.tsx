@@ -22,9 +22,11 @@ import {
   api,
   ApiError,
   type Credential,
+  type GitSource,
   type InventoryRefresh,
   type InventorySnapshot,
   type InventorySource,
+  type InventorySourceInput,
   type InventoryTargets,
 } from "@/lib/api";
 
@@ -137,10 +139,9 @@ function SourceStatus({ source }: { source: InventorySource }) {
   if (CONSTRUCTED_PLUGINS.includes(source.plugin)) {
     return <span className="text-xs text-muted-foreground">Applied in every refresh</span>;
   }
-  const found =
-    source.output_refreshed_at
-      ? `${source.output_host_count ?? 0} hosts, ${source.output_group_count ?? 0} groups as of ${when(source.output_refreshed_at)}`
-      : null;
+  const found = source.output_refreshed_at
+    ? `${source.output_host_count ?? 0} hosts, ${source.output_group_count ?? 0} groups as of ${when(source.output_refreshed_at)}`
+    : null;
   if (source.last_error) {
     return (
       <span className="text-xs text-destructive wrap-anywhere">
@@ -188,15 +189,24 @@ function SourceDialog({
 }) {
   // Mounted per dialog opening (keyed by the source), so the fields start from it.
   const [name, setName] = React.useState(source?.name ?? "");
+  const [kind, setKind] = React.useState<"plugin" | "git_file">(source?.kind ?? "plugin");
   const [config, setConfig] = React.useState(source?.config ?? EXAMPLES[0]?.config ?? "");
+  const [gitSourceId, setGitSourceId] = React.useState(
+    source?.git_source_id ? String(source.git_source_id) : "",
+  );
+  const [path, setPath] = React.useState(source?.path ?? "");
+  const [gitSources, setGitSources] = React.useState<GitSource[]>([]);
   const [credentialId, setCredentialId] = React.useState<string>(
     source?.credential_id ? String(source.credential_id) : "none",
   );
   const [enabled, setEnabled] = React.useState(source?.enabled ?? true);
   const [refreshEvery, setRefreshEvery] = React.useState(
-    typeof source?.refresh_interval_seconds === "number" ? String(source.refresh_interval_seconds) : "inherit",
+    typeof source?.refresh_interval_seconds === "number"
+      ? String(source.refresh_interval_seconds)
+      : "inherit",
   );
-  const constructed = CONSTRUCTED_CONFIG.test(config);
+  const fromGit = kind === "git_file";
+  const constructed = !fromGit && CONSTRUCTED_CONFIG.test(config);
   const [credentials, setCredentials] = React.useState<Credential[]>([]);
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
@@ -206,19 +216,24 @@ function SourceDialog({
       .listCredentials("env")
       .then((list) => setCredentials(list.filter((c) => c.project_id === projectId)))
       .catch(() => setCredentials([]));
+    api
+      .listGitSources(projectId)
+      .then(setGitSources)
+      .catch(() => setGitSources([]));
   }, [projectId]);
 
   async function handleSave() {
     setError(null);
     setSaving(true);
-    const input = {
+    const common = {
       name: name.trim(),
-      config,
-      credential_id: credentialId === "none" ? null : Number(credentialId),
       enabled,
-      refresh_interval_seconds:
-        constructed || refreshEvery === "inherit" ? null : Number(refreshEvery),
+      refresh_interval_seconds: constructed || refreshEvery === "inherit" ? null : Number(refreshEvery),
     };
+    const input: InventorySourceInput = fromGit
+      ? { ...common, git_source_id: Number(gitSourceId), path: path.trim() }
+      : { ...common, config, credential_id: credentialId === "none" ? null : Number(credentialId) };
+    if (!source) input.kind = kind;
     try {
       if (source) await api.updateInventorySource(inventoryId, source.id, input);
       else await api.createInventorySource(inventoryId, input);
@@ -237,9 +252,9 @@ function SourceDialog({
         <DialogHeader>
           <DialogTitle>{source ? "Edit source" : "Add source"}</DialogTitle>
           <DialogDescription>
-            An inventory plugin&apos;s config. It runs in a worker when the inventory is refreshed, together
-            with the inventory&apos;s own hosts; <code>constructed</code> sources run last and can group all
-            of them.
+            An inventory plugin&apos;s config, or an inventory file from a git source. It runs in a worker
+            when the inventory is refreshed; <code>constructed</code> sources run last and can group all the
+            hosts, the inventory&apos;s own included.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">
@@ -247,48 +262,112 @@ function SourceDialog({
             <Label htmlFor="source-name">Name</Label>
             <Input id="source-name" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <Label id="source-config-label">Plugin config (YAML)</Label>
-              <div className="flex flex-wrap gap-1">
-                <span className="text-xs text-muted-foreground">Examples:</span>
-                {EXAMPLES.map((example) => (
-                  <Button
-                    key={example.label}
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 px-2 text-xs"
-                    onClick={() => setConfig(example.config)}
-                  >
-                    {example.label}
-                  </Button>
-                ))}
+          {!source && (
+            <fieldset className="flex flex-wrap gap-2">
+              <legend className="sr-only">Kind of source</legend>
+              {(
+                [
+                  ["plugin", "Plugin config"],
+                  ["git_file", "Inventory file from git"],
+                ] as const
+              ).map(([value, label]) => (
+                <Button
+                  key={value}
+                  type="button"
+                  size="sm"
+                  aria-pressed={kind === value}
+                  variant={kind === value ? "default" : "outline"}
+                  onClick={() => setKind(value)}
+                >
+                  {label}
+                </Button>
+              ))}
+            </fieldset>
+          )}
+          {fromGit && (
+            <>
+              <div className="flex flex-col gap-2">
+                <Label>Git source</Label>
+                <Select value={gitSourceId} onValueChange={setGitSourceId}>
+                  <SelectTrigger aria-label="Git source">
+                    <SelectValue
+                      placeholder={gitSources.length ? "Pick a git source" : "No git sources yet"}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {gitSources.map((git) => (
+                      <SelectItem key={git.id} value={String(git.id)}>
+                        {git.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="source-path">Path in the repository</Label>
+                <Input
+                  id="source-path"
+                  value={path}
+                  onChange={(e) => setPath(e.target.value)}
+                  placeholder="inventory/hosts.ini"
+                  className="font-mono"
+                  spellCheck={false}
+                />
+                <p className="text-xs text-muted-foreground">
+                  An INI or YAML inventory file, or a directory of them, with the <code>group_vars/</code> and{" "}
+                  <code>host_vars/</code> beside it. It is read from the git source&apos;s current commit at
+                  each refresh; nothing else of the repository runs. Its connection and become settings are
+                  dropped, as for every source.
+                </p>
+              </div>
+            </>
+          )}
+          {!fromGit && (
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label id="source-config-label">Plugin config (YAML)</Label>
+                <div className="flex flex-wrap gap-1">
+                  <span className="text-xs text-muted-foreground">Examples:</span>
+                  {EXAMPLES.map((example) => (
+                    <Button
+                      key={example.label}
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      onClick={() => setConfig(example.config)}
+                    >
+                      {example.label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <CodeEditor labelledBy="source-config-label" value={config} onChange={setConfig} />
+              <p className="text-xs text-muted-foreground">
+                Anyone who can see this inventory can read the config: put tokens in an environment-variables
+                credential and refer to them with <code>{"{{ lookup('env', 'NAME') }}"}</code>.
+              </p>
             </div>
-            <CodeEditor labelledBy="source-config-label" value={config} onChange={setConfig} />
-            <p className="text-xs text-muted-foreground">
-              Anyone who can see this inventory can read the config: put tokens in an environment-variables
-              credential and refer to them with <code>{"{{ lookup('env', 'NAME') }}"}</code>.
-            </p>
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label>Credential (environment variables)</Label>
-            <Select value={credentialId} onValueChange={setCredentialId}>
-              <SelectTrigger aria-label="Credential">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">None</SelectItem>
-                {credentials.map((credential) => (
-                  <SelectItem key={credential.id} value={String(credential.id)}>
-                    {credential.name}
-                    {credential.env_names ? ` (${credential.env_names.join(", ")})` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          )}
+          {!fromGit && (
+            <div className="flex flex-col gap-2">
+              <Label>Credential (environment variables)</Label>
+              <Select value={credentialId} onValueChange={setCredentialId}>
+                <SelectTrigger aria-label="Credential">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {credentials.map((credential) => (
+                    <SelectItem key={credential.id} value={String(credential.id)}>
+                      {credential.name}
+                      {credential.env_names ? ` (${credential.env_names.join(", ")})` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           {constructed ? (
             <p className="text-xs text-muted-foreground">
               A <code>constructed</code> source is applied again in every refresh, over what the other sources
@@ -324,7 +403,10 @@ function SourceDialog({
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
         <DialogFooter>
-          <Button onClick={handleSave} disabled={saving || !name.trim() || !config.trim()}>
+          <Button
+            onClick={handleSave}
+            disabled={saving || !name.trim() || (fromGit ? !gitSourceId || !path.trim() : !config.trim())}
+          >
             {saving ? "Saving…" : "Save"}
           </Button>
         </DialogFooter>
@@ -507,8 +589,16 @@ export function InventorySourcesPanel({
             <div className="flex flex-col gap-1">
               <span className="flex flex-wrap items-center gap-2">
                 <span className="font-medium">{source.name}</span>
-                <span className="font-mono text-xs text-muted-foreground">{source.plugin}</span>
+                {source.kind === "git_file" ? (
+                  <span className="font-mono text-xs text-muted-foreground wrap-anywhere">
+                    {source.path} · git: {source.git_source_name}
+                    {source.output_git_commit ? ` @ ${source.output_git_commit.slice(0, 8)}` : ""}
+                  </span>
+                ) : (
+                  <span className="font-mono text-xs text-muted-foreground">{source.plugin}</span>
+                )}
                 {!source.enabled && <Badge variant="outline">off</Badge>}
+                {source.missing_at && <Badge variant="failed">missing upstream</Badge>}
               </span>
               {source.credential_name && (
                 <span className="text-xs text-muted-foreground">credential: {source.credential_name}</span>
@@ -547,7 +637,9 @@ export function InventorySourcesPanel({
                   size="sm"
                   variant="destructive-outline"
                   onClick={() => {
-                    if (window.confirm(`Delete the source "${source.name}"? Its config can't be recovered.`)) {
+                    if (
+                      window.confirm(`Delete the source "${source.name}"? Its config can't be recovered.`)
+                    ) {
                       act(() => api.deleteInventorySource(inventoryId, source.id));
                     }
                   }}

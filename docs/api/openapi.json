@@ -6276,12 +6276,20 @@
         "type": "object"
       },
       "SourceCreate": {
+        "description": "kind \"plugin\": `config`, an inventory plugin's config (and an optional env credential).\nkind \"git_file\": `git_source_id` (a git source of the project) and `path`, an inventory file\nor directory in it.",
         "properties": {
           "config": {
-            "maxLength": 65536,
-            "minLength": 1,
-            "title": "Config",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 65536,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
           },
           "credential_id": {
             "anyOf": [
@@ -6299,11 +6307,44 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "git_source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Source Id"
+          },
+          "kind": {
+            "default": "plugin",
+            "enum": [
+              "plugin",
+              "git_file"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
           "name": {
             "maxLength": 100,
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
           },
           "position": {
             "default": 0,
@@ -6325,8 +6366,7 @@
           }
         },
         "required": [
-          "name",
-          "config"
+          "name"
         ],
         "title": "SourceCreate",
         "type": "object"
@@ -6334,8 +6374,15 @@
       "SourceOut": {
         "properties": {
           "config": {
-            "title": "Config",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
           },
           "created_at": {
             "format": "date-time",
@@ -6377,6 +6424,28 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "git_source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Source Id"
+          },
+          "git_source_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Source Name"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -6384,6 +6453,11 @@
           "inventory_id": {
             "title": "Inventory Id",
             "type": "integer"
+          },
+          "kind": {
+            "default": "plugin",
+            "title": "Kind",
+            "type": "string"
           },
           "last_error": {
             "anyOf": [
@@ -6420,6 +6494,18 @@
             ],
             "title": "Last Queued At"
           },
+          "missing_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missing At"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -6435,6 +6521,17 @@
               }
             ],
             "title": "Next Refresh At"
+          },
+          "output_git_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Git Commit"
           },
           "output_group_count": {
             "anyOf": [
@@ -6478,6 +6575,17 @@
             "title": "Output Warnings",
             "type": "array"
           },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
           "plugin": {
             "title": "Plugin",
             "type": "string"
@@ -6520,6 +6628,7 @@
         "type": "object"
       },
       "SourceUpdate": {
+        "description": "Fields of the source's own kind only.",
         "properties": {
           "config": {
             "anyOf": [
@@ -6556,6 +6665,17 @@
             ],
             "title": "Enabled"
           },
+          "git_source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Source Id"
+          },
           "name": {
             "anyOf": [
               {
@@ -6568,6 +6688,19 @@
               }
             ],
             "title": "Name"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
           },
           "position": {
             "anyOf": [

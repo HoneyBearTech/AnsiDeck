@@ -376,8 +376,18 @@ export interface InventorySource {
   id: number;
   inventory_id: number;
   name: string;
+  // "plugin": an inventory plugin's config; "git_file": an inventory file (or directory) in a
+  // synced git source, read from its current commit.
+  kind?: "plugin" | "git_file";
   plugin: string;
-  config: string;
+  config: string | null;
+  git_source_id?: number | null;
+  git_source_name?: string | null;
+  path?: string | null;
+  // Since when the git source's commit lacks the path (null: it has it).
+  missing_at?: string | null;
+  // The commit its last good output was read from.
+  output_git_commit?: string | null;
   credential_id: number | null;
   credential_name: string | null;
   enabled: boolean;
@@ -403,8 +413,11 @@ export interface InventorySource {
 
 export interface InventorySourceInput {
   name: string;
-  config: string;
-  credential_id: number | null;
+  kind?: "plugin" | "git_file";
+  config?: string;
+  credential_id?: number | null;
+  git_source_id?: number;
+  path?: string;
   enabled: boolean;
   // null: the inventory's refresh interval.
   refresh_interval_seconds?: number | null;
@@ -415,7 +428,7 @@ export type RefreshStatus = "queued" | "running" | "success" | "failed" | "timed
 export interface InventoryRefresh {
   id: number;
   status: RefreshStatus;
-  trigger: "manual" | "schedule" | "sources_changed" | "static_changed" | "run";
+  trigger: "manual" | "schedule" | "sources_changed" | "static_changed" | "run" | "git_sync";
   requested_by: string | null;
   queued_at: string;
   started_at: string | null;
