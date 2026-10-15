@@ -18,6 +18,11 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 - **Edit reference** on a credential or vault password in the secret store points it at another path or key
   (`PATCH /api/credentials/{id}`, `PATCH /api/vault-passwords/{id}`): read once to check it, audited with the
   old and new locations, and used by queued runs when they start.
+- **Move to OpenBao** (opt-in, `SECRETS_STORE_ALLOW_MOVE`): a key, vault password or set of environment
+  variables stored in AnsiDeck moves into the secret store as a new secret (check-and-set 0 after checking the
+  path is empty, read back and compared, never over an existing secret), and AnsiDeck keeps a reference
+  (`POST /api/credentials/{id}/move-to-store`, `POST /api/vault-passwords/{id}/move-to-store`). AnsiDeck's
+  policy needs `create`, never `update` or `delete` (see the README).
 - A run records the KV version of each secret-store reference its job read (`secret_reads`), shown on its
   page; the locations only to members who may list the project's secrets.
 

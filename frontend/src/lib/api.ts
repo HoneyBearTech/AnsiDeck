@@ -599,6 +599,8 @@ export interface SecretStoreInfo {
   // what this project's role names start with ("ansideck-7-").
   ssh_mounts?: string[];
   ssh_role_prefix?: string | null;
+  // Secrets stored in AnsiDeck can be moved into the store (SECRETS_STORE_ALLOW_MOVE).
+  move_enabled?: boolean;
 }
 
 export interface SecretStoreStatus {
@@ -1399,6 +1401,8 @@ export const api = {
     }),
   checkCredential: (id: number) => request<SecretCheck>(`/credentials/${id}/check`, { method: "POST" }),
   deleteCredential: (id: number) => request<void>(`/credentials/${id}`, { method: "DELETE" }),
+  moveCredentialToStore: (id: number, update: ReferenceUpdate) =>
+    request<Credential>(`/credentials/${id}/move-to-store`, { method: "POST", body: JSON.stringify(update) }),
   updateCredentialReference: (id: number, update: ReferenceUpdate) =>
     request<Credential>(`/credentials/${id}`, { method: "PATCH", body: JSON.stringify(update) }),
 
@@ -1416,6 +1420,11 @@ export const api = {
       }),
     }),
   deleteVaultPassword: (id: number) => request<void>(`/vault-passwords/${id}`, { method: "DELETE" }),
+  moveVaultPasswordToStore: (id: number, update: ReferenceUpdate) =>
+    request<VaultPassword>(`/vault-passwords/${id}/move-to-store`, {
+      method: "POST",
+      body: JSON.stringify(update),
+    }),
   updateVaultPasswordReference: (id: number, update: ReferenceUpdate) =>
     request<VaultPassword>(`/vault-passwords/${id}`, { method: "PATCH", body: JSON.stringify(update) }),
   checkVaultPassword: (id: number) =>

@@ -23,7 +23,7 @@ import { baseRoutes, PAGE_ROUTES, PAGES } from "../src/test/pages";
 
 // Every page at phone, tablet, laptop and desktop widths, filled with the long names, e-mail
 // addresses and URLs real inventories have: nothing may scroll sideways, text must keep its contrast,
-// and every "New/Add" (and "Edit reference") dialog must fit a small phone with its buttons in reach.
+// and every "New/Add" (and "Edit reference", "Move to ...") dialog must fit a small phone with its buttons in reach.
 
 const WIDTHS = [375, 768, 1024, 1280];
 const PHONE = { width: 375, height: 667 };
@@ -65,7 +65,7 @@ const LONG_ROUTES: Routes = {
     total: 1,
     hosts: [mergedHost({ name: `web1.${LONG}.example.com`, groups: [`${LONG}-webservers`], origin: "both" })],
   },
-  "GET /secret-store/info": { enabled: true, label: "OpenBao", base_path: "secret/ansideck/1/", path_rules: "letters, digits, - and _" },
+  "GET /secret-store/info": { enabled: true, label: "OpenBao", base_path: "secret/ansideck/1/", path_rules: "letters, digits, - and _", move_enabled: true },
   "GET /credentials": [
     credential({ name: `${LONG}-deploy-key` }),
     credential({ id: 4, name: `${LONG}-vaulted`, store: "external", store_path: `${LONG}/ssh`, store_key: "private_key", store_location: `secret/ansideck/1/${LONG}/ssh#private_key` }),
@@ -151,7 +151,7 @@ for (const [url] of PAGES) {
       await open(page, url);
       const names = await page
         .locator("main button")
-        .evaluateAll((els) => [...new Set(els.map((e) => (e.textContent ?? "").trim()).filter((t) => /^(New|Add|Edit reference)\b/.test(t)))]);
+        .evaluateAll((els) => [...new Set(els.map((e) => (e.textContent ?? "").trim()).filter((t) => /^(New|Add|Edit reference|Move to)\b/.test(t)))]);
       for (const name of names) {
         await open(page, url);
         await page.locator("main button", { hasText: name }).first().click();

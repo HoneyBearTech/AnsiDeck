@@ -3,7 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import audit, secret_store
-from app.crypto import encrypt_secret
+from app.crypto import decrypt_secret, encrypt_secret
 from app.db import get_db
 from app.hardening import client_ip
 from app.models import User, VaultPassword
@@ -11,10 +11,11 @@ from app.permissions import Permission, Scope, guard
 from app.routers.credentials import (
     check_reference,
     edit_reference,
+    move_to_store,
     read_reference,
     throttled_check,
 )
-from app.schemas.credentials import ReferenceUpdate, SecretCheck
+from app.schemas.credentials import MoveToStore, ReferenceUpdate, SecretCheck
 from app.schemas.vault_passwords import VaultPasswordCreate, VaultPasswordOut
 from app.scoping import get_scoped, readable_project_ids, resolve_write_project
 
@@ -107,6 +108,29 @@ def create_vault_password(
         detail=detail,
     )
     return _out(vault_password)
+
+
+@router.post("/{vault_password_id}/move-to-store", response_model=VaultPasswordOut)
+def move_vault_password_to_store(
+    vault_password_id: int,
+    payload: MoveToStore,
+    request: Request,
+    actor: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Moves a password stored here into the secret store (see move_to_store)."""
+    vault_password = get_scoped(
+        db, actor, request, VaultPassword, vault_password_id, Permission.SECRETS_MANAGE,
+        "Vault password not found",
+    )  # fmt: skip
+
+    def values(row) -> dict[str, str]:
+        return {payload.store_key or "password": decrypt_secret(row.encrypted_password).decode()}
+
+    moved = move_to_store(
+        db, actor, request, vault_password, payload, "vault_password", "encrypted_password", values
+    )
+    return _out(moved)
 
 
 @router.patch("/{vault_password_id}", response_model=VaultPasswordOut)

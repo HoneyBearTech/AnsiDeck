@@ -35,6 +35,7 @@ def info(
         "path_rules": secret_store.PATH_RULES,
         "ssh_mounts": get_settings().secrets_store_ssh_mount_list if enabled else [],
         "ssh_role_prefix": secret_store.ssh_role_name(project_id, "") if enabled else None,
+        "move_enabled": enabled and get_settings().secrets_store_allow_move,
     }
 
 

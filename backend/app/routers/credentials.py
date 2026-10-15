@@ -1,3 +1,4 @@
+import json
 from typing import Literal
 
 from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_ssh_private_key
@@ -7,13 +8,19 @@ from sqlalchemy.orm import Session
 
 from app import audit, secret_store, ssh_certificates
 from app.config import get_settings
-from app.crypto import encrypt_secret
+from app.crypto import decrypt_secret, encrypt_secret
 from app.db import get_db
 from app.env_credentials import encrypt_env, env_problem
 from app.hardening import FailureThrottle, client_ip
 from app.models import Credential, GitSource, InventorySource, User
 from app.permissions import Permission, Scope, guard
-from app.schemas.credentials import CredentialCreate, CredentialOut, ReferenceUpdate, SecretCheck
+from app.schemas.credentials import (
+    CredentialCreate,
+    CredentialOut,
+    MoveToStore,
+    ReferenceUpdate,
+    SecretCheck,
+)
 from app.scoping import get_scoped, readable_project_ids, resolve_write_project
 from app.secret_store import SecretStoreError
 
@@ -308,6 +315,159 @@ def edit_reference(
         },
     )
     return row
+
+
+def move_to_store(
+    db: Session,
+    actor: User,
+    request: Request,
+    row,
+    payload: MoveToStore,
+    kind: str,
+    field: str,
+    values,
+):
+    """Writes a secret stored here into the store and keeps a reference instead (opt-in:
+    SECRETS_STORE_ALLOW_MOVE). The store only ever gets a new secret (check-and-set 0, after
+    a read finds nothing there), which is read back and compared before the copy here is
+    dropped; the row is locked and must be unchanged. `values(row)` gives the secret's keys
+    and values; `field` is the encrypted column that goes."""
+    settings = get_settings()
+    label = settings.secrets_store_label
+    noun = kind.replace("_", " ")
+    if not secret_store.enabled() or not settings.secrets_store_allow_move:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Moving secrets to {label} is off (SECRETS_STORE_ALLOW_MOVE)"
+        )
+    if getattr(row, "kind", None) == "ssh_cert" or row.store_path is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"This {noun} is already in {label}")
+    env = getattr(row, "kind", None) == "env"
+    if env and payload.store_key is not None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Each variable becomes a key of the secret: no store_key"
+        )
+    model, row_id, project_id, path = type(row), row.id, row.project_id, payload.store_path
+    key = (
+        None
+        if env
+        else payload.store_key or ("password" if kind == "vault_password" else "private_key")
+    )
+    try:
+        secret_store.check_path(path)
+        if key is not None:
+            secret_store.check_key(key)
+    except SecretStoreError as exc:
+        raise _store_error(project_id, path, key, exc) from None
+    ciphertext = getattr(row, field)
+    data = values(row)
+    target = {"target_type": kind, "target_id": row_id, "target_name": row.name}
+    throttled_check(actor)
+    db.rollback()  # no transaction held open while the store answers
+    location = secret_store.location(project_id, path, key)
+
+    def failed(code: int, message: str, error_kind: str, **detail) -> HTTPException:
+        audit.record(
+            db,
+            f"{kind}.move_to_store",
+            outcome="failure",
+            actor=actor,
+            ip=client_ip(request),
+            project_id=project_id,
+            detail={"location": location, "error_kind": error_kind, **detail},
+            **target,
+        )
+        return HTTPException(code, message)
+
+    try:  # a secret already there (even one AnsiDeck can't read) is never touched
+        secret_store.read_all_versioned(project_id, path)
+    except SecretStoreError as exc:
+        if exc.kind != "not_found":
+            raise _store_error(project_id, path, key, exc) from None
+    else:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{label} already has a secret at {secret_store.location(project_id, path, None)}: "
+            "choose another path",
+        )
+    try:
+        version = secret_store.create_secret(project_id, path, data)
+    except SecretStoreError as exc:
+        code = status.HTTP_409_CONFLICT if exc.kind == "exists" else status.HTTP_400_BAD_REQUEST
+        raise failed(
+            code, f"{label}: {secret_store.explain(exc.kind)} ({location})", exc.kind
+        ) from None
+    try:
+        back, back_version = secret_store.read_all_versioned(project_id, path)
+        matches = back == data and back_version == version
+    except SecretStoreError:
+        matches = False
+    if not matches:
+        raise failed(
+            status.HTTP_502_BAD_GATEWAY,
+            f"{label} took the secret (version {version} at {location}) but reading it back "
+            "didn't give the same value; nothing changed here. Check it in "
+            f"{label}, and delete it there if it is wrong.",
+            "read_back",
+            version=version,
+        )
+    row = db.get(model, row_id, with_for_update=True, populate_existing=True)
+    if row is None or row.store_path is not None or getattr(row, field) != ciphertext:
+        db.rollback()
+        raise failed(
+            status.HTTP_409_CONFLICT,
+            f"The {noun} changed or was deleted while it was moved; nothing changed here. "
+            f"{label} has the old value at {location} (version {version}): delete it there.",
+            "changed",
+            version=version,
+        )
+    row.store_path, row.store_key = path, key
+    setattr(row, field, None)
+    if env:
+        row.env_names = None  # whatever keys the secret has
+    db.commit()
+    audit.record(
+        db,
+        f"{kind}.move_to_store",
+        actor=actor,
+        ip=client_ip(request),
+        project_id=project_id,
+        detail={
+            "location": location,
+            "version": version,
+            **({"names": sorted(data)} if env else {}),
+        },
+        **target,
+    )
+    return row
+
+
+@router.post("/{credential_id}/move-to-store", response_model=CredentialOut)
+def move_credential_to_store(
+    credential_id: int,
+    payload: MoveToStore,
+    request: Request,
+    actor: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Moves a key or variables stored here into the secret store (see move_to_store)."""
+    credential = get_scoped(
+        db, actor, request, Credential, credential_id, Permission.SECRETS_MANAGE,
+        "Credential not found",
+    )  # fmt: skip
+    if credential.kind == "env":
+        field = "encrypted_env"
+
+        def values(row) -> dict[str, str]:
+            return json.loads(decrypt_secret(row.encrypted_env))
+    else:
+        field = "encrypted_private_key"
+
+        def values(row) -> dict[str, str]:
+            key = payload.store_key or "private_key"
+            return {key: decrypt_secret(row.encrypted_private_key).decode()}
+
+    moved = move_to_store(db, actor, request, credential, payload, "credential", field, values)
+    return _out(moved)
 
 
 @router.patch("/{credential_id}", response_model=CredentialOut)

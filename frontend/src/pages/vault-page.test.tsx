@@ -74,6 +74,36 @@ describe("vault", () => {
     );
   });
 
+  it("moves a vault password into the secret store under the key given", async () => {
+    const here = vaultPassword({ id: 3 });
+    const { api, user, screen } = renderApp("/vault", {
+      routes: {
+        "GET /secret-store/info": {
+          enabled: true,
+          label: "OpenBao",
+          base_path: "secret/ansideck/1/",
+          path_rules: "plain segments",
+          move_enabled: true,
+        },
+        "GET /vault-passwords": [here],
+        "POST /vault-passwords/:id/move-to-store": { ...here, store: "external" },
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "Move to OpenBao" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByLabelText("Key in that secret")).toHaveValue("password");
+    await user.type(dialog.getByLabelText("Path in OpenBao"), "ansible/vault");
+    await user.clear(dialog.getByLabelText("Key in that secret"));
+    await user.type(dialog.getByLabelText("Key in that secret"), "pw");
+    await user.click(dialog.getByRole("button", { name: "Move to OpenBao" }));
+    await vi.waitFor(() =>
+      expect(api.requests("POST /vault-passwords/3/move-to-store")[0]?.body).toEqual({
+        store_path: "ansible/vault",
+        store_key: "pw",
+      }),
+    );
+  });
+
   it("encrypts a value for YAML and extra vars, and copies it", async () => {
     const { api, user, screen } = renderApp("/vault", {
       routes: {

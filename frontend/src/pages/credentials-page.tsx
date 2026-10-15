@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import {
   EditReferenceDialog,
+  MoveToStoreDialog,
   SecretCheckButton,
   SecretLocation,
   SecretSourcePicker,
@@ -466,6 +467,18 @@ export function CredentialsPage() {
                     <SecretCheckButton
                       check={() => api.checkCredential(credential.id)}
                       describe={credential.kind === "ssh_cert" ? certificateCheckText : undefined}
+                    />
+                  )}
+                  {credential.kind !== "ssh_cert" && (
+                    <MoveToStoreDialog
+                      row={credential}
+                      info={store}
+                      defaultKey="private_key"
+                      wholeSecret={credential.kind === "env"}
+                      keys={credential.env_names}
+                      move={(update) => api.moveCredentialToStore(credential.id, update)}
+                      onMoved={refresh}
+                      idPrefix={`move-${credential.id}`}
                     />
                   )}
                   <EditReferenceDialog
