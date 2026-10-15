@@ -635,8 +635,15 @@ def _refuse_cycles(groups: dict[str, dict]) -> None:
 # `!unsafe`: never a template), the inventory's own hosts and the constructed configs.
 
 
+SCRUBBED = "a credential's value appeared in the output and was redacted"
+
+
 def store_source_output(
-    db: Session, refresh: InventoryRefresh, row: InventoryRefreshSource, raw: bytes
+    db: Session,
+    refresh: InventoryRefresh,
+    row: InventoryRefreshSource,
+    raw: bytes,
+    scrubbed: bool = False,
 ) -> None:
     """A source's output from this refresh becomes its last good output, unless it can't be
     used (the source failed) or the source changed since the job was built (stale). The caller
@@ -646,6 +653,8 @@ def store_source_output(
     except SourceError as exc:
         record_source_failure(db, row, str(exc))
         return
+    if scrubbed:  # the worker redacted a credential's value in it
+        warnings.insert(0, SCRUBBED)
     source = db.get(InventorySource, row.source_id) if row.source_id is not None else None
     if source is None or input_sha256(source) != row.input_sha256:
         row.status = "stale"  # deleted or edited meanwhile: the next refresh runs it again
