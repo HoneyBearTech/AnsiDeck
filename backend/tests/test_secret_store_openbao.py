@@ -487,3 +487,29 @@ def test_a_run_with_a_certificate_credential_succeeds_and_stores_no_key(
     for private_key, _ in made:
         body = private_key.splitlines()[1]
         assert _sentinel_rows(body) == [] and body not in log
+
+
+def test_a_git_sources_token_from_the_store(store, client) -> None:
+    from app import git_sync
+    from app.models import GitSource
+
+    _login(client)
+    put_secret(1, "git/infra", {"token": "real-git-token-1"})
+    created = client.post(
+        "/api/projects/1/git-sources",
+        json={
+            "name": "infra",
+            "url": "https://git.example/org/repo.git",
+            "auth_kind": "https_token",
+            "token_store_path": "git/infra",
+        },
+    )
+    assert created.status_code == 201, created.text
+    db = get_sessionmaker()()
+    try:
+        source = db.get(GitSource, created.json()["id"])
+        assert git_sync.auth_for(db, source).token == "real-git-token-1"
+        put_secret(1, "git/infra", {"token": "real-git-token-2"})  # rotated in the store
+        assert git_sync.auth_for(db, source).token == "real-git-token-2"
+    finally:
+        db.close()

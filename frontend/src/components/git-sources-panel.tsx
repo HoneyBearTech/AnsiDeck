@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { SecretSourcePicker, type SourceMode } from "@/components/secret-source";
 import { useAuth } from "@/context/auth-context";
 import {
   api,
@@ -25,6 +26,7 @@ import {
   type GitSource,
   type GitSourceInput,
   type GitTestResult,
+  type SecretStoreInfo,
 } from "@/lib/api";
 import { commitLink, isSshUrl, shortSha } from "@/lib/git";
 
@@ -402,6 +404,10 @@ function SourceDialog({
   const [credentialId, setCredentialId] = React.useState<string>("");
   const [username, setUsername] = React.useState("");
   const [token, setToken] = React.useState("");
+  const [tokenMode, setTokenMode] = React.useState<SourceMode>("ansideck");
+  const [tokenPath, setTokenPath] = React.useState("");
+  const [tokenKey, setTokenKey] = React.useState("token");
+  const [store, setStore] = React.useState<SecretStoreInfo | null>(null);
   const [interval, setSyncInterval] = React.useState(300);
   const [webUrl, setWebUrl] = React.useState("");
   const [enabled, setEnabled] = React.useState(true);
@@ -421,6 +427,9 @@ function SourceDialog({
     setCredentialId(source?.credential_id ? String(source.credential_id) : "");
     setUsername(source?.https_username ?? "");
     setToken("");
+    setTokenMode(source?.token_store === "external" ? "external" : "ansideck");
+    setTokenPath(source?.token_store_path ?? "");
+    setTokenKey(source?.token_store_key ?? "token");
     setSyncInterval(source?.auto_sync_seconds ?? 300);
     setWebUrl(source?.web_url ?? "");
     setEnabled(source?.enabled ?? true);
@@ -429,7 +438,13 @@ function SourceDialog({
       .listCredentials("ssh")
       .then((list) => setCredentials(list.filter((c) => c.project_id === projectId && c.kind === "ssh")))
       .catch(() => setCredentials([]));
+    api
+      .secretStoreInfo(projectId)
+      .then(setStore)
+      .catch(() => setStore(null));
   }, [open, source, projectId]);
+
+  const tokenFromStore = tokenMode === "external" && !!store?.enabled;
 
   const ssh = isSshUrl(url);
   // The URL decides what kind of authentication fits.
@@ -454,7 +469,12 @@ function SourceDialog({
       auto_sync_seconds: interval,
       enabled,
     };
-    if (auth === "https_token" && token) input.token = token;
+    if (auth === "https_token" && tokenFromStore) {
+      input.token_store_path = tokenPath.trim();
+      input.token_store_key = tokenKey.trim() || "token";
+    } else if (auth === "https_token" && token) {
+      input.token = token;
+    }
     try {
       if (source) await api.updateGitSource(projectId, source.id, input);
       else await api.createGitSource(projectId, input);
@@ -569,15 +589,31 @@ function SourceDialog({
                 <Label htmlFor="source-username">User name</Label>
                 <Input id="source-username" value={username} onChange={(e) => setUsername(e.target.value)} />
               </div>
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="source-token">Token</Label>
-                <Input
-                  id="source-token"
-                  type="password"
-                  autoComplete="off"
-                  value={token}
-                  placeholder={source?.has_token ? "Leave empty to keep the current one" : undefined}
-                  onChange={(e) => setToken(e.target.value)}
+              {!tokenFromStore && (
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="source-token">Token</Label>
+                  <Input
+                    id="source-token"
+                    type="password"
+                    autoComplete="off"
+                    value={token}
+                    placeholder={
+                      source?.token_store === "ansideck" ? "Leave empty to keep the current one" : undefined
+                    }
+                    onChange={(e) => setToken(e.target.value)}
+                  />
+                </div>
+              )}
+              <div className="sm:col-span-2">
+                <SecretSourcePicker
+                  info={store}
+                  mode={tokenMode}
+                  onModeChange={setTokenMode}
+                  path={tokenPath}
+                  onPathChange={setTokenPath}
+                  secretKey={tokenKey}
+                  onSecretKeyChange={setTokenKey}
+                  idPrefix="git-token"
                 />
               </div>
               {plainHttp && (

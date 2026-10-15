@@ -179,6 +179,42 @@ describe("git sources", () => {
     });
   });
 
+  it("adds an HTTPS source whose token is in the secret store", async () => {
+    const { api, user, screen } = renderApp("/playbooks", {
+      routes: {
+        "GET /playbooks": [],
+        [SOURCES]: [],
+        "GET /credentials": [],
+        "GET /secret-store/info": {
+          enabled: true,
+          label: "OpenBao",
+          base_path: "secret/ansideck/1/",
+          path_rules: "letters, digits, - and _",
+        },
+        "POST /projects/:id/git-sources": gitSource(),
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "Add git source" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.type(dialog.getByLabelText("Name"), "infra");
+    await user.type(dialog.getByLabelText("Repository URL"), "https://git.example/org/infra.git");
+    await choose(user, dialog.getByLabelText("Authentication"), "User name and token (HTTPS)");
+    await user.click(dialog.getByRole("button", { name: "In OpenBao" }));
+    expect(dialog.queryByLabelText("Token")).not.toBeInTheDocument();
+    await user.type(dialog.getByLabelText("Path in OpenBao"), "git/infra");
+    await user.clear(dialog.getByLabelText("Key in that secret"));
+    await user.type(dialog.getByLabelText("Key in that secret"), "pat");
+    await user.click(dialog.getByRole("button", { name: "Add source" }));
+    await vi.waitFor(() => expect(api.requests("POST /projects/1/git-sources")).toHaveLength(1));
+    const body = api.requests("POST /projects/1/git-sources")[0]?.body as Record<string, unknown>;
+    expect(body).toMatchObject({
+      auth_kind: "https_token",
+      token_store_path: "git/infra",
+      token_store_key: "pat",
+    });
+    expect(body).not.toHaveProperty("token");
+  });
+
   it("adds an SSH source with a deploy key, then trusts its host key", async () => {
     const ssh = gitSource({ url: "git@gitea.lan:org/infra.git", auth_kind: "ssh_key", credential_id: 1, commit: null, last_sync_status: null, last_sync_finished_at: null });
     const { api, user, screen } = renderApp("/playbooks", {

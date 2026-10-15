@@ -23,6 +23,10 @@ class GitSourceCreate(BaseModel):
     credential_id: int | None = None
     https_username: str | None = Field(None, max_length=255)
     token: str | None = Field(None, min_length=1, max_length=4096)  # write-only
+    # Or the token in the secret store: a path under the project's subtree and its key
+    # (default "token"), read at each sync and test.
+    token_store_path: str | None = Field(None, min_length=1, max_length=400)
+    token_store_key: str | None = Field(None, min_length=1, max_length=100)
     auto_sync_seconds: int = Field(300, ge=0, le=86_400)
     enabled: bool = True
 
@@ -40,6 +44,8 @@ class GitSourceUpdate(BaseModel):
     credential_id: int | None = None
     https_username: str | None = Field(None, max_length=255)
     token: str | None = Field(None, min_length=1, max_length=4096)
+    token_store_path: str | None = Field(None, min_length=1, max_length=400)
+    token_store_key: str | None = Field(None, min_length=1, max_length=100)
     auto_sync_seconds: int | None = Field(None, ge=0, le=86_400)
     enabled: bool | None = None
 
@@ -65,6 +71,12 @@ class GitSourceOut(BaseModel):
     credential_name: str | None
     https_username: str | None
     has_token: bool
+    # Where the token is: "ansideck" (encrypted here), "external" (the secret store, at
+    # token_location), or None (no token).
+    token_store: Literal["ansideck", "external"] | None = None
+    token_store_path: str | None = None
+    token_store_key: str | None = None
+    token_location: str | None = None
     host_keys: list[HostKey]  # trusted SSH host keys (fingerprints only)
     auto_sync_seconds: int
     enabled: bool

@@ -1833,6 +1833,32 @@
             ],
             "title": "Token"
           },
+          "token_store_key": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Store Key"
+          },
+          "token_store_path": {
+            "anyOf": [
+              {
+                "maxLength": 400,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Store Path"
+          },
           "url": {
             "maxLength": 500,
             "minLength": 1,
@@ -2065,6 +2091,54 @@
             ],
             "title": "Sync Requested At"
           },
+          "token_location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Location"
+          },
+          "token_store": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ansideck",
+                  "external"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Store"
+          },
+          "token_store_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Store Key"
+          },
+          "token_store_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Store Path"
+          },
           "url": {
             "title": "Url",
             "type": "string"
@@ -2252,6 +2326,32 @@
               }
             ],
             "title": "Token"
+          },
+          "token_store_key": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Store Key"
+          },
+          "token_store_path": {
+            "anyOf": [
+              {
+                "maxLength": 400,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Store Path"
           },
           "url": {
             "anyOf": [

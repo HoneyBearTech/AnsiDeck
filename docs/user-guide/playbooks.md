@@ -48,7 +48,9 @@ files next to the playbook are there too.
      `*.yml, playbooks/*.yml`; only files that are playbooks appear).
    - **Authentication**: none for a public repository, a user name and **token** over HTTPS, or an **SSH
      deploy key** (one of the project's SSH credentials; add its public half to the repository as a
-     read-only deploy key).
+     read-only deploy key). With a secret store, the token can stay there: choose **In OpenBao** (or the
+     store's name) and give its path and key; AnsiDeck reads it at each sync and test, so rotating it in the
+     store takes effect at the next sync.
    - **Sync**: manually only, or every minute up to every hour. **Web URL** turns commits into links.
 2. For SSH, **Test connection** shows the host keys the server presented: compare a fingerprint with the
    one your git host publishes and **Trust** it (or **Paste a known_hosts line instead**). Syncing waits
