@@ -65,15 +65,11 @@ def _synced(admin: TestClient, repo: Path) -> dict:
 
 
 @pytest.mark.no_worker
-def test_a_script_must_be_executable_in_git_and_name_its_interpreter(
-    admin: TestClient, tmp_path: Path
-) -> None:
+def test_a_script_is_a_file_in_the_commit(admin: TestClient, tmp_path: Path) -> None:
+    """Its execute bit doesn't matter: it runs through the interpreter its #! line names."""
     source = _synced(admin, _repo(tmp_path, executable=False))
     snapshot = _snapshot(source["id"])
-    with pytest.raises(
-        InventoryFileError, match=r"git update-index --chmod=\+x inventory/apps\.py"
-    ):
-        read_script_files(snapshot, "inventory/apps.py")
+    assert read_script_files(snapshot, "inventory/apps.py").target == "inventory/apps.py"
     with pytest.raises(InventoryFileError, match="is not a file"):
         read_script_files(snapshot, "inventory")
 

@@ -324,10 +324,10 @@ function SourceDialog({
                 />
                 {script ? (
                   <p className="text-xs text-muted-foreground">
-                    An executable inventory script (committed with its execute bit, starting with a{" "}
-                    <code>#!</code> line) that prints the inventory as JSON. It runs in a worker with the
-                    files in its directory and below, and only the credential picked here; anyone who can
-                    commit to the repository decides what it does.
+                    An inventory script that prints the inventory as JSON, starting with a <code>#!</code>{" "}
+                    line naming its interpreter (<code>#!/usr/bin/env python3</code>). It runs in a worker
+                    through that interpreter, with the files in its directory and below, and only the
+                    credential picked here; anyone who can commit to the repository decides what it does.
                   </p>
                 ) : (
                   <p className="text-xs text-muted-foreground">

@@ -48,8 +48,8 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 - Each dynamic inventory source runs on its own, with only its own credential, and shows what it found
   last or why it failed; the refresh history says what each source did.
-- **Inventory scripts from a git source**: an executable script in a synced repository (execute bit in
-  git, a `#!` line) runs as a dynamic source in a worker slot, with the files of its directory and only its
+- **Inventory scripts from a git source**: a script in a synced repository (with a `#!` line naming its
+  interpreter) runs as a dynamic source in a worker slot, with the files of its directory and only its
   own source's credential; committers to that repository can run code there, as with synced playbooks.
 - **Inventory files from a git source**: a dynamic source can be an INI or YAML inventory file (or a
   directory of them) in a synced git source, with the `group_vars/` and `host_vars/` beside it, read from its

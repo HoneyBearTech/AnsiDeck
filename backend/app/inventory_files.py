@@ -8,9 +8,9 @@ and the group_vars/ and host_vars/ beside it in the job, as text; the worker run
 ansible-inventory with only the yaml and ini plugins over them. Nothing else of the repository
 reaches the refresh: not its ansible.cfg, plugins or scripts.
 
-A script source: an executable inventory script (the owner's execute bit set in git, a "#!"
-line) and everything in its directory and below, bounded the same way, run by ansible-inventory's
-script plugin as the worker slot's user with only its own source's credential. Whoever can
+A script source: an inventory script (a "#!" line naming its interpreter) and everything in its
+directory and below, bounded the same way, run through that interpreter as the worker slot's
+user with only its own source's credential (app.run_worker._script_inventory). Whoever can
 commit to the repository can make it do anything a playbook in that slot could.
 
 What comes out is a source's output like any other: untrusted, its Ansible settings dropped,
@@ -96,7 +96,7 @@ def _digest(files: list[dict]) -> str:
 
 def read_script_files(snapshot: GitSnapshot, path: str) -> InventoryFiles:
     """The inventory script at `path` and every file in its directory and below;
-    InventoryFileError if it isn't an executable script there, or there's too much."""
+    InventoryFileError if it isn't a script there, or there's too much."""
     path = check_path(path)
     commit = snapshot.commit[:12]
     with tarfile.open(snapshot_path(snapshot)) as tar:
@@ -104,16 +104,14 @@ def read_script_files(snapshot: GitSnapshot, path: str) -> InventoryFiles:
         script = next((m for m in members if m.name == path), None)
         if script is None:
             raise InventoryFileError(f"{path} is not a file in commit {commit}")
-        if not script.mode & 0o100:
-            raise InventoryFileError(
-                f"{path} is not executable in git: git update-index --chmod=+x {path}"
-            )
         base = posixpath.dirname(path)
         files = _read(
             tar, [m for m in members if not base or m.name.startswith(base + "/")], base or "/"
         )
     if not next(f for f in files if f["name"] == path)["text"].startswith("#!"):
-        raise InventoryFileError(f"{path} doesn't start with a #! line naming its interpreter")
+        raise InventoryFileError(
+            f"{path} doesn't start with a #! line naming its interpreter (#!/usr/bin/env python3)"
+        )
     return InventoryFiles(files=files, target=path, digest=_digest(files))
 
 
