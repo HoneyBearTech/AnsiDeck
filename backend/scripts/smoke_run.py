@@ -156,7 +156,8 @@ def main() -> None:
     if args.expect_wait:
         deadline = time.monotonic() + 120
         while args.expect_wait not in (run.get("waiting_reason") or ""):
-            if run["status"] != "queued" or time.monotonic() > deadline:
+            # (claimed meanwhile, it is "running" until its job gives up on the store)
+            if run["status"] not in ("queued", "running") or time.monotonic() > deadline:
                 print(json.dumps(run, indent=2))
                 sys.exit(f"expected it to wait with {args.expect_wait!r}")
             time.sleep(1)
