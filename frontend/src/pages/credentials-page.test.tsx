@@ -115,6 +115,74 @@ describe("credentials", () => {
     expect(await screen.findByText("Readable (version 3)")).toBeInTheDocument();
   });
 
+  it("points a reference elsewhere, and shows why a new one was refused", async () => {
+    const vaulted = credential({
+      id: 4,
+      name: "vaulted",
+      store: "external",
+      store_path: "web/ssh",
+      store_key: "private_key",
+      store_location: "secret/ansideck/1/web/ssh#private_key",
+    });
+    const { api, user, screen } = renderApp("/credentials", {
+      routes: {
+        ...STORE,
+        "GET /credentials": [vaulted, credential({ id: 5, name: "here" })],
+        "PATCH /credentials/:id": reply(400, { detail: "OpenBao: no secret at that path" }),
+      },
+    });
+    const buttons = await screen.findAllByRole("button", { name: "Edit reference" });
+    expect(buttons).toHaveLength(1); // not for a key stored in AnsiDeck
+    await user.click(buttons[0]!);
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByText("secret/ansideck/1/web/ssh#private_key")).toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Save" })).toBeDisabled(); // nothing changed yet
+    await user.clear(dialog.getByLabelText("Path in OpenBao"));
+    await user.type(dialog.getByLabelText("Path in OpenBao"), "web/nope");
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    expect(await dialog.findByText("OpenBao: no secret at that path")).toBeInTheDocument();
+
+    api.set({
+      "PATCH /credentials/:id": { ...vaulted, store_path: "web/ssh2" },
+      "GET /credentials": [{ ...vaulted, store_location: "secret/ansideck/1/web/ssh2#pk" }],
+    });
+    await user.clear(dialog.getByLabelText("Path in OpenBao"));
+    await user.type(dialog.getByLabelText("Path in OpenBao"), "web/ssh2");
+    await user.clear(dialog.getByLabelText("Key in that secret"));
+    await user.type(dialog.getByLabelText("Key in that secret"), "pk");
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("secret/ansideck/1/web/ssh2#pk")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(api.requests("PATCH /credentials/4").at(-1)?.body).toEqual({
+      store_path: "web/ssh2",
+      store_key: "pk",
+    });
+  });
+
+  it("points an environment-variable credential at another secret, with no key", async () => {
+    const env = credential({
+      id: 6,
+      name: "aws",
+      kind: "env",
+      env_names: null,
+      store: "external",
+      store_path: "cloud/aws",
+      store_location: "secret/ansideck/1/cloud/aws",
+    });
+    const { api, user, screen } = renderApp("/credentials", {
+      routes: { ...STORE, "GET /credentials": [env], "PATCH /credentials/:id": env },
+    });
+    await user.click(await screen.findByRole("button", { name: "Edit reference" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.queryByLabelText("Key in that secret")).not.toBeInTheDocument();
+    await user.clear(dialog.getByLabelText("Path in OpenBao"));
+    await user.type(dialog.getByLabelText("Path in OpenBao"), "cloud/gcp");
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() =>
+      expect(api.requests("PATCH /credentials/6")[0]?.body).toEqual({ store_path: "cloud/gcp" }),
+    );
+  });
+
   it("shows why a stored secret can't be read, and why a create was refused", async () => {
     const { user, screen } = renderApp("/credentials", {
       routes: {

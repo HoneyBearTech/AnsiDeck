@@ -13,7 +13,7 @@ from app.env_credentials import encrypt_env, env_problem
 from app.hardening import FailureThrottle, client_ip
 from app.models import Credential, GitSource, InventorySource, User
 from app.permissions import Permission, Scope, guard
-from app.schemas.credentials import CredentialCreate, CredentialOut, SecretCheck
+from app.schemas.credentials import CredentialCreate, CredentialOut, ReferenceUpdate, SecretCheck
 from app.scoping import get_scoped, readable_project_ids, resolve_write_project
 from app.secret_store import SecretStoreError
 
@@ -250,6 +250,89 @@ def _new_ssh_cert_credential(payload: CredentialCreate, project_id: int) -> tupl
         "principals": principals,
         "test_serial": info["serial"],
     }
+
+
+def edit_reference(
+    db: Session, actor: User, request: Request, row, payload: ReferenceUpdate, kind: str, check
+):
+    """Points a row's store reference elsewhere once `check(project_id, path, key)` read it
+    (400 when it can't be; returns what to audit besides the locations). The row is locked
+    and must still point where it did, so a concurrent edit isn't overwritten. Queued runs
+    read the new reference when they start."""
+    label = get_settings().secrets_store_label
+    if getattr(row, "kind", None) == "ssh_cert":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "An SSH certificate credential has no reference to edit"
+        )
+    if row.store_path is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"This {kind.replace('_', ' ')} is stored in AnsiDeck, not {label}",
+        )
+    env = getattr(row, "kind", None) == "env"
+    if env and payload.store_key is not None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "An env credential reads the whole secret: no store_key"
+        )
+    model, row_id, project_id = type(row), row.id, row.project_id
+    before = (row.store_path, row.store_key)
+    path = payload.store_path or before[0]
+    key = None if env else payload.store_key or before[1]
+    throttled_check(actor)
+    db.rollback()  # no transaction held open while the store answers
+    detail = check(project_id, path, key)
+    row = db.get(model, row_id, with_for_update=True, populate_existing=True)
+    if row is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, f"{kind.replace('_', ' ').capitalize()} not found"
+        )
+    if (row.store_path, row.store_key) != before:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Its reference changed while this one was checked; try again"
+        )
+    row.store_path, row.store_key = path, key
+    db.commit()
+    audit.record(
+        db,
+        f"{kind}.reference_update",
+        actor=actor,
+        target_type=kind,
+        target_id=row.id,
+        target_name=row.name,
+        ip=client_ip(request),
+        project_id=project_id,
+        detail={
+            "location_before": secret_store.location(project_id, *before),
+            "location": secret_store.location(project_id, path, key),
+            **detail,
+        },
+    )
+    return row
+
+
+@router.patch("/{credential_id}", response_model=CredentialOut)
+def update_credential_reference(
+    credential_id: int,
+    payload: ReferenceUpdate,
+    request: Request,
+    actor: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Points a credential in the secret store at another path or key (read once to check)."""
+    credential = get_scoped(
+        db, actor, request, Credential, credential_id, Permission.SECRETS_MANAGE,
+        "Credential not found",
+    )  # fmt: skip
+
+    def check(project_id: int, path: str, key: str | None) -> dict:
+        if key is None:
+            names, version = read_env_reference(project_id, path)
+            return {"names": names, "version": version}
+        value, version = read_reference(project_id, path, key)
+        _validate_private_key(value.encode())
+        return {"version": version}
+
+    return _out(edit_reference(db, actor, request, credential, payload, "credential", check))
 
 
 @router.post("/{credential_id}/check", response_model=SecretCheck)

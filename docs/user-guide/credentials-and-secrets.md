@@ -61,6 +61,11 @@ When the server is connected to a secret store (see the README's
 - AnsiDeck reads the value once to check it, and again whenever a run or refresh needs it; it never stores
   it. Rotate it in the store, and the next run uses the new version.
 - **Test** on a stored reference checks that AnsiDeck can read it now (it never shows the value).
+- **Edit reference** points it at another path or key (an environment credential: another secret).
+  AnsiDeck reads the new one once to check it before saving; queued runs use it when they start. The audit
+  log records the old and new locations and the version read.
+- A run's page lists which version of each reference its job read, so a change in the store can be traced
+  to the runs that used it (the locations only for people who may see the project's secrets).
 - If the store is unreachable, runs that need it fail with the reason, and global admins can be notified
   (**Secret store unavailable**). Deleting the credential only deletes the reference; the secret stays in
   the store.

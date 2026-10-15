@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -42,6 +42,16 @@ class EgressRefused(BaseModel):
     address: str
     protocol: str
     port: int
+
+
+class SecretRead(BaseModel):
+    """One reference a run's job read from the secret store, and the KV version it got."""
+
+    what: Literal["credential", "vault_password", "env_credential"]
+    name: str
+    # Hidden (None) from those who may not list the project's secrets.
+    location: str | None = None
+    version: int
 
 
 class HostKeyProblem(BaseModel):
@@ -132,6 +142,8 @@ class RunOut(BaseModel):
     # With an SSH certificate credential: the certificate its job got (GET
     # /runs/{id}/ssh-certificate serves the certificate itself).
     ssh_certificate: SshCertificateInfo | None = None
+    # What its job read from the secret store: each reference and its KV version.
+    secret_reads: list[SecretRead] | None = None
     # Runs of playbooks synced from git: where and at which commit they execute.
     git_source_name: str | None = None
     git_commit: str | None = None

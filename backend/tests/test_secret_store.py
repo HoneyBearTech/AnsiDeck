@@ -39,6 +39,7 @@ def store(monkeypatch, tmp_path):
         "requests": [],
         "secrets": {"/v1/secret/data/ansideck/7/web/ssh": {"private_key": VALUE, "n": 5}},
         "status": {},
+        "versions": {},  # a secret's KV version (default 3)
         "once": {},  # like status, for one request only
         "token_file": token_file,
         "tmp": tmp_path,
@@ -70,7 +71,13 @@ def store(monkeypatch, tmp_path):
             return httpx.Response(200, json={"auth": {"client_token": "child-token"}})
         if path in state["secrets"]:
             return httpx.Response(
-                200, json={"data": {"data": state["secrets"][path], "metadata": {"version": 3}}}
+                200,
+                json={
+                    "data": {
+                        "data": state["secrets"][path],
+                        "metadata": {"version": state["versions"].get(path, 3)},
+                    }
+                },
             )
         return httpx.Response(404, json={"errors": []})
 

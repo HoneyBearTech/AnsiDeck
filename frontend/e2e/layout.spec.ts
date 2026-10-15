@@ -23,7 +23,7 @@ import { baseRoutes, PAGE_ROUTES, PAGES } from "../src/test/pages";
 
 // Every page at phone, tablet, laptop and desktop widths, filled with the long names, e-mail
 // addresses and URLs real inventories have: nothing may scroll sideways, text must keep its contrast,
-// and every "New/Add" dialog must fit a small phone with its buttons in reach.
+// and every "New/Add" (and "Edit reference") dialog must fit a small phone with its buttons in reach.
 
 const WIDTHS = [375, 768, 1024, 1280];
 const PHONE = { width: 375, height: 667 };
@@ -65,14 +65,19 @@ const LONG_ROUTES: Routes = {
     total: 1,
     hosts: [mergedHost({ name: `web1.${LONG}.example.com`, groups: [`${LONG}-webservers`], origin: "both" })],
   },
+  "GET /secret-store/info": { enabled: true, label: "OpenBao", base_path: "secret/ansideck/1/", path_rules: "letters, digits, - and _" },
   "GET /credentials": [
     credential({ name: `${LONG}-deploy-key` }),
+    credential({ id: 4, name: `${LONG}-vaulted`, store: "external", store_path: `${LONG}/ssh`, store_key: "private_key", store_location: `secret/ansideck/1/${LONG}/ssh#private_key` }),
     credential({ id: 2, name: `${LONG}-cloud`, kind: "env", env_names: [`AWS_SECRET_ACCESS_KEY_FOR_${LONG.toUpperCase().replaceAll("-", "_")}`] }),
     sshCertCredential({ name: `${LONG}-cert`, store_location: `ssh/sign/ansideck-1-${LONG}-webservers`, ssh_principals: [`deploy-${LONG}`, "ansible"] }),
   ],
-  "GET /vault-passwords": [vaultPassword({ name: `${LONG}-vault` })],
+  "GET /vault-passwords": [
+    vaultPassword({ name: `${LONG}-vault` }),
+    vaultPassword({ id: 2, name: `${LONG}-vaulted`, store: "external", store_path: `${LONG}/vault`, store_key: "password", store_location: `secret/ansideck/1/${LONG}/vault#password` }),
+  ],
   "GET /runs": [run({ playbook_name: `${LONG}-site.yml`, inventory_name: `${LONG}-inventory`, group_name: `${LONG}-webservers`, limit: `web1.${LONG}.example.com` })],
-  "GET /runs/:id": run({ playbook_name: `${LONG}-site.yml`, inventory_name: `${LONG}-inventory`, group_name: `${LONG}-webservers`, credential_name: `${LONG}-deploy-key`, ssh_certificate: sshCertificate({ principals: [`deploy-${LONG}`, "ansible"], capped: true }) }),
+  "GET /runs/:id": run({ playbook_name: `${LONG}-site.yml`, inventory_name: `${LONG}-inventory`, group_name: `${LONG}-webservers`, credential_name: `${LONG}-deploy-key`, ssh_certificate: sshCertificate({ principals: [`deploy-${LONG}`, "ansible"], capped: true }), secret_reads: [{ what: "credential", name: `${LONG}-vaulted`, location: `secret/ansideck/1/${LONG}/ssh#private_key`, version: 12 }] }),
   "GET /run-templates": [runTemplate({ name: `Nightly baseline for ${LONG}` })],
   "GET /users": [adminUserRow({ username: "a-very-long-username-for-layout", email: `someone.with.a.long.address@${LONG}.example.com`, sso_linked: true, totp_enabled: true })],
   "GET /notifications/channels": [channel({ name: "Webhook", kind: "webhook", target: `https://hooks.${LONG}.example.com/services/T000/B000/XXXXXXXXXXXXXXXXXXXXXXXX` })],
@@ -146,7 +151,7 @@ for (const [url] of PAGES) {
       await open(page, url);
       const names = await page
         .locator("main button")
-        .evaluateAll((els) => [...new Set(els.map((e) => (e.textContent ?? "").trim()).filter((t) => /^(New|Add)\b/.test(t)))]);
+        .evaluateAll((els) => [...new Set(els.map((e) => (e.textContent ?? "").trim()).filter((t) => /^(New|Add|Edit reference)\b/.test(t)))]);
       for (const name of names) {
         await open(page, url);
         await page.locator("main button", { hasText: name }).first().click();

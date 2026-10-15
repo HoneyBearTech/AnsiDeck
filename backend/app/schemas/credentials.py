@@ -56,6 +56,20 @@ class CredentialCreate(BaseModel):
         return self
 
 
+class ReferenceUpdate(BaseModel):
+    """Points a credential's or vault password's secret store reference elsewhere: a new
+    `store_path`, `store_key` or both (an env credential has no key). Checked by reading it."""
+
+    store_path: str | None = Field(None, min_length=1, max_length=400)
+    store_key: str | None = Field(None, min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def _something(self) -> "ReferenceUpdate":
+        if self.store_path is None and self.store_key is None:
+            raise ValueError("give store_path, store_key or both")
+        return self
+
+
 class CredentialOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

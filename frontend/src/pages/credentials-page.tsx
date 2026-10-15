@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  EditReferenceDialog,
   SecretCheckButton,
   SecretLocation,
   SecretSourcePicker,
@@ -467,6 +468,14 @@ export function CredentialsPage() {
                       describe={credential.kind === "ssh_cert" ? certificateCheckText : undefined}
                     />
                   )}
+                  <EditReferenceDialog
+                    row={credential}
+                    info={store}
+                    wholeSecret={credential.kind === "env"}
+                    save={(update) => api.updateCredentialReference(credential.id, update)}
+                    onSaved={refresh}
+                    idPrefix={`edit-${credential.id}`}
+                  />
                   <Button variant="destructive-outline" size="sm" onClick={() =>
                       deletion.run(
                         credential.kind === "ssh_cert"

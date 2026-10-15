@@ -195,6 +195,38 @@ function SshCertificateNote({ run }: { run: Run }) {
   );
 }
 
+const SECRET_READ_LABELS = {
+  credential: "credential",
+  vault_password: "vault password",
+  env_credential: "variables",
+} as const;
+
+// Which version of each secret-store reference the run's job read, so a change in the store can be
+// traced to the runs that used it (locations only for those who may list the project's secrets).
+function SecretReadsNote({ run }: { run: Run }) {
+  const reads = run.secret_reads ?? [];
+  if (reads.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1 text-sm text-muted-foreground">
+      <p>Read from the secret store when it started:</p>
+      <ul className="flex flex-col gap-0.5">
+        {reads.map((read) => (
+          <li key={`${read.what} ${read.name}`} className="wrap-anywhere">
+            {SECRET_READ_LABELS[read.what]} <span className="font-medium">{read.name}</span>, version{" "}
+            {read.version}
+            {read.location && (
+              <>
+                {" "}
+                · <span className="font-mono">{read.location}</span>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // Connections a restricted run's network refused (the first 256 destinations).
 function EgressRefusedCard({ run }: { run: Run }) {
   const { canInProject } = useAuth();
@@ -517,6 +549,7 @@ export function RunDetailPage() {
           {hostKeyNote(run) && <p className="text-sm text-muted-foreground">{hostKeyNote(run)}</p>}
           <EgressNote run={run} />
           <SshCertificateNote run={run} />
+          <SecretReadsNote run={run} />
           <StatusNote run={run} />
       </div>
 

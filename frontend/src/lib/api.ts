@@ -565,6 +565,21 @@ export interface VaultPassword extends SecretRef {
   created_at: string;
 }
 
+/** A new place for a reference: a path, a key or both (an env credential has no key). */
+export interface ReferenceUpdate {
+  store_path?: string;
+  store_key?: string;
+}
+
+/** One reference a run's job read from the secret store, and the KV version it got. */
+export interface SecretRead {
+  what: "credential" | "vault_password" | "env_credential";
+  name: string;
+  // null for those who may not list the project's secrets.
+  location: string | null;
+  version: number;
+}
+
 export interface SecretCheck {
   ok: boolean;
   version: number | null;
@@ -704,6 +719,8 @@ export interface Run {
   egress_refused?: EgressRefused[] | null;
   // With an SSH certificate credential: the certificate its job got (runSshCertificateUrl serves it).
   ssh_certificate?: SshCertificateInfo | null;
+  // What its job read from the secret store, and which versions (null: nothing).
+  secret_reads?: SecretRead[] | null;
   // Runs of playbooks synced from git: the commit they execute and a link to it.
   git_source_name: string | null;
   git_commit: string | null;
@@ -1382,6 +1399,8 @@ export const api = {
     }),
   checkCredential: (id: number) => request<SecretCheck>(`/credentials/${id}/check`, { method: "POST" }),
   deleteCredential: (id: number) => request<void>(`/credentials/${id}`, { method: "DELETE" }),
+  updateCredentialReference: (id: number, update: ReferenceUpdate) =>
+    request<Credential>(`/credentials/${id}`, { method: "PATCH", body: JSON.stringify(update) }),
 
   listVaultPasswords: () => request<VaultPassword[]>(scoped("/vault-passwords")),
   createVaultPassword: (name: string, source: SecretSource, description?: string) =>
@@ -1397,6 +1416,8 @@ export const api = {
       }),
     }),
   deleteVaultPassword: (id: number) => request<void>(`/vault-passwords/${id}`, { method: "DELETE" }),
+  updateVaultPasswordReference: (id: number, update: ReferenceUpdate) =>
+    request<VaultPassword>(`/vault-passwords/${id}`, { method: "PATCH", body: JSON.stringify(update) }),
   checkVaultPassword: (id: number) =>
     request<SecretCheck>(`/vault-passwords/${id}/check`, { method: "POST" }),
   secretStoreInfo: (projectId: number) =>

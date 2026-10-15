@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import {
+  EditReferenceDialog,
   SecretCheckButton,
   SecretLocation,
   SecretSourcePicker,
@@ -374,9 +375,9 @@ export function VaultPage() {
       <div className="flex flex-col gap-2">
         {vaultPasswords.map((vaultPassword) => (
           <Card key={vaultPassword.id}>
-            <CardContent className="flex items-center justify-between p-4">
-              <div className="flex flex-col gap-1">
-                <span className="font-medium">{vaultPassword.name}</span>
+            <CardContent className="flex flex-wrap items-center justify-between gap-2 p-4">
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="min-w-0 font-medium wrap-anywhere">{vaultPassword.name}</span>
                 {vaultPassword.description && (
                   <span className="text-xs text-muted-foreground">{vaultPassword.description}</span>
                 )}
@@ -387,6 +388,13 @@ export function VaultPage() {
                   {vaultPassword.store === "external" && (
                     <SecretCheckButton check={() => api.checkVaultPassword(vaultPassword.id)} />
                   )}
+                  <EditReferenceDialog
+                    row={vaultPassword}
+                    info={store}
+                    save={(update) => api.updateVaultPasswordReference(vaultPassword.id, update)}
+                    onSaved={refresh}
+                    idPrefix={`edit-${vaultPassword.id}`}
+                  />
                   <Button variant="destructive-outline" size="sm" onClick={() =>
                       deletion.run(
                         vaultPassword.store === "external"

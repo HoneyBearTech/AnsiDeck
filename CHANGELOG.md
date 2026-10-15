@@ -9,12 +9,17 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Upgrading
 
-- The API applies database migration 0033 when it starts.
+- The API applies database migrations 0033 and 0034 when it starts.
 
 ### Added
 
 - A git source's HTTPS token can live in the secret store: pick **In OpenBao** (or your store's label) for
   the token and give its path and key; AnsiDeck reads it at each sync and connection test and never stores it.
+- **Edit reference** on a credential or vault password in the secret store points it at another path or key
+  (`PATCH /api/credentials/{id}`, `PATCH /api/vault-passwords/{id}`): read once to check it, audited with the
+  old and new locations, and used by queued runs when they start.
+- A run records the KV version of each secret-store reference its job read (`secret_reads`), shown on its
+  page; the locations only to members who may list the project's secrets.
 
 ## [0.6.0] - 2026-10-15
 

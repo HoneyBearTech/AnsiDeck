@@ -101,9 +101,10 @@ class JobError(ValueError):
     """The run can't be prepared as it was triggered (its message is safe to show)."""
 
 
-def run_env(db: Session, run: Run, deadline: float) -> dict[str, str]:
+def run_env(db: Session, run: Run, deadline: float, reads: list | None = None) -> dict[str, str]:
     """The variables of the run's environment-variable credentials (JobError if one is gone
-    or they clash, SecretStoreError if one in the store can't be read)."""
+    or they clash, SecretStoreError if one in the store can't be read; store reads noted in
+    `reads`)."""
     env: dict[str, str] = {}
     origin: dict[str, str] = {}
     for env_id, name in zip(
@@ -116,7 +117,7 @@ def run_env(db: Session, run: Run, deadline: float) -> dict[str, str]:
         if credential.kind != "env":
             raise JobError(f"'{credential.name}' is not an environment-variable credential")
         try:
-            values = resolve_env(credential, deadline)
+            values = resolve_env(credential, deadline, reads)
         except SecretStoreError as exc:
             exc.subject = f"credential '{credential.name}'"
             raise
@@ -136,6 +137,7 @@ def build_job(db: Session, run: Run) -> dict:
     deadline covers all of the job's store requests. JobError when the run can't be prepared
     as it was triggered."""
     deadline = new_deadline()
+    reads: list[dict] = []  # what it read from the store, and which versions
     credential = db.get(Credential, run.credential_id)
     assert_same_project(run, credential, "credential")
     if credential.kind not in RUN_CREDENTIAL_KINDS:
@@ -143,7 +145,7 @@ def build_job(db: Session, run: Run) -> dict:
     private_key_pem = None
     if credential.kind == "ssh":
         try:
-            private_key_pem = resolve_credential(credential, deadline)
+            private_key_pem = resolve_credential(credential, deadline, reads)
         except SecretStoreError as exc:
             exc.subject = f"credential '{credential.name}'"
             raise
@@ -153,12 +155,12 @@ def build_job(db: Session, run: Run) -> dict:
         vault_password = db.get(VaultPassword, run.vault_password_id)
         assert_same_project(run, vault_password, "vault password")
         try:
-            vault_password_plain = resolve_vault_password(vault_password, deadline)
+            vault_password_plain = resolve_vault_password(vault_password, deadline, reads)
         except SecretStoreError as exc:
             exc.subject = f"vault password '{vault_password.name}'"
             raise
 
-    env = run_env(db, run, deadline)
+    env = run_env(db, run, deadline, reads)
 
     inventory = db.get(Inventory, run.inventory_id)
     assert_same_project(run, inventory, "inventory")
@@ -201,6 +203,7 @@ def build_job(db: Session, run: Run) -> dict:
             raise
         private_key_pem, certificate = issued.private_key, issued.certificate
         run.ssh_certificate = {**issued.info, "certificate": certificate}
+    run.secret_reads = reads or None
 
     secrets = collect_secrets(
         ssh_key_pem=private_key_pem,

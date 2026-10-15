@@ -586,19 +586,41 @@ def sign_ssh_key(
     return result
 
 
-def resolve_credential(credential, deadline: float | None = None) -> str:
-    """A credential's private key, from AnsiDeck's database or the secret store."""
+def note_read(reads: list | None, what: str, row, key: str | None, version: int) -> None:
+    """Adds a store read to a job's record (Run.secret_reads): where and which KV version."""
+    if reads is not None:
+        reads.append(
+            {
+                "what": what,
+                "name": row.name,
+                "location": location(row.project_id, row.store_path, key),
+                "version": version,
+            }
+        )
+
+
+def resolve_credential(credential, deadline: float | None = None, reads: list | None = None) -> str:
+    """A credential's private key, from AnsiDeck's database or the secret store (noted in
+    `reads`)."""
     if credential.store_path is None:
         return decrypt_secret(credential.encrypted_private_key).decode()
-    return read_secret(credential.project_id, credential.store_path, credential.store_key, deadline)
+    value, version = read_versioned(
+        credential.project_id, credential.store_path, credential.store_key, deadline
+    )
+    note_read(reads, "credential", credential, credential.store_key, version)
+    return value
 
 
-def resolve_vault_password(vault_password, deadline: float | None = None) -> str:
+def resolve_vault_password(
+    vault_password, deadline: float | None = None, reads: list | None = None
+) -> str:
     if vault_password.store_path is None:
         return decrypt_secret(vault_password.encrypted_password).decode()
-    return read_secret(
+    value, version = read_versioned(
         vault_password.project_id, vault_password.store_path, vault_password.store_key, deadline
     )
+    note_read(reads, "vault_password", vault_password, vault_password.store_key, version)
+    return value
 
 
 def new_deadline() -> float:
