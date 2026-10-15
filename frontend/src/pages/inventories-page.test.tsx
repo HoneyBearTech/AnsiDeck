@@ -341,6 +341,54 @@ describe("dynamic inventory sources", () => {
     expect(api.requests("DELETE /inventories/1/sources/1")).toHaveLength(1);
   });
 
+  it("gives a source its own schedule, runs one source now and says which ones a refresh ran", async () => {
+    const { api, user, screen } = renderApp("/inventories/1", {
+      routes: detail({
+        "GET /inventories/:id/sources": [
+          inventorySource({ refresh_interval_seconds: null, effective_interval_seconds: 3600, next_refresh_at: "2026-10-05T13:00:00Z" }),
+          inventorySource({ id: 2, name: "aws", plugin: "amazon.aws.aws_ec2", refresh_interval_seconds: 0, effective_interval_seconds: 0 }),
+          inventorySource({ id: 3, name: "groups", plugin: "ansible.builtin.constructed", config: "plugin: ansible.builtin.constructed\n" }),
+        ],
+        "GET /inventories/:id/targets": targets({
+          has_sources: true,
+          snapshot_id: 1,
+          refresh_interval_seconds: 3600,
+          last_refresh: refresh({
+            scope: [2],
+            source_results: [
+              { source_id: 1, name: "netbox", plugin: "netbox.netbox.nb_inventory", ran: false, status: null, error: null, host_count: null },
+              { source_id: 2, name: "aws", plugin: "amazon.aws.aws_ec2", ran: true, status: "success", error: null, host_count: 4 },
+              { source_id: 3, name: "groups", plugin: "ansible.builtin.constructed", ran: false, status: null, error: null, host_count: null },
+            ],
+          }),
+        }),
+        "GET /inventories/:id/snapshot": SNAPSHOT,
+        "POST /inventories/:id/sources/:sid/refresh": refresh({ status: "queued", scope: [2] }),
+        "PATCH /inventories/:id/sources/:sid": inventorySource(),
+      }),
+    });
+    expect(await screen.findByText(/Runs every hour \(the inventory's\) · next/)).toBeInTheDocument();
+    expect(screen.getByText("Runs when something changes")).toBeInTheDocument();
+    expect(screen.getByText(/· 1 of 2 sources/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Refresh groups" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Refresh aws" }));
+    expect(api.requests("POST /inventories/1/sources/2/refresh")).toHaveLength(1);
+
+    const edits = screen.getAllByRole("button", { name: "Edit" });
+    await user.click(edits[edits.length - 3]!); // netbox's: the sources come last
+    let dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByRole("combobox", { name: "Source refresh" })).toHaveTextContent("The inventory's (every hour)");
+    await choose(user, dialog.getByRole("combobox", { name: "Source refresh" }), "Every 15 minutes");
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(api.requests("PATCH /inventories/1/sources/1")).toHaveLength(1));
+    expect(api.requests("PATCH /inventories/1/sources/1")[0]?.body).toMatchObject({ refresh_interval_seconds: 900 });
+
+    await user.click(screen.getAllByRole("button", { name: "Edit" }).at(-1)!); // the constructed one
+    dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.queryByRole("combobox", { name: "Source refresh" })).not.toBeInTheDocument();
+    expect(dialog.getByText(/applied again in every refresh/)).toBeInTheDocument();
+  });
+
   it("reports a refresh the API refuses", async () => {
     const { user, screen } = renderApp("/inventories/1", {
       routes: detail({

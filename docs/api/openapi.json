@@ -4480,6 +4480,20 @@
             ],
             "title": "Requested By"
           },
+          "scope": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
           "snapshot_id": {
             "anyOf": [
               {
@@ -6297,6 +6311,17 @@
             "minimum": 0.0,
             "title": "Position",
             "type": "integer"
+          },
+          "refresh_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Interval Seconds"
           }
         },
         "required": [
@@ -6343,6 +6368,11 @@
             ],
             "title": "Credential Name"
           },
+          "effective_interval_seconds": {
+            "default": 0,
+            "title": "Effective Interval Seconds",
+            "type": "integer"
+          },
           "enabled": {
             "title": "Enabled",
             "type": "boolean"
@@ -6378,9 +6408,33 @@
             ],
             "title": "Last Finished At"
           },
+          "last_queued_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Queued At"
+          },
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "next_refresh_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Refresh At"
           },
           "output_group_count": {
             "anyOf": [
@@ -6431,6 +6485,17 @@
           "position": {
             "title": "Position",
             "type": "integer"
+          },
+          "refresh_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Interval Seconds"
           },
           "updated_at": {
             "format": "date-time",
@@ -6516,6 +6581,17 @@
               }
             ],
             "title": "Position"
+          },
+          "refresh_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Interval Seconds"
           }
         },
         "title": "SourceUpdate",
@@ -12967,6 +13043,98 @@
           }
         },
         "summary": "Update Source",
+        "tags": [
+          "inventories"
+        ]
+      }
+    },
+    "/api/inventories/{inventory_id}/sources/{source_id}/refresh": {
+      "post": {
+        "description": "Runs one source now (the others contribute what they found last), merged with a refresh\nalready queued.",
+        "operationId": "refresh_source_api_inventories__inventory_id__sources__source_id__refresh_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "inventory_id",
+            "required": true,
+            "schema": {
+              "title": "Inventory Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RefreshOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Refresh Source Api Inventories  Inventory Id  Sources  Source Id  Refresh Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Source",
         "tags": [
           "inventories"
         ]

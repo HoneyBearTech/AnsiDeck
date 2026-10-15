@@ -4,7 +4,8 @@ Usage: python3 smoke_inventory.py <api url> <admin password> <path to an OpenSSH
 
 A static host plus generator and constructed sources; the refresh must succeed, a run must
 reach the host through a group only constructed made, and a broken source must fail the
-refresh with its reason while the other sources' hosts stay (each source runs on its own).
+refresh with its reason while the other sources' hosts stay (each source runs on its own, and
+adding one runs just that one).
 Standard library only (it runs on the CI host, not in the image).
 """
 
@@ -120,8 +121,9 @@ def main() -> None:
         failed["error"] or ""
     ):
         sys.exit(f"the broken source didn't fail the refresh with its reason: {failed}")
+    # Adding a source runs just that source: the others contribute what they found last.
     results = {r["name"]: (r["ran"], r["status"]) for r in failed["source_results"]}
-    if results != {"gen": (True, "success"), "groups": (False, None), "nb": (True, "failed")}:
+    if results != {"gen": (False, None), "groups": (False, None), "nb": (True, "failed")}:
         sys.exit(f"unexpected per-source results: {results}")
     after = call("GET", f"/inventories/{inv}/targets")
     if after["hosts"] != 3 or {g["name"]: g["hosts"] for g in after["groups"]} != groups:

@@ -7,12 +7,30 @@ MIN_INTERVAL_SECONDS = 300
 MAX_INTERVAL_SECONDS = 7 * 24 * 3600
 
 
+def _check_interval(value: int | None) -> int | None:
+    """None (inherit), 0 (only when something changes), or 5 minutes to a week."""
+    if (
+        value is not None
+        and value != 0
+        and not MIN_INTERVAL_SECONDS <= value <= MAX_INTERVAL_SECONDS
+    ):
+        raise ValueError(
+            f"use 0 (only when something changes) or {MIN_INTERVAL_SECONDS} to "
+            f"{MAX_INTERVAL_SECONDS} seconds"
+        )
+    return value
+
+
 class SourceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     config: str = Field(min_length=1, max_length=64 * 1024)
     credential_id: int | None = None
     enabled: bool = True
     position: int = Field(0, ge=0, le=1000)
+    # None: the inventory's refresh interval; 0: only when something changes.
+    refresh_interval_seconds: int | None = None
+
+    _interval = field_validator("refresh_interval_seconds")(_check_interval)
 
 
 class SourceUpdate(BaseModel):
@@ -21,6 +39,10 @@ class SourceUpdate(BaseModel):
     credential_id: int | None = None
     enabled: bool | None = None
     position: int | None = Field(None, ge=0, le=1000)
+    # Sent as null: the inventory's refresh interval again.
+    refresh_interval_seconds: int | None = None
+
+    _interval = field_validator("refresh_interval_seconds")(_check_interval)
 
 
 class SourceOut(BaseModel):
@@ -38,6 +60,12 @@ class SourceOut(BaseModel):
     created_by: str
     created_at: datetime
     updated_at: datetime
+    refresh_interval_seconds: int | None = None
+    # What applies (its own or the inventory's; 0: only when something changes; constructed
+    # sources: 0, they are re-applied in every refresh), and when a schedule runs it next.
+    effective_interval_seconds: int = 0
+    last_queued_at: datetime | None = None
+    next_refresh_at: datetime | None = None
     # Why it failed the last time it ran (None: it worked) and when that was; what its last good
     # output held, which refreshes keep using until it works again.
     last_error: str | None = None
@@ -89,6 +117,8 @@ class RefreshOut(BaseModel):
     worker_id: str | None
     error: str | None
     snapshot_id: int | None
+    # The sources it runs (None: all; []: none, it only combines what they found last).
+    scope: list[int] | None = None
     # What each source did (the constructed ones don't run on their own: ran false).
     source_results: list[RefreshSourceOut] = []
 

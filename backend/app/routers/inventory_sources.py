@@ -6,6 +6,8 @@ inventory sees the sources, their status and the hosts and groups they found (se
 vars masked).
 """
 
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -18,8 +20,10 @@ from app.inventory_render import merge, static_data, target_hosts
 from app.inventory_sources import (
     SourceError,
     check_config,
+    effective_interval,
     enqueue_refresh,
     has_sources,
+    is_constructed,
     refresh_rows,
 )
 from app.models import (
@@ -80,8 +84,14 @@ def _source(db: Session, inventory: Inventory, source_id: int) -> InventorySourc
 def _out(db: Session, source: InventorySource) -> dict:
     credential = db.get(Credential, source.credential_id) if source.credential_id else None
     output = db.get(InventorySourceOutput, source.id)
+    interval = effective_interval(source, source.inventory)
+    next_at = None
+    if interval and source.enabled and source.last_queued_at is not None:
+        next_at = source.last_queued_at + timedelta(seconds=interval)
     return {
         **SourceOut.model_validate(source).model_dump(),
+        "effective_interval_seconds": interval,
+        "next_refresh_at": next_at,
         "credential_name": credential.name if credential else None,
         "output_refreshed_at": output.refreshed_at if output else None,
         "output_host_count": output.host_count if output else None,
@@ -131,14 +141,20 @@ def _audit(db, action: str, user: User, request: Request, inventory: Inventory, 
     )
 
 
-def _sources_changed(db: Session, inventory: Inventory, user: User) -> None:
-    """Refresh with the new sources; without any, the inventory has no snapshot."""
-    if enqueue_refresh(db, inventory, "sources_changed", user.username) is not None:
-        db.commit()
-        notifier.notify(QUEUE_TOPIC)
-    elif not has_sources(db, inventory.id) and inventory.current_snapshot_id is not None:
+def _sources_changed(
+    db: Session, inventory: Inventory, user: User, source_ids: list[int] | None = None
+) -> None:
+    """Refresh with the new sources: run `source_ids` (a new or changed source), the others
+    contributing what they found last ([]: only combine again). Without any, the inventory has
+    no snapshot."""
+    # Constructed sources never run on their own: they are re-applied in every refresh.
+    runs = [s.id for s in inventory.sources if s.id in (source_ids or []) and not is_constructed(s)]
+    queued = enqueue_refresh(db, inventory, "sources_changed", user.username, source_ids=runs)
+    if not has_sources(db, inventory.id):
         inventory.current_snapshot_id = None
-        db.commit()
+    db.commit()  # also when it merged into a queued refresh, which it widened
+    if queued is not None:
+        notifier.notify(QUEUE_TOPIC)
 
 
 @router.get("/sources", response_model=list[SourceOut])
@@ -173,6 +189,7 @@ def create_source(
         credential_id=payload.credential_id,
         enabled=payload.enabled,
         position=payload.position,
+        refresh_interval_seconds=payload.refresh_interval_seconds,
         created_by=user.username,
     )
     db.add(source)
@@ -187,7 +204,7 @@ def create_source(
     _audit(
         db, "inventory_source.create", user, request, inventory, source=source.name, plugin=plugin
     )
-    _sources_changed(db, inventory, user)
+    _sources_changed(db, inventory, user, [source.id])
     return _out(db, source)
 
 
@@ -203,6 +220,12 @@ def update_source(
     inventory = _inventory(db, user, request, inventory_id, Permission.SOURCES_MANAGE)
     source = _source(db, inventory, source_id)
     values = payload.model_dump(exclude_unset=True)
+    # What it finds can change: it runs (again) in the next refresh.
+    rerun = (
+        values.get("config", source.config) != source.config
+        or values.get("credential_id", source.credential_id) != source.credential_id
+        or (values.get("enabled") is True and not source.enabled)
+    )
     if "config" in values:
         source.plugin = _plugin(values["config"])
         source.config = values["config"]
@@ -212,6 +235,10 @@ def update_source(
     for key in ("enabled", "position"):
         if values.get(key) is not None:
             setattr(source, key, values[key])
+    if "refresh_interval_seconds" in values:  # None: the inventory's again
+        source.refresh_interval_seconds = values["refresh_interval_seconds"]
+    if rerun:
+        source.last_queued_at = None
     if values.get("name"):
         source.name = values["name"].strip()
     try:
@@ -226,7 +253,8 @@ def update_source(
         db, "inventory_source.update", user, request, inventory,
         source=source.name, plugin=source.plugin, changed=sorted(values),
     )  # fmt: skip
-    _sources_changed(db, inventory, user)
+    if set(values) - {"refresh_interval_seconds", "name"}:  # what the snapshot holds may change
+        _sources_changed(db, inventory, user, [source.id] if rerun else [])
     return _out(db, source)
 
 
@@ -245,6 +273,39 @@ def delete_source(
     db.commit()
     _audit(db, "inventory_source.delete", user, request, inventory, source=name, plugin=plugin)
     _sources_changed(db, inventory, user)
+
+
+@router.post(
+    "/sources/{source_id}/refresh",
+    response_model=RefreshOut | None,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def refresh_source(
+    inventory_id: int,
+    source_id: int,
+    request: Request,
+    user: User = Depends(_refresh),
+    db: Session = Depends(get_db),
+) -> RefreshOut | None:
+    """Runs one source now (the others contribute what they found last), merged with a refresh
+    already queued."""
+    inventory = _inventory(db, user, request, inventory_id, Permission.CONTENT_WRITE)
+    source = _source(db, inventory, source_id)
+    if not source.enabled:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This source is turned off")
+    enqueue_refresh(db, inventory, "manual", user.username, source_ids=[source.id])
+    db.commit()
+    notifier.notify(QUEUE_TOPIC)
+    _audit(db, "inventory.refresh_requested", user, request, inventory, source=source.name)
+    queued = db.scalars(
+        select(InventoryRefresh)
+        .where(
+            InventoryRefresh.inventory_id == inventory.id,
+            InventoryRefresh.status == RunStatus.QUEUED.value,
+        )
+        .limit(1)
+    ).first()
+    return _refresh_out(db, queued)
 
 
 @router.put("/refresh-settings", response_model=Targets)

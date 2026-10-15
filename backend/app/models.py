@@ -537,6 +537,11 @@ class InventorySource(Base):
     )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # How often a schedule runs it (None: the inventory's refresh_interval_seconds; 0: only
+    # when something changes), and when a refresh was last queued to run it (None: run it in
+    # the next refresh, whatever that refresh is for).
+    refresh_interval_seconds: Mapped[int | None] = mapped_column(Integer, default=None)
+    last_queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     # Why it failed the last time it ran (None: it worked), and when that was.
     last_error: Mapped[str | None] = mapped_column(String(1000), default=None)
     last_finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
@@ -663,6 +668,8 @@ class InventoryRefresh(Base):
     snapshot_id: Mapped[int | None] = mapped_column(
         ForeignKey("inventory_snapshots.id", ondelete="SET NULL"), default=None
     )
+    # The sources it runs (ids; None: all of them). Requests that merge into it widen it.
+    scope: Mapped[list | None] = mapped_column(JSON(none_as_null=True), default=None)
     # Where a running refresh is (app.inventory_sources): "sources" (each source runs on its
     # own), then "combine" (constructed sources over the combination) when there are any.
     stage: Mapped[str | None] = mapped_column(String(10), default=None)

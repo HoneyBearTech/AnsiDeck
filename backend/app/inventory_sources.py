@@ -53,7 +53,7 @@ MAX_CONFIG_BYTES = 64 * 1024
 MAX_VARS_DEPTH = 32
 MAX_EDGES = 200_000
 KEEP_SNAPSHOTS = 5
-TRIGGERS = ("manual", "schedule", "sources_changed", "static_changed")
+TRIGGERS = ("manual", "schedule", "sources_changed", "static_changed", "run")
 PLUGIN_NAME = re.compile(r"[a-z0-9_]+(\.[a-z0-9_]+\.[a-z0-9_]+)?")
 # Plugins that read files or run executables by path rather than a config: a source is a
 # plugin config. `auto` would load itself forever.
@@ -153,12 +153,19 @@ def has_sources(db: Session, inventory_id: int) -> bool:
 
 
 def enqueue_refresh(
-    db: Session, inventory: Inventory, trigger: str, requested_by: str | None = None
+    db: Session,
+    inventory: Inventory,
+    trigger: str,
+    requested_by: str | None = None,
+    source_ids: list[int] | None = None,
 ) -> int | None:
-    """Queues a refresh (the caller commits and wakes the workers). A request while one is
-    already queued merges into it: returns None then, or when there is nothing to refresh."""
+    """Queues a refresh of `source_ids` (None: every source; []: none, only combining what the
+    sources found last with the inventory's own hosts and constructed sources). The caller
+    commits and wakes the workers. A request while one is already queued merges into it,
+    widening what it runs: returns None then, or when there is nothing to refresh."""
     if not has_sources(db, inventory.id):
         return None
+    scope = None if source_ids is None else sorted(set(source_ids))
     stmt = (
         insert(InventoryRefresh)
         .values(
@@ -168,6 +175,7 @@ def enqueue_refresh(
             trigger=trigger,
             requested_by=requested_by,
             timeout_seconds=get_settings().inventory_refresh_timeout_seconds,
+            scope=scope,
         )
         .on_conflict_do_nothing(
             index_elements=[InventoryRefresh.inventory_id],
@@ -175,28 +183,65 @@ def enqueue_refresh(
         )
         .returning(InventoryRefresh.id)
     )
-    return db.scalar(stmt)
-
-
-def due_inventories(db: Session) -> list[Inventory]:
-    """Inventories whose refresh interval has passed since their last refresh was queued."""
-    last = (
-        select(func.max(InventoryRefresh.queued_at))
-        .where(InventoryRefresh.inventory_id == Inventory.id)
-        .scalar_subquery()
-    )
-    interval = func.make_interval(0, 0, 0, 0, 0, 0, Inventory.refresh_interval_seconds)
-    return list(
-        db.scalars(
-            select(Inventory).where(
-                Inventory.refresh_interval_seconds > 0,
-                exists().where(
-                    InventorySource.inventory_id == Inventory.id, InventorySource.enabled
-                ),
-                (last.is_(None)) | (last + interval <= func.now()),
+    refresh_id = db.scalar(stmt)
+    if refresh_id is None:
+        queued = db.scalars(
+            select(InventoryRefresh)
+            .where(
+                InventoryRefresh.inventory_id == inventory.id,
+                InventoryRefresh.status == RunStatus.QUEUED.value,
             )
+            .with_for_update()
+        ).first()
+        if queued is None:  # claimed in between: queue a new one after all
+            refresh_id = db.scalar(stmt)
+        elif queued.scope is not None:
+            queued.scope = None if scope is None else sorted(set(queued.scope) | set(scope))
+    db.execute(
+        update(InventorySource)
+        .where(
+            InventorySource.inventory_id == inventory.id,
+            InventorySource.id.in_(scope) if scope is not None else InventorySource.enabled,
         )
+        .values(last_queued_at=func.now())
     )
+    return refresh_id
+
+
+def effective_interval(source: InventorySource, inventory: Inventory) -> int:
+    """How often a schedule refreshes the source (0: only when something changes)."""
+    if is_constructed(source):
+        return 0  # re-applied in every refresh, never run on its own
+    if source.refresh_interval_seconds is not None:
+        return source.refresh_interval_seconds
+    return inventory.refresh_interval_seconds
+
+
+def due_sources(db: Session) -> dict[int, list[int]]:
+    """The sources whose interval (their own, or their inventory's) has passed since a refresh
+    was last queued to run them, by inventory."""
+    interval = func.coalesce(
+        InventorySource.refresh_interval_seconds, Inventory.refresh_interval_seconds
+    )
+    rows = db.execute(
+        select(InventorySource.inventory_id, InventorySource.id, InventorySource.plugin)
+        .join(Inventory, Inventory.id == InventorySource.inventory_id)
+        .where(
+            InventorySource.enabled,
+            interval > 0,
+            InventorySource.last_queued_at.is_(None)
+            | (
+                InventorySource.last_queued_at + func.make_interval(0, 0, 0, 0, 0, 0, interval)
+                <= func.now()
+            ),
+        )
+        .order_by(InventorySource.inventory_id, InventorySource.id)
+    )
+    due: dict[int, list[int]] = {}
+    for inventory_id, source_id, plugin in rows:
+        if plugin not in _CONSTRUCTED:
+            due.setdefault(inventory_id, []).append(source_id)
+    return due
 
 
 # --- the job ------------------------------------------------------------------------------
@@ -244,20 +289,26 @@ def build_refresh_job(db: Session, refresh: InventoryRefresh) -> dict:
     deadline = new_deadline()
     calls: list[dict] = []
     secrets: set[str] = set()
+    scope = None if refresh.scope is None else set(refresh.scope)
     for source in sources:
-        constructed = is_constructed(source)
+        # Constructed sources run in the combine; the others when this refresh is for them,
+        # or when nothing ran them since they were added or changed.
+        runs = not is_constructed(source) and (
+            scope is None or source.id in scope or source.last_queued_at is None
+        )
         db.add(
             InventoryRefreshSource(
                 refresh_id=refresh.id,
                 source_id=source.id,
                 name=source.name,
                 plugin=source.plugin,
-                ran=not constructed,
+                ran=runs,
                 input_sha256=input_sha256(source),
             )
         )
-        if constructed:
+        if not runs:
             continue
+        source.last_queued_at = func.now()
         env = _source_env(db, inventory, source, deadline)
         secrets.update(env.values())
         calls.append(

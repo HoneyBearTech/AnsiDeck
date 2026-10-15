@@ -9,7 +9,8 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Upgrading
 
-- The API applies database migrations 0017 to 0029 when it starts.
+- The API applies database migrations 0017 to 0030 when it starts. Each inventory's first refresh after
+  the upgrade runs all its sources.
 - **Inventory refreshes need workers of this release** (they run each source on its own); older workers
   take no refreshes. A failed source no longer fails the whole snapshot: the other sources' hosts are
   updated and the failed one keeps what it found last (the refresh still counts as failed and alerts).
@@ -47,6 +48,10 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 - Each dynamic inventory source runs on its own, with only its own credential, and shows what it found
   last or why it failed; the refresh history says what each source did.
+- **Per-source schedules**: a source can refresh on its own interval (or the inventory's, now the default
+  for its sources), and a scheduled refresh calls only the sources that are due. Adding or editing a source
+  runs just that source, edits of the inventory's own hosts only combine again, and each source has a
+  **Refresh** button (`POST /api/inventories/{id}/sources/{source id}/refresh`).
 - The AWS (`amazon.aws.aws_ec2`) and Proxmox (`community.proxmox.proxmox`) inventory plugins work: the image
   now ships boto3/botocore, requests and proxmoxer (also used by the AWS and Proxmox modules in playbooks).
   The source dialog has examples for both. The backend image is larger by about 30 MB.
