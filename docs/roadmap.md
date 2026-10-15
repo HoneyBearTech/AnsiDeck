@@ -23,7 +23,10 @@ SLSA build provenance on release files. **v0.3.0** (October 2026) added a group 
 phone-friendly layout checked in a real browser on every pull request, and security fixes. **v0.4.0**
 (October 2026) fixed the findings of a full security review and added changing the credential encryption
 key. **v0.5.0** (October 2026) fixed the rest of that review's findings and made the run output viewer fast
-on long runs. The most recent release is the supported version.
+on long runs. **v0.6.0** (October 2026) added SSH host key checking, runs limited to their inventory's
+hosts, passkeys, short-lived SSH certificates, run artifacts and environment credentials, and dynamic
+inventory sources with their own schedules, from git files and scripts. The most recent release is the
+supported version.
 
 ## Over the following year
 
