@@ -432,13 +432,110 @@ INVENTORY_ENV = {
 }
 # The inventory plugins each kind of call may use (never taken from the job's text): a source
 # is a plugin config (`auto` loads the plugin it names), or an inventory file (or directory)
-# from a git source, read as YAML or INI only (never a plugin config or a script); the combine
+# from a git source, read as YAML or INI only (never a plugin config or a script), or what an
+# inventory script from a git source printed, converted to a YAML inventory; the combine
 # reads the sources' outputs and the inventory's own hosts as YAML inventories, and the
 # constructed configs.
-INVENTORY_PLUGINS = {"plugin": "auto", "git_file": "yaml,ini", "combine": "auto,yaml"}
+INVENTORY_PLUGINS = {
+    "plugin": "auto",
+    "git_file": "yaml,ini",
+    "git_script": "yaml",  # what the script printed, as a YAML inventory (_script_inventory)
+    "combine": "auto,yaml",
+}
 _CALL_KEY = re.compile(r"s[0-9]{1,12}|combined")
 _OUTPUT_CHUNK = 512 * 1024
 _STDERR_TAIL = 16 * 1024
+
+
+# An interpreter by its full path and at most one argument, as the kernel reads a "#!" line.
+_SHEBANG = re.compile(r"#![ \t]*(/\S+)(?:[ \t]+(\S+))?[ \t]*")
+_SCRIPT_HOST_CALLS = 1000
+
+
+def _script_inventory(script: Path, env: dict, root: Path, limit: int) -> tuple[Path | None, str]:
+    """Runs an inventory script through the interpreter its "#!" line names (the worker's /tmp is
+    mounted noexec: nothing written there can be executed itself, so ansible's script plugin
+    can't run it), from its own directory, as `--list` (and `--host` for each host without
+    `_meta`), and writes what it printed as a YAML inventory for ansible-inventory to read.
+    Returns (that file, "") or (None, why not)."""
+    import subprocess
+
+    first = script.read_text(encoding="utf-8", errors="replace").split("\n", 1)[0].rstrip("\r")
+    shebang = _SHEBANG.fullmatch(first)
+    if not shebang:
+        return None, "the script's #! line must name its interpreter by its full path"
+    command = [shebang.group(1), *filter(None, [shebang.group(2)]), str(script)]
+
+    def run(*args: str) -> tuple[object, str | None]:
+        out, err = root / "script.out", root / "script.err"
+        with open(out, "wb") as stdout, open(err, "wb") as stderr:
+            rc = subprocess.run(  # noqa: S603 - the interpreter the script names, no shell
+                [*command, *args], stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+                env=env, cwd=script.parent, check=False,
+            ).returncode  # fmt: skip
+        with open(err, "rb") as stderr:
+            stderr.seek(max(0, stderr.seek(0, os.SEEK_END) - _STDERR_TAIL))
+            tail = stderr.read().decode("utf-8", "replace").strip()
+        if rc != 0:
+            return None, f"the script {' '.join(args)} exited with {rc}: {tail[-500:]}"
+        if out.stat().st_size > limit:
+            return None, f"the script printed more than {limit} bytes"
+        try:
+            return json.loads(out.read_bytes()), None
+        except ValueError:
+            return None, f"what the script {' '.join(args)} printed is not JSON"
+
+    listing, why = run("--list")
+    if why or not isinstance(listing, dict):
+        return None, why or "the script must print a JSON object"
+    meta = listing.pop("_meta", None)
+    hostvars = meta.get("hostvars") if isinstance(meta, dict) else None
+    all_vars: dict = {}
+    hosts: dict[str, None] = {}
+    children: dict[str, dict] = {}
+    for name, raw in listing.items():
+        group = {"hosts": raw} if isinstance(raw, list) else raw
+        if not isinstance(group, dict):
+            return None, f"group {str(name)[:100]!r} must be a list of hosts or an object"
+        members = group.get("hosts") or []
+        if not isinstance(members, list) or not all(isinstance(h, str) for h in members):
+            return None, f"group {str(name)[:100]!r}: hosts must be a list of names"
+        hosts.update(dict.fromkeys(members))
+        if name in ("all", "ungrouped"):
+            if name == "all":
+                all_vars.update(group.get("vars") or {})
+            continue
+        sub = group.get("children") or []
+        if not isinstance(sub, list) or not all(isinstance(c, str) for c in sub):
+            return None, f"group {str(name)[:100]!r}: children must be a list of names"
+        children[name] = {
+            "hosts": dict.fromkeys(members) or None,
+            "children": {c: None for c in sub if c not in ("all", "ungrouped")} or None,
+            "vars": group.get("vars") or None,
+        }
+    if not isinstance(hostvars, dict):  # no _meta: ask for each host, as ansible would
+        if len(hosts) > _SCRIPT_HOST_CALLS:
+            return None, f"more than {_SCRIPT_HOST_CALLS} hosts without _meta in the output"
+        hostvars = {}
+        for name in hosts:
+            found, why = run("--host", name)
+            if why or not isinstance(found, dict):
+                return None, why or f"the script --host {name} must print a JSON object"
+            hostvars[name] = found
+    hosts.update(dict.fromkeys(h for h in hostvars if isinstance(h, str)))
+    inventory = {
+        "all": {
+            "vars": all_vars or None,
+            "hosts": {h: hostvars.get(h) or None for h in hosts},
+            "children": {
+                name: {k: v for k, v in group.items() if v is not None} or None
+                for name, group in children.items()
+            },
+        }
+    }
+    converted = root / "script-output.json"
+    converted.write_text(json.dumps(inventory))
+    return converted, ""
 
 
 def _prefixes(name: str) -> list[str]:
@@ -480,7 +577,7 @@ def run_inventory(job: dict, emit) -> None:
             for item in call["files"]:
                 name = item["name"]
                 parts = name.split("/")
-                nested = kind == "git_file"  # a repository's paths, kept as they are
+                nested = kind in ("git_file", "git_script")  # a repository's paths, as they are
                 if (
                     not name
                     or name.startswith("/")
@@ -493,9 +590,16 @@ def run_inventory(job: dict, emit) -> None:
                 path.write_text(item["text"])
                 path.chmod(0o600)
                 paths.append(str(path))
-            if kind == "git_file":  # the file, or the directory, ansible-inventory reads
+            cwd = root
+            if kind in ("git_file", "git_script"):  # the file, directory or script to read
                 target = call["target"]
-                if target not in {p for item in call["files"] for p in _prefixes(item["name"])}:
+                names = {item["name"] for item in call["files"]}
+                allowed = (
+                    names
+                    if kind == "git_script"
+                    else {p for name in names for p in _prefixes(name)}
+                )
+                if target not in allowed:
                     raise RuntimeError(f"invalid inventory target {target!r}")
                 paths = [str(root / "inventory" / target)]
             env = {
@@ -508,6 +612,16 @@ def run_inventory(job: dict, emit) -> None:
                 **INVENTORY_ENV,
                 "ANSIBLE_INVENTORY_ENABLED": INVENTORY_PLUGINS[kind],
             }
+            if kind == "git_script":
+                converted, why = _script_inventory(
+                    Path(paths[0]), env, root, job.get("max_output_bytes", 32 * 1024 * 1024)
+                )
+                if converted is None:
+                    emit({"type": "inventory_result", "key": key, "rc": 1, "stderr": why})
+                    failed = True
+                    shutil.rmtree(root, ignore_errors=True)
+                    continue
+                paths = [str(converted)]
             output, stderr = root / "out.json", root / "stderr.txt"
             command = [str(Path(sys.executable).parent / "ansible-inventory")]
             for path in paths:
@@ -516,7 +630,7 @@ def run_inventory(job: dict, emit) -> None:
             with open(stderr, "wb") as err:
                 rc = subprocess.run(  # noqa: S603 - argument list, no shell
                     command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
-                    env=env, cwd=root, check=False,
+                    env=env, cwd=cwd, check=False,
                 ).returncode  # fmt: skip
             with open(stderr, "rb") as err:
                 err.seek(max(0, err.seek(0, os.SEEK_END) - _STDERR_TAIL))

@@ -434,6 +434,35 @@ describe("dynamic inventory sources", () => {
     });
   });
 
+  it("adds an inventory script from a git source with its credential", async () => {
+    const { api, user, screen } = renderApp("/inventories/1", {
+      routes: detail({
+        "GET /projects/:id/git-sources": [gitSource({ id: 4, name: "infra" })],
+        "GET /credentials": [credential({ id: 2, name: "cmdb", kind: "env", env_names: ["CMDB_TOKEN"] })],
+        "POST /inventories/:id/sources": inventorySource({ kind: "git_script" }),
+      }),
+    });
+    await user.click(await screen.findByRole("button", { name: "Add source" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.type(dialog.getByLabelText("Name"), "cmdb");
+    await user.click(dialog.getByRole("button", { name: "Script from git" }));
+    expect(dialog.getByText(/anyone who can commit to the repository decides what it does/)).toBeInTheDocument();
+    await choose(user, dialog.getByRole("combobox", { name: "Git source" }), "infra");
+    await user.type(dialog.getByLabelText("Script in the repository"), "inventory/cmdb.py");
+    await choose(user, dialog.getByRole("combobox", { name: "Credential" }), "cmdb (CMDB_TOKEN)");
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(api.requests("POST /inventories/1/sources")).toHaveLength(1));
+    expect(api.requests("POST /inventories/1/sources")[0]?.body).toEqual({
+      name: "cmdb",
+      kind: "git_script",
+      git_source_id: 4,
+      path: "inventory/cmdb.py",
+      credential_id: 2,
+      enabled: true,
+      refresh_interval_seconds: null,
+    });
+  });
+
   it("reports a refresh the API refuses", async () => {
     const { user, screen } = renderApp("/inventories/1", {
       routes: detail({

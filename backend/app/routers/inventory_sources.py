@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.db import get_db
 from app.hardening import client_ip
-from app.inventory_files import InventoryFileError, read_inventory_files
+from app.inventory_files import InventoryFileError, read_inventory_files, read_script_files
 from app.inventory_render import merge, static_data, target_hosts
 from app.inventory_sources import (
     SourceError,
@@ -133,9 +133,11 @@ def _plugin(config: str) -> str:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Config: {exc}") from None
 
 
-def _check_git_file(db: Session, inventory: Inventory, git_source_id: int, path: str) -> str:
-    """The path, once its git source (of the inventory's project) has it in its current
-    commit; 400 otherwise."""
+def _check_git_file(
+    db: Session, inventory: Inventory, git_source_id: int, path: str, kind: str = "git_file"
+) -> str:
+    """The path, once its git source (of the inventory's project) has it (a file, or an
+    executable script) in its current commit; 400 otherwise."""
     git_source = db.get(GitSource, git_source_id)
     if git_source is None or git_source.project_id != inventory.project_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Pick a git source of this project")
@@ -147,7 +149,8 @@ def _check_git_file(db: Session, inventory: Inventory, git_source_id: int, path:
     if snapshot is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sync the git source first")
     try:
-        return read_inventory_files(snapshot, path).target
+        read = read_script_files if kind == "git_script" else read_inventory_files
+        return read(snapshot, path).target
     except InventoryFileError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
 
@@ -204,8 +207,9 @@ def create_source(
     inventory = _inventory(db, user, request, inventory_id, Permission.SOURCES_MANAGE)
     if len(inventory.sources) >= MAX_SOURCES:
         raise HTTPException(status.HTTP_409_CONFLICT, "This inventory has too many sources")
-    if payload.kind == "git_file":
-        plugin, path = "file", _check_git_file(db, inventory, payload.git_source_id, payload.path)
+    if payload.kind in ("git_file", "git_script"):
+        plugin = "file" if payload.kind == "git_file" else "script"
+        path = _check_git_file(db, inventory, payload.git_source_id, payload.path, payload.kind)
     else:
         plugin, path = _plugin(payload.config), None
     _check_credential(db, inventory, payload.credential_id)
@@ -251,9 +255,11 @@ def update_source(
     inventory = _inventory(db, user, request, inventory_id, Permission.SOURCES_MANAGE)
     source = _source(db, inventory, source_id)
     values = payload.model_dump(exclude_unset=True)
-    git = source.kind == "git_file"
-    if git and ({"config", "credential_id"} & set(values)):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A git file source has no config")
+    git = source.kind in ("git_file", "git_script")
+    if git and "config" in values:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A source from git has no config")
+    if source.kind == "git_file" and values.get("credential_id") is not None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "An inventory file reads no credential")
     if not git and ({"git_source_id", "path"} & set(values)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "A plugin source has no git source")
     # What it finds can change: it runs (again) in the next refresh.
@@ -270,6 +276,7 @@ def update_source(
             inventory,
             values.get("git_source_id") or source.git_source_id,
             values.get("path") or source.path,
+            source.kind,
         )
         source.git_source_id = values.get("git_source_id") or source.git_source_id
         source.missing_at = None

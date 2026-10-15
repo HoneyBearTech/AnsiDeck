@@ -377,8 +377,9 @@ export interface InventorySource {
   inventory_id: number;
   name: string;
   // "plugin": an inventory plugin's config; "git_file": an inventory file (or directory) in a
-  // synced git source, read from its current commit.
-  kind?: "plugin" | "git_file";
+  // synced git source, read from its current commit; "git_script": an executable inventory
+  // script in one, run with its directory.
+  kind?: "plugin" | "git_file" | "git_script";
   plugin: string;
   config: string | null;
   git_source_id?: number | null;
@@ -413,7 +414,7 @@ export interface InventorySource {
 
 export interface InventorySourceInput {
   name: string;
-  kind?: "plugin" | "git_file";
+  kind?: "plugin" | "git_file" | "git_script";
   config?: string;
   credential_id?: number | null;
   git_source_id?: number;

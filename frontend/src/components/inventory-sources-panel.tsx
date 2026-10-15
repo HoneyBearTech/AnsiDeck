@@ -189,7 +189,7 @@ function SourceDialog({
 }) {
   // Mounted per dialog opening (keyed by the source), so the fields start from it.
   const [name, setName] = React.useState(source?.name ?? "");
-  const [kind, setKind] = React.useState<"plugin" | "git_file">(source?.kind ?? "plugin");
+  const [kind, setKind] = React.useState<"plugin" | "git_file" | "git_script">(source?.kind ?? "plugin");
   const [config, setConfig] = React.useState(source?.config ?? EXAMPLES[0]?.config ?? "");
   const [gitSourceId, setGitSourceId] = React.useState(
     source?.git_source_id ? String(source.git_source_id) : "",
@@ -205,7 +205,8 @@ function SourceDialog({
       ? String(source.refresh_interval_seconds)
       : "inherit",
   );
-  const fromGit = kind === "git_file";
+  const fromGit = kind === "git_file" || kind === "git_script";
+  const script = kind === "git_script";
   const constructed = !fromGit && CONSTRUCTED_CONFIG.test(config);
   const [credentials, setCredentials] = React.useState<Credential[]>([]);
   const [error, setError] = React.useState<string | null>(null);
@@ -231,7 +232,12 @@ function SourceDialog({
       refresh_interval_seconds: constructed || refreshEvery === "inherit" ? null : Number(refreshEvery),
     };
     const input: InventorySourceInput = fromGit
-      ? { ...common, git_source_id: Number(gitSourceId), path: path.trim() }
+      ? {
+          ...common,
+          git_source_id: Number(gitSourceId),
+          path: path.trim(),
+          ...(script ? { credential_id: credentialId === "none" ? null : Number(credentialId) } : {}),
+        }
       : { ...common, config, credential_id: credentialId === "none" ? null : Number(credentialId) };
     if (!source) input.kind = kind;
     try {
@@ -269,6 +275,7 @@ function SourceDialog({
                 [
                   ["plugin", "Plugin config"],
                   ["git_file", "Inventory file from git"],
+                  ["git_script", "Script from git"],
                 ] as const
               ).map(([value, label]) => (
                 <Button
@@ -304,7 +311,9 @@ function SourceDialog({
                 </Select>
               </div>
               <div className="flex flex-col gap-2">
-                <Label htmlFor="source-path">Path in the repository</Label>
+                <Label htmlFor="source-path">
+                  {script ? "Script in the repository" : "Path in the repository"}
+                </Label>
                 <Input
                   id="source-path"
                   value={path}
@@ -313,12 +322,21 @@ function SourceDialog({
                   className="font-mono"
                   spellCheck={false}
                 />
-                <p className="text-xs text-muted-foreground">
-                  An INI or YAML inventory file, or a directory of them, with the <code>group_vars/</code> and{" "}
-                  <code>host_vars/</code> beside it. It is read from the git source&apos;s current commit at
-                  each refresh; nothing else of the repository runs. Its connection and become settings are
-                  dropped, as for every source.
-                </p>
+                {script ? (
+                  <p className="text-xs text-muted-foreground">
+                    An inventory script that prints the inventory as JSON, starting with a <code>#!</code>{" "}
+                    line naming its interpreter (<code>#!/usr/bin/env python3</code>). It runs in a worker
+                    through that interpreter, with the files in its directory and below, and only the
+                    credential picked here; anyone who can commit to the repository decides what it does.
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    An INI or YAML inventory file, or a directory of them, with the <code>group_vars/</code>{" "}
+                    and <code>host_vars/</code> beside it. It is read from the git source&apos;s current
+                    commit at each refresh; nothing else of the repository runs. Its connection and become
+                    settings are dropped, as for every source.
+                  </p>
+                )}
               </div>
             </>
           )}
@@ -349,7 +367,7 @@ function SourceDialog({
               </p>
             </div>
           )}
-          {!fromGit && (
+          {(!fromGit || script) && (
             <div className="flex flex-col gap-2">
               <Label>Credential (environment variables)</Label>
               <Select value={credentialId} onValueChange={setCredentialId}>

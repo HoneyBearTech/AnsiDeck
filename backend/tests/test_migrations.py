@@ -762,3 +762,52 @@ def test_0031_adds_git_file_sources_and_refuses_to_drop_them() -> None:
         with admin.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
         admin.dispose()
+
+
+def test_0032_allows_script_sources_and_refuses_to_drop_them() -> None:
+    url = make_url(TEST_DATABASE_URL)
+    scratch = url.database.removesuffix("_test") + "_migration_test"
+    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{scratch}"'))
+    engine = create_engine(url.set(database=scratch))
+    config = alembic_config()
+
+    def migrate(step, revision: str) -> None:
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            step(config, revision)
+
+    script = (
+        "INSERT INTO inventory_sources (inventory_id, created_by, name, kind, plugin, "
+        "git_source_id, path) VALUES (1, 'a', 's', 'git_script', 'script', 1, 'inv.py')"
+    )
+    try:
+        migrate(command.upgrade, "0031")
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO projects (name, description) VALUES ('P', '')"))
+            conn.execute(text("INSERT INTO inventories (project_id, name) VALUES (1, 'dyn')"))
+            conn.execute(
+                text(
+                    "INSERT INTO git_sources (project_id, name, url, branch, playbook_globs, "
+                    "auth_kind, auto_sync_seconds, enabled, created_by) VALUES "
+                    "(1, 'repo', 'https://example.com/r.git', 'main', '[]', 'none', 300, true, 'a')"
+                )
+            )
+        with engine.begin() as conn, pytest.raises(IntegrityError):
+            conn.execute(text(script))  # not before 0032
+        migrate(command.upgrade, "0032")
+        with engine.begin() as conn:
+            conn.execute(text(script))
+        with pytest.raises(RuntimeError, match="Inventory script sources exist"):
+            migrate(command.downgrade, "0031")
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM inventory_sources"))
+        migrate(command.downgrade, "0031")
+        migrate(command.upgrade, "0032")
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        admin.dispose()

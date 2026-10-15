@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.env_credentials import env_problem, resolve_env
-from app.inventory_files import InventoryFileError, read_inventory_files
+from app.inventory_files import InventoryFileError, read_inventory_files, read_script_files
 from app.inventory_render import (
     group_problem,
     hostname_problem,
@@ -255,21 +255,22 @@ def git_source_synced(
     sources = db.scalars(
         select(InventorySource).where(
             InventorySource.git_source_id == git_source_id,
-            InventorySource.kind == "git_file",
+            InventorySource.kind.in_(("git_file", "git_script")),
             InventorySource.enabled,
         )
     ).all()
     due: dict[int, list[int]] = {}
     for source in sources:
+        read = _git_reader(source)
         try:
-            now = read_inventory_files(after, source.path).digest
+            now = read(after, source.path).digest
             source.missing_at = None
         except InventoryFileError:
             now = None
             if source.missing_at is None:
                 source.missing_at = func.now()
         try:
-            then = read_inventory_files(before, source.path).digest if before else None
+            then = read(before, source.path).digest if before else None
         except (InventoryFileError, OSError):
             then = None
         if now is None or now != then:
@@ -308,9 +309,18 @@ def input_sha256(source: InventorySource) -> str:
     return hashlib.sha256(material.encode()).hexdigest()
 
 
-def _git_file_call(db: Session, source: InventorySource, row: InventoryRefreshSource) -> dict:
-    """The call for an inventory file from a git source, read from its current commit (which
-    the row records); InventoryFileError when it can't be read."""
+def _git_reader(source: InventorySource):
+    return read_script_files if source.kind == "git_script" else read_inventory_files
+
+
+def _git_file_call(
+    db: Session,
+    source: InventorySource,
+    row: InventoryRefreshSource,
+    env: dict[str, str] | None = None,
+) -> dict:
+    """The call for an inventory file or script from a git source, read from its current commit
+    (which the row records); InventoryFileError when it can't be read."""
     git_source = db.get(GitSource, source.git_source_id)
     snapshot = (
         db.get(GitSnapshot, git_source.current_snapshot_id)
@@ -320,13 +330,13 @@ def _git_file_call(db: Session, source: InventorySource, row: InventoryRefreshSo
     if snapshot is None or git_source.project_id != source.inventory.project_id:
         raise InventoryFileError("its git source hasn't synced a commit yet")
     row.git_snapshot_id, row.git_commit = snapshot.id, snapshot.commit
-    found = read_inventory_files(snapshot, source.path)
+    found = _git_reader(source)(snapshot, source.path)
     return {
         "key": f"s{source.id}",
-        "kind": "git_file",
+        "kind": source.kind,
         "files": found.files,
         "target": found.target,
-        "env": {},
+        "env": env or {},
     }
 
 
@@ -384,9 +394,11 @@ def build_refresh_job(db: Session, refresh: InventoryRefresh) -> dict:
         if not runs:
             continue
         source.last_queued_at = func.now()
-        if source.kind == "git_file":
+        if source.kind in ("git_file", "git_script"):
+            env = _source_env(db, inventory, source, deadline)
+            secrets.update(env.values())
             try:
-                calls.append(_git_file_call(db, source, row))
+                calls.append(_git_file_call(db, source, row, env))
             except InventoryFileError as exc:
                 record_source_failure(db, row, str(exc))  # the others still run
             continue

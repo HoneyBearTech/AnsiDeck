@@ -326,7 +326,9 @@ An inventory can also get hosts and groups from **sources**: inventory plugin co
 key, for example `netbox.netbox.nb_inventory`, or `ansible.builtin.constructed` to group hosts by their vars),
 or **inventory files from a git source** (an INI or YAML file, or a directory of them, in a repository AnsiDeck
 syncs, with the `group_vars/` and `host_vars/` beside it; read from the source's current commit, refreshed when
-a new commit changes them).
+a new commit changes them), or **inventory scripts from a git source** (a script with a `#!` line that prints the
+inventory as JSON, run with its directory and the source's own credential; whoever can commit to the repository
+decides what it runs in a worker slot).
 A refresh runs each source with `ansible-inventory` in an isolated worker slot, on its own (with only its own
 credential), keeps what each one found, then combines them with the inventory's own hosts and applies the
 `constructed` sources over the lot (so they can group those too; they read every source's and host's vars as

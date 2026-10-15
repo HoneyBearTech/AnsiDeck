@@ -526,8 +526,8 @@ class InventorySource(Base):
         UniqueConstraint("inventory_id", "name", name="uq_inventory_source_name"),
         CheckConstraint(
             "(kind = 'plugin' AND config IS NOT NULL AND git_source_id IS NULL AND path IS NULL)"
-            " OR (kind = 'git_file' AND config IS NULL AND git_source_id IS NOT NULL"
-            " AND path IS NOT NULL)",
+            " OR (kind IN ('git_file', 'git_script') AND config IS NULL"
+            " AND git_source_id IS NOT NULL AND path IS NOT NULL)",
             name="kind_fields",
         ),
     )
@@ -538,7 +538,8 @@ class InventorySource(Base):
     )
     name: Mapped[str] = mapped_column(String(100))
     # "plugin": an inventory plugin's config; "git_file": an inventory file (or directory) in a
-    # synced git source (app.inventory_files), read from its current commit at each refresh.
+    # synced git source (app.inventory_files), read from its current commit at each refresh;
+    # "git_script": an executable inventory script in one, run with its directory.
     kind: Mapped[str] = mapped_column(String(20), default="plugin", server_default="plugin")
     plugin: Mapped[str] = mapped_column(String(200))  # from the config ("file"), for display
     config: Mapped[str | None] = mapped_column(Text, default=None)

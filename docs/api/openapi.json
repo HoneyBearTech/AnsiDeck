@@ -6276,7 +6276,7 @@
         "type": "object"
       },
       "SourceCreate": {
-        "description": "kind \"plugin\": `config`, an inventory plugin's config (and an optional env credential).\nkind \"git_file\": `git_source_id` (a git source of the project) and `path`, an inventory file\nor directory in it.",
+        "description": "kind \"plugin\": `config`, an inventory plugin's config (and an optional env credential).\nkind \"git_file\": `git_source_id` (a git source of the project) and `path`, an inventory file\nor directory in it. kind \"git_script\": `git_source_id` and `path`, an executable inventory\nscript in it (run with its directory), and an optional env credential.",
         "properties": {
           "config": {
             "anyOf": [
@@ -6322,7 +6322,8 @@
             "default": "plugin",
             "enum": [
               "plugin",
-              "git_file"
+              "git_file",
+              "git_script"
             ],
             "title": "Kind",
             "type": "string"
