@@ -9,7 +9,7 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Upgrading
 
-- The API applies database migrations 0033 and 0034 when it starts.
+- The API applies database migrations 0033, 0034 and 0035 when it starts.
 
 ### Added
 
@@ -25,6 +25,14 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   policy needs `create`, never `update` or `delete` (see the README).
 - A run records the KV version of each secret-store reference its job read (`secret_reads`), shown on its
   page; the locations only to members who may list the project's secrets.
+
+### Changed
+
+- While the secret store is down (unreachable, sealed, or refusing AnsiDeck's login), runs and inventory
+  refreshes that need it wait in the queue instead of failing: up to `SECRETS_STORE_WAIT_MINUTES` (default 15)
+  from when the outage began or they were queued, if later. AnsiDeck tries again every 30 s, starts them once
+  the store answers, and fails them with the reason after that (`0` keeps the old behaviour). The probe checks
+  every 15 s while the store is down, and the Workers page shows since when.
 
 ## [0.6.0] - 2026-10-15
 

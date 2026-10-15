@@ -616,6 +616,11 @@ export interface SecretStoreStatus {
   error: string | null;
   checked_at: number | null;
   last_ok_at: number | null;
+  // How long runs and refreshes that need it wait while it is down (0: they fail at once), and
+  // the current outage: its error kind and since when (ISO time).
+  wait_minutes?: number;
+  outage_kind?: string | null;
+  outage_since?: string | null;
 }
 
 /** Either the secret itself, or a reference into the secret store. */

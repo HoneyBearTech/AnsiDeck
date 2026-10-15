@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -15,7 +17,7 @@ class SecretStoreInfo(BaseModel):
 
 
 class SecretStoreStatus(BaseModel):
-    """The last probe (every minute while a store is configured)."""
+    """The last probe (every minute while a store is configured; every 15 s while it is down)."""
 
     enabled: bool
     label: str
@@ -29,3 +31,8 @@ class SecretStoreStatus(BaseModel):
     error: str | None = None
     checked_at: float | None = None  # unix time
     last_ok_at: float | None = None
+    # How long runs and refreshes that need it wait while it is down (0: they fail at once),
+    # and the current outage (app.store_outage): its error kind and since when.
+    wait_minutes: int = 0
+    outage_kind: str | None = None
+    outage_since: datetime | None = None

@@ -11,7 +11,14 @@ function when(seconds: number | null): string {
   return seconds ? new Date(seconds * 1000).toLocaleString() : "never";
 }
 
-/** The secret store as the API's probe last saw it (every minute). */
+function waitText(status: SecretStoreStatus): string {
+  const minutes = status.wait_minutes ?? 0;
+  return minutes > 0
+    ? `Runs and refreshes that use a secret kept there wait for it (up to ${minutes} min), then fail.`
+    : "Runs and refreshes that use a secret kept there fail until it is back.";
+}
+
+/** The secret store as the API's probe last saw it (every minute; every 15 s while it is down). */
 function SecretStoreCard({ status }: { status: SecretStoreStatus }) {
   const pending = status.ok === null || status.ok === undefined;
   return (
@@ -28,8 +35,13 @@ function SecretStoreCard({ status }: { status: SecretStoreStatus }) {
         </div>
         {status.ok === false && status.error && (
           <p className="text-sm text-destructive">
-            {status.error.charAt(0).toUpperCase() + status.error.slice(1)}. Runs that use a secret kept there
-            fail until it is back.
+            {status.error.charAt(0).toUpperCase() + status.error.slice(1)}. {waitText(status)}
+          </p>
+        )}
+        {status.outage_since && (
+          <p className="text-sm text-status-changed">
+            Unavailable since {new Date(status.outage_since).toLocaleString()}: what needs it is held in the
+            queue.
           </p>
         )}
         <p className="text-sm text-muted-foreground">

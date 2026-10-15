@@ -5,7 +5,7 @@ references live (to anyone who may list that project's secrets), and the probe's
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
-from app import secret_store
+from app import secret_store, store_outage
 from app.config import get_settings
 from app.db import get_db
 from app.models import User
@@ -40,5 +40,12 @@ def info(
 
 
 @router.get("/status", response_model=SecretStoreStatus)
-def status(_user: User = Depends(_status_guard)) -> dict:
-    return {"label": get_settings().secrets_store_label, **secret_store.status()}
+def status(_user: User = Depends(_status_guard), db: Session = Depends(get_db)) -> dict:
+    outage = store_outage.current(db)
+    return {
+        "label": get_settings().secrets_store_label,
+        **secret_store.status(),
+        "wait_minutes": store_outage.wait_minutes(),
+        "outage_kind": outage.kind if outage else None,
+        "outage_since": outage.since if outage else None,
+    }

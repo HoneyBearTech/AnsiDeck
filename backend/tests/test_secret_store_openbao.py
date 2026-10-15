@@ -268,9 +268,10 @@ def test_a_reference_must_exist_and_be_a_key(store, client) -> None:
         assert response.status_code == 400 and message in response.json()["detail"], response.text
 
 
-def test_a_store_outage_fails_runs_with_a_reason_and_alerts_once(
+def test_without_waiting_a_store_outage_fails_runs_with_a_reason_and_alerts_once(
     store, client, tmp_path, monkeypatch
 ) -> None:
+    monkeypatch.setenv("SECRETS_STORE_WAIT_MINUTES", "0")  # the old behaviour
     _login(client)
     put_secret(1, "outage/ssh", {"private_key": _generate_key_pem()})
     credential = client.post(
@@ -614,3 +615,51 @@ def test_a_secret_moves_into_the_store_with_a_create_only_policy(
     finally:
         secret_store.reset()
         get_settings.cache_clear()
+
+
+def test_a_run_waits_out_a_real_outage_and_then_runs(store, client, monkeypatch, tmp_path) -> None:
+    """The store becomes unreachable (AnsiDeck pointed at a closed port): the run waits in the
+    queue instead of failing, and runs once the store answers again (the probe ends the
+    outage)."""
+    from app.models import Run, SecretStoreOutage
+
+    _login(client)
+    put_secret(1, "wait/ssh", {"private_key": _generate_key_pem()})
+    credential = client.post(
+        "/api/credentials", json={"name": "waits", "store_path": "wait/ssh"}
+    ).json()
+    playbook = _create_playbook(client, "- hosts: all\n  gather_facts: false\n  tasks: []\n")
+    inventory_id, _ = _create_inventory_with_host(client, str(tmp_path / "marker.txt"))
+
+    monkeypatch.setenv("SECRETS_STORE_URL", "http://127.0.0.1:1")  # nothing listens there
+    get_settings.cache_clear()
+    secret_store.reset()
+    run = client.post(
+        "/api/runs",
+        json={
+            "playbook_id": playbook,
+            "inventory_id": inventory_id,
+            "credential_id": credential["id"],
+        },
+    ).json()
+    db = get_sessionmaker()()
+    try:
+        deadline = time.monotonic() + 30
+        while db.get(SecretStoreOutage, 1) is None and time.monotonic() < deadline:
+            time.sleep(0.2)  # the in-process worker claims it and is turned away
+            db.expire_all()
+        assert db.get(SecretStoreOutage, 1).kind == "unreachable"
+        row = db.get(Run, run["id"])
+        assert row.status == "queued" and row.log_seq == 0
+        waiting = client.get(f"/api/runs/{run['id']}").json()["waiting_reason"]
+        assert waiting.startswith("Waiting for OpenBao: the secret store can't be reached")
+    finally:
+        db.close()
+
+    monkeypatch.setenv("SECRETS_STORE_URL", ADDR)  # back
+    get_settings.cache_clear()
+    secret_store.reset()
+    assert _probe_secret_store() is True  # ends the outage and wakes the workers
+    done = _wait_for_completion(client, run["id"])
+    assert done["status"] == "success", done
+    assert [r["what"] for r in done["secret_reads"]] == ["credential"]

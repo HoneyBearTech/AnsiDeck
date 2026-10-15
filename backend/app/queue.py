@@ -14,7 +14,9 @@ Rules, in this order:
 - a run with an SSH certificate credential goes only to a worker that loads certificates
   (an older one would log in with the bare key and fail);
 - a run that refreshes its inventory first waits for that refresh (which then pins its
-  snapshot, or fails it).
+  snapshot, or fails it);
+- while the secret store is down, a run that needs it waits (app.store_outage), up to
+  SECRETS_STORE_WAIT_MINUTES; so does a refresh.
 Inventory refreshes, playbook checks (lints) and host key scans are claimed the same way, before
 runs.
 """
@@ -30,7 +32,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
-from app import metrics
+from app import metrics, store_outage
 from app.config import get_settings
 from app.db import GALAXY_GATE_KEY, LINT_CLAIM_KEY
 from app.jobs import unrunnable_reason
@@ -47,6 +49,8 @@ from app.notifications.events import run_finished
 from app.notifications.ops import worker_seen
 from app.notify import notifier, run_topic
 from app.run_log import append_status_line
+from app.secret_store import explain
+from app.store_outage import claim_params
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +81,27 @@ _CLAIM = text(
           AND (:ssh_certificates OR NOT EXISTS (
               SELECT 1 FROM credentials c
               WHERE c.id = r.credential_id AND c.kind = 'ssh_cert'))
+          -- While the secret store is down (app.store_outage), a run whose job reads it
+          -- waits, until max(queued, outage start) + the wait setting.
+          AND NOT (:store_wait
+              AND EXISTS (
+                  SELECT 1 FROM secret_store_outage o
+                  WHERE o.hold_until > now()
+                    AND greatest(r.queued_at, o.since)
+                        + make_interval(mins => :wait_minutes) > now())
+              AND (EXISTS (
+                      SELECT 1 FROM credentials c
+                      WHERE c.id = r.credential_id
+                        AND (c.store_path IS NOT NULL OR c.kind = 'ssh_cert'))
+                  OR EXISTS (
+                      SELECT 1 FROM vault_passwords v
+                      WHERE v.id = r.vault_password_id AND v.store_path IS NOT NULL)
+                  OR EXISTS (
+                      SELECT 1 FROM credentials e
+                      WHERE e.store_path IS NOT NULL
+                        AND e.id IN (
+                            SELECT x::int
+                            FROM json_array_elements_text(r.env_credential_ids) x))))
           AND NOT EXISTS (
               SELECT 1 FROM runs earlier
               WHERE earlier.inventory_id = r.inventory_id AND earlier.status = 'queued'
@@ -110,12 +135,23 @@ _CLAIM = text(
 _CLAIM_REFRESH = text(
     """
     WITH candidate AS (
-        SELECT r.id FROM inventory_refreshes r
-        WHERE r.status = 'queued'
+        SELECT f.id FROM inventory_refreshes f
+        WHERE f.status = 'queued'
           AND NOT EXISTS (
               SELECT 1 FROM inventory_refreshes busy
-              WHERE busy.inventory_id = r.inventory_id AND busy.status = 'running')
-        ORDER BY r.queued_at, r.id
+              WHERE busy.inventory_id = f.inventory_id AND busy.status = 'running')
+          AND NOT (:store_wait
+              AND EXISTS (
+                  SELECT 1 FROM secret_store_outage o
+                  WHERE o.hold_until > now()
+                    AND greatest(f.queued_at, o.since)
+                        + make_interval(mins => :wait_minutes) > now())
+              AND EXISTS (
+                  SELECT 1 FROM inventory_sources s
+                  JOIN credentials c ON c.id = s.credential_id
+                  WHERE s.inventory_id = f.inventory_id AND s.enabled
+                    AND c.store_path IS NOT NULL))
+        ORDER BY f.queued_at, f.id
         LIMIT 1
         FOR UPDATE SKIP LOCKED
     )
@@ -233,6 +269,23 @@ def fail_run(run: Run, status: RunStatus, reason: str) -> None:
         metrics.run_finished(session, run.project_id, status.value, run.started_at)
 
 
+def requeue_run(run: Run) -> None:
+    """Puts a claimed run whose job wasn't handed out back in the queue, in its old place
+    (queued_at stays). The caller holds its row lock and commits. Never writes a run-log line:
+    that bumps log_seq, and the worker that runs it later starts its events at 1, which /events
+    would then drop."""
+    run.status = RunStatus.QUEUED.value
+    run.claimed_at = None
+    run.worker_id = None
+    run.heartbeat_at = None
+    run.lease_expires_at = None
+    run.claim_token_hash = None
+    run.job_token_hash = None
+    run.job_token_expires_at = None
+    run.host_key_checking = None  # fixed again by the next claim
+    run.egress_restricted = None
+
+
 def record_worker(
     db: Session,
     worker_id: str,
@@ -324,6 +377,8 @@ def wait_reason(db: Session, run: Run) -> str:
         )
         if ahead is not None:
             return f"Waiting behind run #{ahead} (same inventory)"
+    if (store := _store_wait(db, run)) is not None:
+        return store
     slots = online_slots(db)
     if slots == 0:
         return "No worker is online: start one to run queued runs"
@@ -354,6 +409,29 @@ def wait_reason(db: Session, run: Run) -> str:
     if running >= slots:
         return "Waiting for a free worker (all are busy)"
     return "Waiting for a worker…"
+
+
+def _minutes(seconds: float) -> str:
+    return f"{max(1, round(seconds / 60))} min"
+
+
+def _store_wait(db: Session, run: Run) -> str | None:
+    """Why a run that needs the secret store waits while it is down (app.store_outage)."""
+    if not store_outage.wait_minutes() or (outage := store_outage.current(db)) is None:
+        return None
+    if not store_outage.run_needs_store(db, run):
+        return None
+    now = db.scalar(select(func.now()))
+    left = (store_outage.deadline(run.queued_at, outage.since) - now).total_seconds()
+    if left <= 0:
+        return None  # its wait is over: the next claim fails it if the store is still down
+    label = get_settings().secrets_store_label
+    down = _minutes((now - outage.since).total_seconds())
+    return (
+        f"Waiting for {label}: {explain(outage.kind)} (for {down}). "
+        f"AnsiDeck tries again every {store_outage.HOLD_SECONDS} s; the run fails if {label} is "
+        f"still unavailable in {_minutes(left)}"
+    )
 
 
 def claim_next(
@@ -435,6 +513,7 @@ def _claim_refresh(db: Session, worker_id: str) -> Claim | None:
             refresh_id = db.scalar(
                 _CLAIM_REFRESH,
                 {
+                    **claim_params(),
                     "lease": get_settings().run_lease_seconds,
                     "worker_id": worker_id[:255],
                     "claim_hash": hash_token(claim_token),
@@ -473,6 +552,7 @@ def _claim_run(
             run_id = db.scalar(
                 _CLAIM,
                 {
+                    **claim_params(),
                     "host_keys": host_keys,
                     "egress_allowlist": egress_allowlist,
                     "ssh_certificates": ssh_certificates,

@@ -237,9 +237,13 @@ path "secret/data/ansideck/*" { capabilities = ["read", "create"] }
 deleted secret's path stays taken until its metadata is deleted (`bao kv metadata delete`). Database backups
 taken before a move still hold the encrypted copy, readable with `CREDENTIAL_ENCRYPTION_KEY`.
 
-If the store can't be reached, is sealed, or refuses AnsiDeck's login, runs that need its secrets fail with that
-reason, and a **Secret store unavailable** notification goes to global channels once (and again when it works).
-The **Workers** page shows the store's status as AnsiDeck last checked it (every minute). Never give workers the
+If the store can't be reached, is sealed, or refuses AnsiDeck's login, runs and inventory refreshes that need its
+secrets wait in the queue instead of failing, for up to `SECRETS_STORE_WAIT_MINUTES` (default 15) from when the
+outage began (or from when they were queued, if later): AnsiDeck tries again every 30 s and starts them as soon as
+it can read the store, and fails them with the reason once their wait is over (`0` fails them at once). Other runs
+aren't held up, except those behind a waiting run on the same inventory. A **Secret store unavailable**
+notification goes to global channels once (and again when it works). The **Workers** page shows the store's
+status as AnsiDeck last checked it (every minute, every 15 s while it is down) and since when it is down. Never give workers the
 `SECRETS_STORE_*` settings: a worker refuses to start with them.
 
 To try it locally, Docker Compose has an `openbao` profile: a throwaway OpenBao dev server (in memory, a fixed

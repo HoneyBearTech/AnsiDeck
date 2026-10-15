@@ -15,7 +15,7 @@ from psycopg.errors import NumericValueOutOfRange
 from sqlalchemy.exc import DataError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app import audit, metrics, secret_store
+from app import audit, metrics, secret_store, store_outage
 from app.bootstrap import refuse_to_start_over_legacy_data, seed_fresh_install
 from app.config import get_settings
 from app.db import get_sessionmaker, init_db
@@ -27,6 +27,7 @@ from app.notifications.dispatch import dispatch_forever
 from app.notifications.ops import secret_store_failed, secret_store_ok
 from app.notify import notifier
 from app.process_hardening import disable_process_inspection
+from app.queue import QUEUE_TOPIC
 from app.reaper import INTERVAL_SECONDS, reap_once
 from app.routers import (
     api_keys,
@@ -62,6 +63,7 @@ from app.storage import galaxy_collections_dir, galaxy_roles_dir
 logger = logging.getLogger(__name__)
 settings = get_settings()
 SECRET_STORE_PROBE_SECONDS = 60
+SECRET_STORE_RETRY_SECONDS = 15  # while it is down
 
 
 class _EmbeddedServer(uvicorn.Server):
@@ -115,30 +117,39 @@ async def _git_sync_forever() -> None:
         executor.shutdown(wait=False, cancel_futures=True)
 
 
-def _probe_secret_store() -> None:
-    """Checks the secret store and raises or clears its ops alert."""
+def _probe_secret_store() -> bool:
+    """Checks the secret store, raises or clears its ops alert and records or ends an outage
+    (app.store_outage). Whether it works."""
     result = secret_store.probe()
     label = settings.secrets_store_label
     db = get_sessionmaker()()
+    store_back = False
     try:
         if result["ok"]:
             secret_store_ok(db, label)
+            store_back = store_outage.cleared(db)
         elif result["error_kind"] in secret_store.OUTAGE_KINDS:
+            store_outage.seen(db, result["error_kind"])
             secret_store_failed(db, result["error_kind"], label)
         db.commit()
     finally:
         db.close()
+    if store_back:
+        notifier.notify(QUEUE_TOPIC)  # runs and refreshes that waited for it may go now
+    return result["ok"]
 
 
 async def _secret_store_probe_forever() -> None:
     if not settings.secrets_store_enabled:
         return
     while True:
+        ok = False
         try:
-            await asyncio.to_thread(_probe_secret_store)
+            ok = await asyncio.to_thread(_probe_secret_store)
         except Exception:  # the next probe tries again
             logger.exception("secret store probe failed")
-        await asyncio.sleep(SECRET_STORE_PROBE_SECONDS)
+        # More often while it is down: what waits for it starts soon after it is back.
+        await asyncio.sleep(SECRET_STORE_PROBE_SECONDS if ok else SECRET_STORE_RETRY_SECONDS)
 
 
 async def _reap_forever() -> None:

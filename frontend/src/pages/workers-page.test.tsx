@@ -48,8 +48,32 @@ describe("workers", () => {
     expect(screen.getByText("offline")).toBeInTheDocument();
     expect(await screen.findByText("Secret store: OpenBao")).toBeInTheDocument();
     expect(screen.getByText("sealed")).toBeInTheDocument();
-    expect(screen.getByText(/Connection refused. Runs that use a secret kept there fail/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Connection refused. Runs and refreshes that use a secret kept there fail until it is back/,
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText(/last reachable never · AnsiDeck's token has 30 min left/)).toBeInTheDocument();
+  });
+
+  it("says that runs wait for the secret store, and since when it is down", async () => {
+    const { screen } = renderApp("/workers", {
+      routes: {
+        "GET /workers": [worker()],
+        "GET /secret-store/status": {
+          ...STORE_DOWN,
+          wait_minutes: 15,
+          outage_kind: "unreachable",
+          outage_since: "2026-10-15T12:00:00Z",
+        },
+      },
+    });
+    expect(
+      await screen.findByText(
+        /Runs and refreshes that use a secret kept there wait for it \(up to 15 min\), then fail/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Unavailable since .*: what needs it is held in the queue/)).toBeInTheDocument();
   });
 
   it("shows which workers keep their runs away from the API and cloud metadata", async () => {
