@@ -145,7 +145,7 @@ def test_a_run_whose_secrets_are_stored_here_records_no_reads(
 def test_a_failed_read_leaves_no_partial_record(client: TestClient, store, tmp_path) -> None:  # noqa: F811
     _login(client)
     run_id = _queue_run(client, tmp_path, _references(client, store))
-    store["status"][DATA + "cloud/aws"] = (503, {"errors": ["Vault is sealed"]})
+    store["status"][DATA + "cloud/aws"] = (404, {"errors": []})  # gone (an outage would wait)
     assert _start(run_id).status_code == 410
     run = client.get(f"/api/runs/{run_id}").json()
     assert run["status"] == "failed" and run["secret_reads"] is None

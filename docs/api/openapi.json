@@ -6336,7 +6336,7 @@
         "type": "object"
       },
       "SecretStoreStatus": {
-        "description": "The last probe (every minute while a store is configured).",
+        "description": "The last probe (every minute while a store is configured; every 15 s while it is down).",
         "properties": {
           "checked_at": {
             "anyOf": [
@@ -6401,6 +6401,29 @@
             ],
             "title": "Ok"
           },
+          "outage_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outage Kind"
+          },
+          "outage_since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outage Since"
+          },
           "reachable": {
             "anyOf": [
               {
@@ -6455,6 +6478,11 @@
               }
             ],
             "title": "Version"
+          },
+          "wait_minutes": {
+            "default": 0,
+            "title": "Wait Minutes",
+            "type": "integer"
           }
         },
         "required": [

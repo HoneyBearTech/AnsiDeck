@@ -1164,6 +1164,20 @@ class NotificationDelivery(Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
 
+class SecretStoreOutage(Base):
+    """While the secret store is down (app.store_outage): one row, held for a short while by
+    each sighting and deleted once a read works again. Runs and refreshes that need the store
+    aren't claimed meanwhile, up to SECRETS_STORE_WAIT_MINUTES after max(queued, since)."""
+
+    __tablename__ = "secret_store_outage"
+    __table_args__ = (CheckConstraint("id = 1", name="single_row"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False, default=1)
+    kind: Mapped[str] = mapped_column(String(30))  # app.secret_store OUTAGE_KINDS
+    since: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    hold_until: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class NotificationAlert(Base):
     """An ops alert that is currently raised (a worker offline, the queue stuck): its row makes
     the alert fire once per episode and its deletion send exactly one all-clear, across

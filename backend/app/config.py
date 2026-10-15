@@ -191,6 +191,10 @@ class Settings(BaseSettings):
     # creating a secret, never overwriting one) and keeps a reference instead. AnsiDeck's
     # policy then needs "create" (never "update" or "delete") on its prefix.
     secrets_store_allow_move: bool = False
+    # While the store is unreachable, sealed or refuses AnsiDeck's login, runs and inventory
+    # refreshes that need it wait (up to this many minutes from when the outage began, or from
+    # when they were queued if later) instead of failing at once. 0: fail at once.
+    secrets_store_wait_minutes: int = Field(15, ge=0, le=1440)
 
     # Test-only escape hatch: lets requirements.yml reference local tarballs/dirs
     # so tests can install offline. Must stay False in any real deployment —

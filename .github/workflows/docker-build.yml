@@ -292,8 +292,8 @@ jobs:
         # openbao profile is; piped in, it isn't part of the image) keeps the smoke key. A run
         # uses it and AnsiDeck stores it nowhere; a run with an SSH certificate credential gets a
         # fresh key and the store's certificate in its ssh-agent, and no private key is stored
-        # anywhere; with the store down the next run fails with its reason and raises the
-        # secrets.unavailable alert.
+        # anywhere; with the store down the next run waits in the queue and raises the
+        # secrets.unavailable alert, then runs once the store is back.
         run: |
           docker run -d --name smoke-bao --network smoke-net \
             -e BAO_DEV_ROOT_TOKEN_ID=ci-smoke-root -e BAO_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
@@ -343,13 +343,25 @@ jobs:
                docker logs smoke-worker 2>&1; } | grep -qF -e "$marker" -e "OPENSSH PRIVATE KEY"; then
             echo "a private key is in the database or the logs"; exit 1
           fi
-          docker stop smoke-bao
+          # Paused, not stopped: the dev server keeps its secrets in memory.
+          docker pause smoke-bao
           python3 backend/scripts/smoke_run.py http://localhost:8000 ci-test --store-path smoke/ssh \
-            --expect-reason "from OpenBao: the secret store can't be reached" \
-            || { docker logs smoke; exit 1; }
+            --expect-wait "Waiting for OpenBao: the secret store can't be reached" \
+            > "$RUNNER_TEMP/wait.log" 2>&1 &
+          waiter=$!
+          for i in $(seq 1 120); do
+            grep -q "^WAITING" "$RUNNER_TEMP/wait.log" && break
+            kill -0 "$waiter" 2>/dev/null || break
+            sleep 1
+          done
+          grep "^WAITING" "$RUNNER_TEMP/wait.log" \
+            || { cat "$RUNNER_TEMP/wait.log"; docker logs smoke; exit 1; }
           alert=$(docker exec smoke-db psql -U ansideck -d ansideck -tAc \
             "SELECT key FROM notification_alerts WHERE key = 'secrets.unavailable'")
           [ "$alert" = "secrets.unavailable" ] || { echo "no secrets.unavailable alert"; exit 1; }
+          docker unpause smoke-bao
+          wait "$waiter" || { cat "$RUNNER_TEMP/wait.log"; docker logs smoke; exit 1; }
+          tail -n 3 "$RUNNER_TEMP/wait.log"
 
       - name: Smoke test frontend runtime image
         if: matrix.service == 'frontend' && matrix.target == 'runtime'

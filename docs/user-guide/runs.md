@@ -123,7 +123,9 @@ worker, the run ahead of it on the same inventory, a Galaxy install, no worker b
 worker new enough to check SSH host keys (the Workers page marks older ones "no host key checks"), one
 that can limit a run's network (for inventories whose runs may reach only their hosts), or one that loads SSH
 certificates (for runs with an SSH certificate credential; the Workers page marks older ones "no SSH
-certificates").
+certificates"). A run that needs the secret store while it is down waits for it ("Waiting for OpenBao: ...",
+with how long it has been down and when the run gives up), and fails with the store's reason if it is still
+down then.
 
 - Runs against the same inventory go one at a time, in the order they were started.
 - While a Galaxy install waits or runs, no new run starts.

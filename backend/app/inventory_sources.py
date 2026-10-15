@@ -19,6 +19,7 @@ from typing import Any
 import yaml
 from sqlalchemy import exists, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -1010,6 +1011,56 @@ def _release_waiting_runs(
         run.inventory_snapshot_id = snapshot.id
         run.inventory_snapshot_at = snapshot.created_at
         run.inventory_snapshot_hosts = snapshot.host_count
+
+
+def requeue_refresh(db: Session, refresh: InventoryRefresh, waiting_for: str) -> None:
+    """Puts a claimed refresh whose job wasn't handed out back in the queue (the caller holds
+    its row lock and commits). An inventory has one queued refresh at most: when another was
+    queued meanwhile, this one merges into it (what it runs, its place in the queue, the runs
+    waiting for it) and ends as cancelled."""
+    claim_fields = {
+        "claimed_at": None,
+        "worker_id": None,
+        "heartbeat_at": None,
+        "lease_expires_at": None,
+        "claim_token_hash": None,
+        "job_token_hash": None,
+        "job_token_expires_at": None,
+        "stage": None,
+    }
+    try:
+        with db.begin_nested():
+            db.execute(
+                update(InventoryRefresh)
+                .where(InventoryRefresh.id == refresh.id)
+                .values(status=RunStatus.QUEUED.value, **claim_fields)
+            )
+        db.refresh(refresh)
+        return
+    except IntegrityError:
+        pass  # another refresh of the inventory is queued
+    other = db.scalars(
+        select(InventoryRefresh)
+        .where(
+            InventoryRefresh.inventory_id == refresh.inventory_id,
+            InventoryRefresh.status == RunStatus.QUEUED.value,
+        )
+        .with_for_update()
+    ).first()
+    other.scope = (
+        None
+        if other.scope is None or refresh.scope is None
+        else sorted(set(other.scope) | set(refresh.scope))
+    )
+    other.queued_at = min(other.queued_at, refresh.queued_at)
+    db.execute(
+        update(Run).where(Run.waiting_refresh_id == refresh.id).values(waiting_refresh_id=other.id)
+    )
+    for name, value in claim_fields.items():
+        setattr(refresh, name, value)
+    refresh.status = RunStatus.CANCELLED.value
+    refresh.error = f"merged into refresh #{other.id} while waiting for {waiting_for}"
+    refresh.finished_at = func.now()
 
 
 def end_refresh(

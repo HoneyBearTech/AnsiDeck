@@ -560,7 +560,7 @@ def test_a_signing_failure_fails_the_run_with_its_reason(
 
 
 @pytest.mark.no_worker
-def test_a_store_outage_while_signing_raises_the_alert(
+def test_a_store_outage_while_signing_holds_the_run_and_raises_the_alert(
     client: TestClient, ssh_store, tmp_path
 ) -> None:
     _login(client)
@@ -569,8 +569,10 @@ def test_a_store_outage_while_signing_raises_the_alert(
     ssh_store["status"][SIGN + "ansideck-1-web"] = (503, {"errors": ["Vault is sealed"]})
     http, claimed = _claim(ssh_certificates=True)
     assert _job(http, claimed.json()).status_code == 410
-    reason = client.get(f"/api/runs/{run['id']}").json()["status_reason"]
-    assert reason.endswith("from OpenBao: the secret store is sealed")
+    waiting = client.get(f"/api/runs/{run['id']}").json()
+    assert waiting["status"] == "queued"  # it waits for the store (app.store_outage)
+    assert waiting["waiting_reason"].startswith("Waiting for OpenBao: the secret store is sealed")
+    assert _claim(ssh_certificates=True)[1].status_code == 204
     db = get_sessionmaker()()
     alerts = db.scalars(select(NotificationAlert.key)).all()
     db.close()

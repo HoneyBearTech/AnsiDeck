@@ -22,7 +22,7 @@ from pydantic import AfterValidator, BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app import audit, metrics
+from app import audit, metrics, store_outage
 from app.config import get_settings
 from app.db import get_db, get_sessionmaker
 from app.galaxy import try_start_install
@@ -44,6 +44,7 @@ from app.inventory_sources import (
     normalise,
     record_source_failure,
     refresh_rows,
+    requeue_refresh,
     sources_outcome,
     store_snapshot,
     store_source_output,
@@ -62,7 +63,15 @@ from app.models import (
 from app.notifications.events import run_finished
 from app.notifications.ops import host_key_changed, secret_store_failed
 from app.notify import notifier, run_topic
-from app.queue import QUEUE_TOPIC, Claim, claim_next, fail_run, hash_token, record_worker
+from app.queue import (
+    QUEUE_TOPIC,
+    Claim,
+    claim_next,
+    fail_run,
+    hash_token,
+    record_worker,
+    requeue_run,
+)
 from app.run_log import append_events
 from app.secret_store import OUTAGE_KINDS, SecretStoreError, explain
 from app.storage import (
@@ -524,17 +533,10 @@ def job(
         label = get_settings().secrets_store_label
         subject = getattr(exc, "subject", "a secret")
         verb = getattr(exc, "verb", "read")
-        fail_run(
-            run,
-            RunStatus.FAILED,
-            f"not run: could not {verb} {subject} from {label}: {explain(exc.kind)}",
-        )
+        reason = f"not run: could not {verb} {subject} from {label}: {explain(exc.kind)}"
         if exc.kind in OUTAGE_KINDS:
-            try:
-                with db.begin_nested():
-                    secret_store_failed(db, exc.kind, label)
-            except Exception:  # the run's failure is what matters
-                logger.exception("could not raise the secret store alert")
+            return _store_down(db, run_id, x_claim_token, exc.kind, reason)
+        fail_run(run, RunStatus.FAILED, reason)
         db.commit()
         _finished(run_id)
         return _gone()
@@ -552,8 +554,52 @@ def job(
         return _gone()
     run.started_at = func.now()  # the worker launches ansible next
     _audit_certificate(db, run)
+    store_back = bool(run.secret_reads or run.ssh_certificate) and store_outage.cleared(db)
     db.commit()
+    if store_back:
+        notifier.notify(QUEUE_TOPIC)  # what waited for the store may go now
     return payload
+
+
+def _store_alert(db: Session, kind: str) -> None:
+    try:
+        with db.begin_nested():
+            secret_store_failed(db, kind, get_settings().secrets_store_label)
+    except Exception:  # what the job does next is what matters
+        logger.exception("could not raise the secret store alert")
+
+
+def _wait_over(db: Session, queued_at, since) -> str | None:
+    """None while something queued at `queued_at` may still wait for the store; else what to
+    add to its failure."""
+    minutes = store_outage.wait_minutes()
+    if minutes and db.scalar(select(func.now())) < store_outage.deadline(queued_at, since):
+        return None
+    return f" (still unavailable after waiting {minutes} minutes)" if minutes else ""
+
+
+def _store_down(db: Session, run_id: int, claim_token: str, kind: str, reason: str) -> Any:
+    """The store is down: the run goes back to the queue and waits for it (app.store_outage),
+    or fails once its wait is over."""
+    db.rollback()  # what build_job changed (snapshot, refresh, certificate)
+    run = _locked_run(db, run_id, claim_token)
+    if run is None:
+        return _gone()
+    since = store_outage.seen(db, kind)
+    _store_alert(db, kind)
+    if run.cancel_requested_at is not None:
+        fail_run(run, RunStatus.CANCELLED, "cancelled before it started")
+    elif (over := _wait_over(db, run.queued_at, since)) is not None:
+        fail_run(run, RunStatus.FAILED, reason + over)
+    else:
+        requeue_run(run)
+        db.commit()
+        metrics.requeued("run")
+        notifier.notify(run_topic(run_id))
+        return _gone()
+    db.commit()
+    _finished(run_id)
+    return _gone()
 
 
 def _audit_certificate(db: Session, run: Run) -> None:
@@ -965,18 +1011,21 @@ def refresh_job(
     except SecretStoreError as exc:
         label = get_settings().secrets_store_label
         subject = getattr(exc, "subject", "a secret")
+        error = f"could not read {subject} from {label}: {explain(exc.kind)}"
         if exc.kind in OUTAGE_KINDS:
-            try:
-                with db.begin_nested():
-                    secret_store_failed(db, exc.kind, label)
-            except Exception:  # the refresh's failure is what matters
-                logger.exception("could not raise the secret store alert")
-        _end_refresh(
-            db,
-            refresh,
-            RunStatus.FAILED.value,
-            f"could not read {subject} from {label}: {explain(exc.kind)}",
-        )
+            db.rollback()  # what building the job changed
+            refresh = _locked_refresh(db, refresh_id, x_claim_token)
+            if refresh is None:
+                return _gone()
+            since = store_outage.seen(db, exc.kind)
+            _store_alert(db, exc.kind)
+            if (over := _wait_over(db, refresh.queued_at, since)) is None:
+                requeue_refresh(db, refresh, label)
+                db.commit()
+                metrics.requeued("refresh")
+                return _gone()
+            error += over
+        _end_refresh(db, refresh, RunStatus.FAILED.value, error)
         return _gone()
     except SourceError as exc:
         _end_refresh(db, refresh, RunStatus.FAILED.value, str(exc))
@@ -991,7 +1040,12 @@ def refresh_job(
         )
         return _gone()
     refresh.started_at = func.now()
+    store_back = store_outage.refresh_needs_store(
+        db, refresh.inventory_id
+    ) and store_outage.cleared(db)
     db.commit()
+    if store_back:
+        notifier.notify(QUEUE_TOPIC)
     return payload
 
 
@@ -1104,8 +1158,12 @@ def refresh_sources(
             return {"combine": job}
         snapshot, warnings = combine_here(db, refresh, inventory)
     except SecretStoreError as exc:
+        # Its sources already ran: the combine stage fails rather than waits.
         label = get_settings().secrets_store_label
         subject = getattr(exc, "subject", "a secret")
+        if exc.kind in OUTAGE_KINDS:
+            store_outage.seen(db, exc.kind)
+            _store_alert(db, exc.kind)
         _end_refresh(
             db,
             refresh,

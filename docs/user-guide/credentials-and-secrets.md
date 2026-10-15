@@ -71,6 +71,7 @@ When the server is connected to a secret store (see the README's
   went and the version.
 - A run's page lists which version of each reference its job read, so a change in the store can be traced
   to the runs that used it (the locations only for people who may see the project's secrets).
-- If the store is unreachable, runs that need it fail with the reason, and global admins can be notified
-  (**Secret store unavailable**). Deleting the credential only deletes the reference; the secret stays in
+- If the store is unreachable, runs and refreshes that need it wait in the queue (15 minutes by default) and
+  start as soon as it is back, or fail with the reason; global admins can be notified (**Secret store
+  unavailable**). Deleting the credential only deletes the reference; the secret stays in
   the store.

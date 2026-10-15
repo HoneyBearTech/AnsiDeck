@@ -1,11 +1,14 @@
 """CI smoke test: one real run through the API and a worker container.
 
 Usage: python3 smoke_run.py <api url> <admin password> <path to an OpenSSH private key>
-       python3 smoke_run.py <api url> <admin password> --store-path <path> [--expect-reason <text>]
+       python3 smoke_run.py <api url> <admin password> --store-path <path>
+           [--expect-reason <text> | --expect-wait <text>]
        python3 smoke_run.py <api url> <admin password> --ssh-cert <role>:<principal>
 
 With --store-path the credential is a reference into the secret store (created once, then
-reused); --expect-reason expects the run to fail with a status reason containing that text.
+reused); --expect-reason expects the run to fail with a status reason containing that text, and
+--expect-wait expects it to wait in the queue with a reason containing that text (it prints
+WAITING then, for the caller to bring the store back) and then to succeed.
 With --ssh-cert it is an SSH certificate credential (the store's "ssh" mount): the run's
 ssh-agent must hold a certificate, and the run must record its serial.
 --check-egress <API host> also has the playbook try the API's ports (as the worker reaches the
@@ -80,6 +83,7 @@ def main() -> None:
     parser.add_argument("key_path", nargs="?")
     parser.add_argument("--store-path")
     parser.add_argument("--expect-reason")
+    parser.add_argument("--expect-wait")
     parser.add_argument("--check-egress", metavar="API_HOST")
     parser.add_argument("--ssh-cert", metavar="ROLE:PRINCIPAL")
     args = parser.parse_args()
@@ -149,7 +153,17 @@ def main() -> None:
             "credential_id": credential["id"],
         },
     )
-    deadline = time.monotonic() + 120
+    if args.expect_wait:
+        deadline = time.monotonic() + 120
+        while args.expect_wait not in (run.get("waiting_reason") or ""):
+            # (claimed meanwhile, it is "running" until its job gives up on the store)
+            if run["status"] not in ("queued", "running") or time.monotonic() > deadline:
+                print(json.dumps(run, indent=2))
+                sys.exit(f"expected it to wait with {args.expect_wait!r}")
+            time.sleep(1)
+            run = call("GET", f"/runs/{run['id']}")
+        print(f"WAITING: {run['waiting_reason']}", flush=True)
+    deadline = time.monotonic() + (240 if args.expect_wait else 120)
     while run["status"] in ("queued", "running") and time.monotonic() < deadline:
         time.sleep(1)
         run = call("GET", f"/runs/{run['id']}")
