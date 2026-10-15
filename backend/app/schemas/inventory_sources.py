@@ -24,10 +24,11 @@ def _check_interval(value: int | None) -> int | None:
 class SourceCreate(BaseModel):
     """kind "plugin": `config`, an inventory plugin's config (and an optional env credential).
     kind "git_file": `git_source_id` (a git source of the project) and `path`, an inventory file
-    or directory in it."""
+    or directory in it. kind "git_script": `git_source_id` and `path`, an executable inventory
+    script in it (run with its directory), and an optional env credential."""
 
     name: str = Field(min_length=1, max_length=100)
-    kind: Literal["plugin", "git_file"] = "plugin"
+    kind: Literal["plugin", "git_file", "git_script"] = "plugin"
     config: str | None = Field(None, min_length=1, max_length=64 * 1024)
     git_source_id: int | None = None
     path: str | None = Field(None, min_length=1, max_length=1024)
@@ -44,13 +45,10 @@ class SourceCreate(BaseModel):
         if self.kind == "plugin":
             if self.config is None or self.git_source_id is not None or self.path is not None:
                 raise ValueError("a plugin source holds config (and no git_source_id or path)")
-        elif (
-            self.git_source_id is None
-            or self.path is None
-            or self.config is not None
-            or self.credential_id is not None
-        ):
-            raise ValueError("a git file source holds git_source_id and path only")
+        elif self.git_source_id is None or self.path is None or self.config is not None:
+            raise ValueError("a git source's file or script needs git_source_id and path only")
+        elif self.kind == "git_file" and self.credential_id is not None:
+            raise ValueError("an inventory file reads no credential (a script can)")
         return self
 
 

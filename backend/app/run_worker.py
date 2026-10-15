@@ -432,10 +432,16 @@ INVENTORY_ENV = {
 }
 # The inventory plugins each kind of call may use (never taken from the job's text): a source
 # is a plugin config (`auto` loads the plugin it names), or an inventory file (or directory)
-# from a git source, read as YAML or INI only (never a plugin config or a script); the combine
+# from a git source, read as YAML or INI only (never a plugin config or a script), or an
+# inventory script from a git source, run by the script plugin (and nothing else); the combine
 # reads the sources' outputs and the inventory's own hosts as YAML inventories, and the
 # constructed configs.
-INVENTORY_PLUGINS = {"plugin": "auto", "git_file": "yaml,ini", "combine": "auto,yaml"}
+INVENTORY_PLUGINS = {
+    "plugin": "auto",
+    "git_file": "yaml,ini",
+    "git_script": "script",
+    "combine": "auto,yaml",
+}
 _CALL_KEY = re.compile(r"s[0-9]{1,12}|combined")
 _OUTPUT_CHUNK = 512 * 1024
 _STDERR_TAIL = 16 * 1024
@@ -480,7 +486,7 @@ def run_inventory(job: dict, emit) -> None:
             for item in call["files"]:
                 name = item["name"]
                 parts = name.split("/")
-                nested = kind == "git_file"  # a repository's paths, kept as they are
+                nested = kind in ("git_file", "git_script")  # a repository's paths, as they are
                 if (
                     not name
                     or name.startswith("/")
@@ -491,13 +497,23 @@ def run_inventory(job: dict, emit) -> None:
                 path = root / "inventory" / name
                 path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 path.write_text(item["text"])
-                path.chmod(0o600)
+                # A script's execute bits come from git; ansible-inventory runs only the target.
+                path.chmod(0o700 if kind == "git_script" and item.get("executable") else 0o600)
                 paths.append(str(path))
-            if kind == "git_file":  # the file, or the directory, ansible-inventory reads
+            cwd = root
+            if kind in ("git_file", "git_script"):  # the file, directory or script to read
                 target = call["target"]
-                if target not in {p for item in call["files"] for p in _prefixes(item["name"])}:
+                names = {item["name"] for item in call["files"]}
+                allowed = (
+                    names
+                    if kind == "git_script"
+                    else {p for name in names for p in _prefixes(name)}
+                )
+                if target not in allowed:
                     raise RuntimeError(f"invalid inventory target {target!r}")
                 paths = [str(root / "inventory" / target)]
+                if kind == "git_script":  # it may read the files beside it
+                    cwd = (root / "inventory" / target).parent
             env = {
                 **base_env,
                 **call.get("env", {}),
@@ -516,7 +532,7 @@ def run_inventory(job: dict, emit) -> None:
             with open(stderr, "wb") as err:
                 rc = subprocess.run(  # noqa: S603 - argument list, no shell
                     command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
-                    env=env, cwd=root, check=False,
+                    env=env, cwd=cwd, check=False,
                 ).returncode  # fmt: skip
             with open(stderr, "rb") as err:
                 err.seek(max(0, err.seek(0, os.SEEK_END) - _STDERR_TAIL))

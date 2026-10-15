@@ -158,6 +158,13 @@ More about sources:
   read: a plugin config or a script in the repository doesn't run, and the repository's `ansible.cfg` isn't
   used. If a commit removes the file, the source fails (marked **missing upstream**) and keeps what it found
   last; delete the source to drop its hosts. A git source that inventory sources read from can't be deleted.
+- **Script from git** runs an executable inventory script from a git source of the project: committed
+  with its execute bit (`git update-index --chmod=+x path`) and starting with a `#!` line naming its
+  interpreter (`python3`, `sh`, `bash` are in the worker image). It runs in a worker slot like a plugin,
+  from its own directory, with the files in that directory and below (nothing else of the repository) and
+  only the credential picked for it; it must print the inventory as JSON (`--list`, and `--host` or
+  `_meta`). Its output is treated like any source's. Anyone who can commit to that repository decides what
+  the script does with the slot and that credential, as with synced playbooks.
 - Turn a source off with its switch, **Edit** it, or **Delete** it (after a confirmation).
 - A source can say where and as whom to connect to a host, but not how: of Ansible's own variables it may
   only set `ansible_host`, `ansible_port`, `ansible_user` (and their `ansible_ssh_` forms),
