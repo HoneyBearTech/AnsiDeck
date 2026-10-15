@@ -201,7 +201,8 @@ Every project reads only its own subtree, `<SECRETS_STORE_KV_MOUNT>/<SECRETS_STO
 a key in that secret (`private_key` or `password` by default). On the **Credentials** page (and for vault
 passwords, the **Vault** page) choose **In OpenBao** (or your `SECRETS_STORE_LABEL`) instead of **Stored in
 AnsiDeck**: AnsiDeck reads the reference once to check it, and the card's **Test** button checks it again
-without showing the value. Configure the store in `.env` (see `.env.example`), then set it up, for example
+without showing the value. **Edit reference** points it at another path or key (checked the same way;
+queued runs use the new one). Each run records the KV version of every reference its job read. Configure the store in `.env` (see `.env.example`), then set it up, for example
 with the `bao` (or `vault`) CLI:
 
 ```sh

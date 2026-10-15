@@ -4535,6 +4535,39 @@
         "title": "RecoveryCodesOut",
         "type": "object"
       },
+      "ReferenceUpdate": {
+        "description": "Points a credential's or vault password's secret store reference elsewhere: a new\n`store_path`, `store_key` or both (an env credential has no key). Checked by reading it.",
+        "properties": {
+          "store_key": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Store Key"
+          },
+          "store_path": {
+            "anyOf": [
+              {
+                "maxLength": 400,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Store Path"
+          }
+        },
+        "title": "ReferenceUpdate",
+        "type": "object"
+      },
       "RefreshOut": {
         "properties": {
           "error": {
@@ -5416,6 +5449,20 @@
             ],
             "title": "Return Code"
           },
+          "secret_reads": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SecretRead"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret Reads"
+          },
           "ssh_certificate": {
             "anyOf": [
               {
@@ -6158,6 +6205,46 @@
           "ok"
         ],
         "title": "SecretCheck",
+        "type": "object"
+      },
+      "SecretRead": {
+        "description": "One reference a run's job read from the secret store, and the KV version it got.",
+        "properties": {
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "what": {
+            "enum": [
+              "credential",
+              "vault_password",
+              "env_credential"
+            ],
+            "title": "What",
+            "type": "string"
+          }
+        },
+        "required": [
+          "what",
+          "name",
+          "version"
+        ],
+        "title": "SecretRead",
         "type": "object"
       },
       "SecretStoreInfo": {
@@ -10027,6 +10114,89 @@
           }
         },
         "summary": "Delete Credential",
+        "tags": [
+          "credentials"
+        ]
+      },
+      "patch": {
+        "description": "Points a credential in the secret store at another path or key (read once to check).",
+        "operationId": "update_credential_reference_api_credentials__credential_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "title": "Credential Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReferenceUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Credential Reference",
         "tags": [
           "credentials"
         ]
@@ -19222,6 +19392,89 @@
           }
         },
         "summary": "Delete Vault Password",
+        "tags": [
+          "vault-passwords"
+        ]
+      },
+      "patch": {
+        "description": "Points a vault password in the secret store at another path or key (read once to\ncheck).",
+        "operationId": "update_vault_password_reference_api_vault_passwords__vault_password_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vault_password_id",
+            "required": true,
+            "schema": {
+              "title": "Vault Password Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ansideck_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ansideck Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReferenceUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultPasswordOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Vault Password Reference",
         "tags": [
           "vault-passwords"
         ]

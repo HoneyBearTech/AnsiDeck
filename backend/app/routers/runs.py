@@ -86,9 +86,12 @@ def _run_out(db: Session, run: Run, user: User) -> RunOut:
     if run.git_source_id is not None:
         source = db.get(GitSource, run.git_source_id)
         out.commit_url = commit_url(source.web_url if source else None, run.git_commit)
-    can_see = Permission.RUNS_READ_EXTRA_VARS in project_permissions(db, user, run.project_id)
-    if out.extra_vars and not can_see:
+    permissions = project_permissions(db, user, run.project_id)
+    if out.extra_vars and Permission.RUNS_READ_EXTRA_VARS not in permissions:
         out.extra_vars = dict.fromkeys(out.extra_vars, HIDDEN)
+    if out.secret_reads and Permission.SECRETS_LIST not in permissions:
+        for read in out.secret_reads:
+            read.location = None
     out.artifacts_count = len(run.artifacts_files or [])
     if run.egress_allowlist:
         out.egress_addresses = sum(

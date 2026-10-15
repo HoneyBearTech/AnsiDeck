@@ -7,7 +7,7 @@ import json
 import re
 
 from app.crypto import decrypt_secret, encrypt_secret
-from app.secret_store import SecretStoreError, read_all_versioned
+from app.secret_store import SecretStoreError, note_read, read_all_versioned
 
 NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 MAX_VARS = 32
@@ -83,12 +83,16 @@ def encrypt_env(env: dict[str, str]) -> bytes:
     return encrypt_secret(json.dumps(env, sort_keys=True).encode())
 
 
-def resolve_env(credential, deadline: float | None = None) -> dict[str, str]:
+def resolve_env(
+    credential, deadline: float | None = None, reads: list | None = None
+) -> dict[str, str]:
     """An env credential's variables, from AnsiDeck's database or the secret store
-    (SecretStoreError; a secret whose keys aren't usable names is a bad_value)."""
+    (SecretStoreError; a secret whose keys aren't usable names is a bad_value; noted in
+    `reads`)."""
     if credential.store_path is None:
         return json.loads(decrypt_secret(credential.encrypted_env))
-    data, _version = read_all_versioned(credential.project_id, credential.store_path, deadline)
+    data, version = read_all_versioned(credential.project_id, credential.store_path, deadline)
     if problem := env_problem(data):
         raise SecretStoreError("bad_value", f"the secret's keys aren't usable: {problem}")
+    note_read(reads, "env_credential", credential, None, version)
     return data

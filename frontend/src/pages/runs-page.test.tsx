@@ -357,6 +357,28 @@ describe("run detail", () => {
     expect(screen.getByText(/allows shorter certificates than this run's timeout/)).toBeInTheDocument();
   });
 
+  it("shows which version of each secret-store reference the run read", async () => {
+    const { screen } = renderApp("/runs/7", {
+      routes: {
+        "GET /runs/:id": run({
+          secret_reads: [
+            {
+              what: "credential",
+              name: "web-key",
+              location: "secret/ansideck/1/web/ssh#private_key",
+              version: 4,
+            },
+            { what: "env_credential", name: "aws", location: null, version: 2 },
+          ],
+        }),
+      },
+    });
+    expect(await screen.findByText("Read from the secret store when it started:")).toBeInTheDocument();
+    const items = screen.getAllByRole("listitem").map((li) => li.textContent);
+    expect(items).toContain("credential web-key, version 4 · secret/ansideck/1/web/ssh#private_key");
+    expect(items).toContain("variables aws, version 2");
+  });
+
   it("shows what a restricted run could reach and what it was refused", async () => {
     const { api, user, screen } = renderApp("/runs/7", {
       routes: {

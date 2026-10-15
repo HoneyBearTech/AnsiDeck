@@ -850,6 +850,9 @@ class Run(Base):
     # The SSH certificate its job was given (app.ssh_certificates.describe, plus the public
     # "certificate" line itself); the key pair is never stored.
     ssh_certificate: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
+    # What its job read from the secret store ([{what, name, location, version}], app.jobs):
+    # the KV version of each reference, so a change in the store can be traced to a run.
+    secret_reads: Mapped[list | None] = mapped_column(JSON(none_as_null=True), default=None)
     timeout_seconds: Mapped[int] = mapped_column(
         Integer,
         default=DEFAULT_RUN_TIMEOUT_SECONDS,

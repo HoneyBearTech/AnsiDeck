@@ -8,8 +8,13 @@ from app.db import get_db
 from app.hardening import client_ip
 from app.models import User, VaultPassword
 from app.permissions import Permission, Scope, guard
-from app.routers.credentials import check_reference, read_reference, throttled_check
-from app.schemas.credentials import SecretCheck
+from app.routers.credentials import (
+    check_reference,
+    edit_reference,
+    read_reference,
+    throttled_check,
+)
+from app.schemas.credentials import ReferenceUpdate, SecretCheck
 from app.schemas.vault_passwords import VaultPasswordCreate, VaultPasswordOut
 from app.scoping import get_scoped, readable_project_ids, resolve_write_project
 
@@ -102,6 +107,31 @@ def create_vault_password(
         detail=detail,
     )
     return _out(vault_password)
+
+
+@router.patch("/{vault_password_id}", response_model=VaultPasswordOut)
+def update_vault_password_reference(
+    vault_password_id: int,
+    payload: ReferenceUpdate,
+    request: Request,
+    actor: User = Depends(_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Points a vault password in the secret store at another path or key (read once to
+    check)."""
+    vault_password = get_scoped(
+        db, actor, request, VaultPassword, vault_password_id, Permission.SECRETS_MANAGE,
+        "Vault password not found",
+    )  # fmt: skip
+
+    def check(project_id: int, path: str, key: str | None) -> dict:
+        value, version = read_reference(project_id, path, key)
+        _non_empty(value)
+        return {"version": version}
+
+    return _out(
+        edit_reference(db, actor, request, vault_password, payload, "vault_password", check)
+    )
 
 
 @router.post("/{vault_password_id}/check", response_model=SecretCheck)

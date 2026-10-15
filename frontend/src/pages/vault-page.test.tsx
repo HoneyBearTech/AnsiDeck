@@ -42,6 +42,38 @@ describe("vault", () => {
     expect(await screen.findByText("OpenBao is unavailable")).toBeInTheDocument();
   });
 
+  it("points a vault password in the secret store at another key", async () => {
+    const stored = vaultPassword({
+      store: "external",
+      store_path: "ansible/vault",
+      store_key: "password",
+      store_location: "secret/ansideck/1/ansible/vault#password",
+    });
+    const { api, user, screen } = renderApp("/vault", {
+      routes: {
+        "GET /secret-store/info": {
+          enabled: true,
+          label: "OpenBao",
+          base_path: "secret/ansideck/1/",
+          path_rules: "plain segments",
+        },
+        "GET /vault-passwords": [stored],
+        "PATCH /vault-passwords/:id": { ...stored, store_key: "prod" },
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "Edit reference" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.clear(dialog.getByLabelText("Key in that secret"));
+    await user.type(dialog.getByLabelText("Key in that secret"), "prod");
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() =>
+      expect(api.requests(`PATCH /vault-passwords/${stored.id}`)[0]?.body).toEqual({
+        store_path: "ansible/vault",
+        store_key: "prod",
+      }),
+    );
+  });
+
   it("encrypts a value for YAML and extra vars, and copies it", async () => {
     const { api, user, screen } = renderApp("/vault", {
       routes: {

@@ -244,6 +244,12 @@ def test_a_run_uses_a_stored_key_and_vault_password_and_stores_neither(
     assert done["status"] == "success", done
     assert (tmp_path / "marker.txt").read_text() == "from-the-store"
 
+    vault_check = client.post(f"/api/vault-passwords/{vault.json()['id']}/check").json()
+    assert [(r["what"], r["version"]) for r in done["secret_reads"]] == [
+        ("credential", check["version"]),
+        ("vault_password", vault_check["version"]),
+    ]  # the versions the store holds
+
     marker = key.splitlines()[1]  # a line of the key's body
     assert _sentinel_rows(marker) == [] and _sentinel_rows(password) == []
     log = (tmp_path / "runs" / f"{run['id']}.jsonl").read_text()
@@ -513,3 +519,31 @@ def test_a_git_sources_token_from_the_store(store, client) -> None:
         assert git_sync.auth_for(db, source).token == "real-git-token-2"
     finally:
         db.close()
+
+
+def test_a_reference_is_pointed_elsewhere_in_the_real_store(store, client) -> None:
+    from app.models import AuditEvent
+
+    _login(client)
+    base = f"edit-{uuid.uuid4().hex[:8]}"
+    put_secret(1, f"{base}/a", {"password": "pw-a"})
+    put_secret(1, f"{base}/b", {"password": "pw-b1"})
+    put_secret(1, f"{base}/b", {"password": "pw-b2"})  # version 2
+    vault = client.post(
+        "/api/vault-passwords", json={"name": base, "store_path": f"{base}/a"}
+    ).json()
+    url = f"/api/vault-passwords/{vault['id']}"
+    missing = client.patch(url, json={"store_path": f"{base}/none"})
+    assert missing.status_code == 400 and "no secret at that path" in missing.text
+    moved = client.patch(url, json={"store_path": f"{base}/b"})
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["store_location"] == f"secret/{PREFIX}/1/{base}/b#password"
+    db = get_sessionmaker()()
+    try:
+        detail = db.scalars(
+            select(AuditEvent.detail).where(AuditEvent.action == "vault_password.reference_update")
+        ).one()
+    finally:
+        db.close()
+    assert detail["version"] == 2
+    assert detail["location_before"] == f"secret/{PREFIX}/1/{base}/a#password"

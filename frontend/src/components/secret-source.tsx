@@ -2,9 +2,24 @@ import * as React from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ApiError, type SecretCheck, type SecretRef, type SecretStoreInfo } from "@/lib/api";
+import {
+  ApiError,
+  type ReferenceUpdate,
+  type SecretCheck,
+  type SecretRef,
+  type SecretStoreInfo,
+} from "@/lib/api";
 
 export type SourceMode = "ansideck" | "external";
 
@@ -29,7 +44,6 @@ export function SecretSourcePicker({
   onSecretKeyChange?: (key: string) => void;
   idPrefix: string;
 }) {
-  const wholeSecret = onSecretKeyChange === undefined;
   if (!info?.enabled) return null;
   return (
     <div className="flex flex-col gap-3 rounded-md border border-border p-3">
@@ -49,49 +63,167 @@ export function SecretSourcePicker({
         ))}
       </fieldset>
       {mode === "external" && (
-        <>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor={`${idPrefix}-store-path`}>Path in {info.label}</Label>
-            <div className="flex items-center rounded-md border border-input bg-background font-mono text-sm">
-              <span className="whitespace-nowrap border-r border-border px-2 py-2 text-muted-foreground">
-                {info.base_path}
-              </span>
-              <input
-                id={`${idPrefix}-store-path`}
-                value={path}
-                onChange={(e) => onPathChange(e.target.value)}
-                placeholder="web/ssh"
-                spellCheck={false}
-                className="min-w-0 flex-1 bg-transparent px-2 py-2 outline-none"
-              />
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Under this project's subtree only: {info.path_rules}.
-            </p>
-          </div>
-          {wholeSecret ? (
-            <p className="text-xs text-muted-foreground">
-              Every key in that secret becomes an environment variable of the same name.
-            </p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <Label htmlFor={`${idPrefix}-store-key`}>Key in that secret</Label>
-              <Input
-                id={`${idPrefix}-store-key`}
-                value={secretKey}
-                onChange={(e) => onSecretKeyChange(e.target.value)}
-                className="font-mono"
-                spellCheck={false}
-              />
-            </div>
-          )}
-          <p className="text-xs text-muted-foreground">
-            AnsiDeck reads the value once now to check it, and again whenever a run needs it; it never stores
-            it. Rotate it in {info.label}: the next run uses the new version.
-          </p>
-        </>
+        <StorePathFields
+          info={info}
+          path={path}
+          onPathChange={onPathChange}
+          secretKey={secretKey}
+          onSecretKeyChange={onSecretKeyChange}
+          idPrefix={idPrefix}
+        />
       )}
     </div>
+  );
+}
+
+/** Where in the store: a path under the project's subtree and (unless the whole secret is
+ * meant, for an env credential) a key in that secret. */
+export function StorePathFields({
+  info,
+  path,
+  onPathChange,
+  secretKey,
+  onSecretKeyChange,
+  idPrefix,
+}: {
+  info: SecretStoreInfo;
+  path: string;
+  onPathChange: (path: string) => void;
+  secretKey?: string | undefined;
+  onSecretKeyChange?: ((key: string) => void) | undefined;
+  idPrefix: string;
+}) {
+  const wholeSecret = onSecretKeyChange === undefined;
+  return (
+    <>
+      <div className="flex flex-col gap-2">
+        <Label htmlFor={`${idPrefix}-store-path`}>Path in {info.label}</Label>
+        <div className="flex items-center rounded-md border border-input bg-background font-mono text-sm">
+          <span className="whitespace-nowrap border-r border-border px-2 py-2 text-muted-foreground">
+            {info.base_path}
+          </span>
+          <input
+            id={`${idPrefix}-store-path`}
+            value={path}
+            onChange={(e) => onPathChange(e.target.value)}
+            placeholder="web/ssh"
+            spellCheck={false}
+            className="min-w-0 flex-1 bg-transparent px-2 py-2 outline-none"
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">Under this project's subtree only: {info.path_rules}.</p>
+      </div>
+      {wholeSecret ? (
+        <p className="text-xs text-muted-foreground">
+          Every key in that secret becomes an environment variable of the same name.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <Label htmlFor={`${idPrefix}-store-key`}>Key in that secret</Label>
+          <Input
+            id={`${idPrefix}-store-key`}
+            value={secretKey}
+            onChange={(e) => onSecretKeyChange(e.target.value)}
+            className="font-mono"
+            spellCheck={false}
+          />
+        </div>
+      )}
+      <p className="text-xs text-muted-foreground">
+        AnsiDeck reads the value once now to check it, and again whenever a run needs it; it never stores it.
+        Rotate it in {info.label}: the next run uses the new version.
+      </p>
+    </>
+  );
+}
+
+/** "Edit reference": points a secret in the store at another path or key. The server reads it
+ * once to check it; queued runs then use the new reference. */
+export function EditReferenceDialog({
+  row,
+  info,
+  wholeSecret = false,
+  save,
+  onSaved,
+  idPrefix,
+}: {
+  row: SecretRef & { name: string };
+  info: SecretStoreInfo | null;
+  /** An env credential: the whole secret, no key. */
+  wholeSecret?: boolean;
+  save: (update: ReferenceUpdate) => Promise<unknown>;
+  onSaved: () => void;
+  idPrefix: string;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [path, setPath] = React.useState(row.store_path ?? "");
+  const [key, setKey] = React.useState(row.store_key ?? "");
+  const [error, setError] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+
+  function handleOpenChange(next: boolean) {
+    if (next) {
+      setPath(row.store_path ?? "");
+      setKey(row.store_key ?? "");
+      setError(null);
+    }
+    setOpen(next);
+  }
+
+  async function handleSave() {
+    setError(null);
+    setSaving(true);
+    try {
+      await save(
+        wholeSecret ? { store_path: path.trim() } : { store_path: path.trim(), store_key: key.trim() },
+      );
+      setOpen(false);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!info?.enabled || row.store !== "external" || row.store_path === null) return null;
+  const unchanged = path.trim() === row.store_path && (wholeSecret || key.trim() === row.store_key);
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          Edit reference
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit the reference of "{row.name}"</DialogTitle>
+          <DialogDescription>
+            Now at <span className="font-mono wrap-anywhere">{row.store_location}</span>. Queued runs use the
+            new reference when they start.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-4">
+          <StorePathFields
+            info={info}
+            path={path}
+            onPathChange={setPath}
+            secretKey={wholeSecret ? undefined : key}
+            onSecretKeyChange={wholeSecret ? undefined : setKey}
+            idPrefix={idPrefix}
+          />
+          {error && <p className="text-sm text-destructive">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button
+            onClick={handleSave}
+            disabled={saving || unchanged || !path.trim() || (!wholeSecret && !key.trim())}
+          >
+            {saving ? "Checking…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

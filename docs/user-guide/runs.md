@@ -87,6 +87,13 @@ the store's role allows shorter certificates than the run's timeout, the page wa
 opens after that time fail. A run that couldn't get a certificate fails without running, with the store's
 reason ("not run: could not get an SSH certificate for credential 'web' from OpenBao: ...").
 
+## Secrets read from the store
+
+A run whose credential, vault password or environment credentials are references into the secret store
+lists, under "Read from the secret store when it started", the KV version of each one its job read. Members
+who may see the project's secrets also see where each lives. A run that couldn't read one fails without
+running and records none.
+
 ## Artifacts
 
 Files a run produces (reports, backups, collected configs) can be kept with it: put them in the run's
