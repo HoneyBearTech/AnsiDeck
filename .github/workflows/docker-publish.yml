@@ -69,6 +69,9 @@ jobs:
           load: true
           push: false
           tags: ansideck-${{ matrix.service }}:scan
+          # A fresh upgrade layer every release (the Dockerfiles' SECURITY_UPDATES); the push
+          # below gets the same layers from this build.
+          build-args: SECURITY_UPDATES=${{ github.run_id }}
           cache-from: type=gha,scope=${{ matrix.service }}-runtime
 
       # Findings recorded as not affecting AnsiDeck in the OpenVEX document are suppressed
@@ -94,6 +97,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           sbom: true
           provenance: mode=max
+          build-args: SECURITY_UPDATES=${{ github.run_id }}
           cache-from: type=gha,scope=${{ matrix.service }}-runtime
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}-runtime
 
