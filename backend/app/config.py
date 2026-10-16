@@ -21,6 +21,32 @@ MIN_AUTH_SECRET_KEY_LENGTH = 32
 EXAMPLE_CREDENTIAL_ENCRYPTION_KEY = "R_7QcKt5d6tHB-rDQU_gp4q4YaECbGwV-pehrJOn3NM="
 
 
+# GitHub sign-in checks each relevant org with one API call, so their number bounds its latency.
+MAX_GITHUB_ORGS = 10
+MAX_GITHUB_TEAMS = 100
+MAX_MAPPED_PROJECTS = 100
+# Project roles a team mapping may grant (never the global admin role).
+MAPPABLE_ROLES = ("admin", "operator", "viewer")
+# An org login goes into an API path, so only GitHub's own login characters are accepted (the
+# underscore for GitHub Enterprise Server). Team slugs are compared, never put into a URL.
+_GITHUB_ORG = re.compile(r"[a-z0-9][a-z0-9_-]{0,38}")
+_GITHUB_TEAM_SLUG = re.compile(r"[a-z0-9][a-z0-9_.-]{0,99}")
+
+
+def _github_org(value: str) -> str:
+    org = value.strip().lower()
+    if not _GITHUB_ORG.fullmatch(org):
+        raise ValueError(f"{value!r} is not a GitHub org login")
+    return org
+
+
+def _github_team(value: str, setting: str) -> str:
+    org, slash, slug = value.strip().lower().partition("/")
+    if not slash or not _GITHUB_ORG.fullmatch(org) or not _GITHUB_TEAM_SLUG.fullmatch(slug):
+        raise ValueError(f"{setting}: {value!r} is not a GitHub team as org/team-slug")
+    return f"{org}/{slug}"
+
+
 def is_placeholder(value: str) -> bool:
     """A value copied from .env.example without being changed ("change-me...")."""
     return value.strip().lower().startswith("change-me")
@@ -79,6 +105,13 @@ class Settings(BaseSettings):
     github_url: str = "https://github.com"
     github_api_url: str = "https://api.github.com"
     github_button_label: str = "GitHub"
+    # Optional gate (JSON lists): only active members of one of these orgs, or direct members of
+    # one of these teams ("org/team-slug"), may sign in with GitHub. Either one asks GitHub for
+    # read:org. Optional mapping {"org/team-slug": {"<project name>": "admin|operator|viewer"}}:
+    # each GitHub sign-in makes the user's GitHub-granted project memberships match it.
+    github_allowed_orgs: list[str] = []
+    github_allowed_teams: list[str] = []
+    github_team_role_map: dict[str, dict[str, str]] = {}
 
     # Shared by every SSO provider. SSO never signs in a global admin unless this is set
     # (admins stay local/break-glass). The OIDC_* names came first and keep working.
@@ -405,6 +438,67 @@ class Settings(BaseSettings):
             )
         return self
 
+    @field_validator("github_allowed_orgs")
+    @classmethod
+    def _check_github_orgs(cls, v: list[str]) -> list[str]:
+        orgs = sorted({_github_org(org) for org in v})
+        if len(orgs) > MAX_GITHUB_ORGS:
+            raise ValueError(f"GITHUB_ALLOWED_ORGS lists more than {MAX_GITHUB_ORGS} orgs")
+        return orgs
+
+    @field_validator("github_allowed_teams")
+    @classmethod
+    def _check_github_teams(cls, v: list[str]) -> list[str]:
+        teams = sorted({_github_team(team, "GITHUB_ALLOWED_TEAMS") for team in v})
+        if len(teams) > MAX_GITHUB_TEAMS:
+            raise ValueError(f"GITHUB_ALLOWED_TEAMS lists more than {MAX_GITHUB_TEAMS} teams")
+        return teams
+
+    @field_validator("github_team_role_map")
+    @classmethod
+    def _check_github_team_role_map(cls, v: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+        if len(v) > MAX_GITHUB_TEAMS:
+            raise ValueError(f"GITHUB_TEAM_ROLE_MAP maps more than {MAX_GITHUB_TEAMS} teams")
+        role_map: dict[str, dict[str, str]] = {}
+        for team, projects in v.items():
+            key = _github_team(team, "GITHUB_TEAM_ROLE_MAP")
+            if key in role_map:
+                raise ValueError(f"GITHUB_TEAM_ROLE_MAP lists team {key} twice")
+            if not projects or len(projects) > MAX_MAPPED_PROJECTS:
+                raise ValueError(
+                    f"GITHUB_TEAM_ROLE_MAP: team {key} must map 1 to {MAX_MAPPED_PROJECTS} projects"
+                )
+            mapped: dict[str, str] = {}
+            for raw_name, role in projects.items():
+                name = raw_name.strip()
+                if not name or len(name) > 150:
+                    raise ValueError(
+                        f"GITHUB_TEAM_ROLE_MAP: team {key} has an invalid project name"
+                    )
+                if role not in MAPPABLE_ROLES:
+                    raise ValueError(
+                        f"GITHUB_TEAM_ROLE_MAP: team {key} gives project {name!r} the role "
+                        f"{role!r} (use one of {', '.join(MAPPABLE_ROLES)})"
+                    )
+                mapped[name] = role
+            role_map[key] = mapped
+        return role_map
+
+    @property
+    def github_gated(self) -> bool:
+        return bool(self.github_allowed_orgs or self.github_allowed_teams)
+
+    @property
+    def github_needs_org_data(self) -> bool:
+        return self.github_gated or bool(self.github_team_role_map)
+
+    @property
+    def github_relevant_orgs(self) -> list[str]:
+        """Every org whose membership a sign-in has to check: an allowed team or a mapped team
+        counts only while its org membership is active."""
+        teams = [*self.github_allowed_teams, *self.github_team_role_map]
+        return sorted({*self.github_allowed_orgs, *(team.split("/")[0] for team in teams)})
+
     @model_validator(mode="after")
     def _validate_github(self) -> "Settings":
         configured = [self.github_client_id, self.github_client_secret]
@@ -414,7 +508,17 @@ class Settings(BaseSettings):
                 "GITHUB_CLIENT_SECRET together (or neither)."
             )
         if not self.github_enabled:
+            if self.github_needs_org_data:
+                raise ValueError(
+                    "GITHUB_ALLOWED_ORGS, GITHUB_ALLOWED_TEAMS and GITHUB_TEAM_ROLE_MAP need "
+                    "GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET."
+                )
             return self
+        if len(self.github_relevant_orgs) > MAX_GITHUB_ORGS:
+            raise ValueError(
+                f"GitHub sign-in can check at most {MAX_GITHUB_ORGS} orgs (GITHUB_ALLOWED_ORGS and "
+                "the orgs of GITHUB_ALLOWED_TEAMS and GITHUB_TEAM_ROLE_MAP together)"
+            )
         if not self.public_url.startswith(("http://", "https://")):
             raise ValueError("GitHub sign-in needs PUBLIC_URL (e.g. https://ansideck.example.com).")
         if self.environment.lower() == "production" and not all(

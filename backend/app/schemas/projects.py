@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -34,6 +35,9 @@ class MemberOut(BaseModel):
     username: str
     is_active: bool
     role: str
+    # The sign-in provider managing this membership ("github": a GitHub team mapping, which
+    # changes or removes it at the user's sign-ins); None: set by hand.
+    granted_by: Literal["github", "oidc"] | None = None
 
 
 class MemberUpsert(BaseModel):

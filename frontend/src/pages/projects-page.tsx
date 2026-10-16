@@ -155,12 +155,21 @@ function MembersPanel({ project }: { project: ProjectSummary }) {
       {members.map((member) => {
         const isSelf = member.username === user?.username;
         const locked = isSelf && !isGlobalAdmin;
+        const managed = member.granted_by === "github";
         return (
           <div key={member.user_id} className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-sm">
               <span className="font-medium">{member.username}</span>
               {isSelf && <Badge variant="outline">you</Badge>}
               {!member.is_active && <Badge variant="failed">deactivated</Badge>}
+              {managed && (
+                <Badge
+                  variant="outline"
+                  title="Granted by a GitHub team mapping: updated at each GitHub sign-in, removed at a password sign-in. Setting the role here makes it manual."
+                >
+                  via GitHub
+                </Badge>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <Select
@@ -183,6 +192,15 @@ function MembersPanel({ project }: { project: ProjectSummary }) {
                   ))}
                 </SelectContent>
               </Select>
+              {managed && !locked && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => run(() => api.setProjectMemberRole(project.id, member.user_id, member.role))}
+                >
+                  Make manual
+                </Button>
+              )}
               {!locked && (
                 <Button
                   variant="destructive-outline"
@@ -190,7 +208,8 @@ function MembersPanel({ project }: { project: ProjectSummary }) {
                   onClick={() => {
                     if (
                       window.confirm(
-                        `Remove ${member.username} from ${project.name}? They lose access to it at once.`,
+                        `Remove ${member.username} from ${project.name}? They lose access to it at once.` +
+                          (managed ? " Their GitHub team grants it: they get it back at their next GitHub sign-in." : ""),
                       )
                     ) {
                       run(() => api.removeProjectMember(project.id, member.user_id));

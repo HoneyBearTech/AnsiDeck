@@ -9,7 +9,9 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
 
 ### Upgrading
 
-- The API applies database migrations 0033, 0034 and 0035 when it starts.
+- The API applies database migrations 0033, 0034, 0035 and 0036 when it starts.
+- With `GITHUB_ALLOWED_ORGS`, `GITHUB_ALLOWED_TEAMS` or `GITHUB_TEAM_ROLE_MAP` set, GitHub asks people who
+  already approved AnsiDeck's OAuth app to approve the `read:org` scope at their next sign-in.
 
 ### Added
 
@@ -25,6 +27,13 @@ steps when upgrading; those are listed under "Upgrading" and in [docs/upgrading.
   policy needs `create`, never `update` or `delete` (see the README).
 - A run records the KV version of each secret-store reference its job read (`secret_reads`), shown on its
   page; the locations only to members who may list the project's secrets.
+- GitHub sign-in limited to orgs and teams: `GITHUB_ALLOWED_ORGS` (active members) and `GITHUB_ALLOWED_TEAMS`
+  (`org/team-slug`, direct members), checked at every sign-in and failing closed; an org that restricts OAuth
+  apps is named in the audit log. Refused sign-ins show a new message on the login page.
+- Project memberships from GitHub teams: `GITHUB_TEAM_ROLE_MAP` maps teams to project roles by project name.
+  Each GitHub sign-in adds, changes or removes the memberships it granted (marked **via GitHub**, audited);
+  memberships set by hand always win, editing a granted one (or **Make manual**) makes it manual, and a
+  password sign-in or **Unlink SSO** removes the granted ones. The members API reports `granted_by`.
 
 ### Changed
 

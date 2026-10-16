@@ -48,6 +48,7 @@ from app.security import (
     session_info,
     verify_mfa_token,
 )
+from app.sso_common import audit_membership_changes, drop_managed_memberships
 
 router = APIRouter()
 
@@ -276,6 +277,14 @@ def _check_proof(
     )
 
 
+def _drop_sso_memberships(db: Session, user: User, ip: str) -> None:
+    """Memberships a sign-in provider (a GitHub team mapping) granted last only while the user
+    signs in through it: a password sign-in can't tell whether they are still in the team, so
+    they go (and come back at the next sign-in through the provider)."""
+    changes = drop_managed_memberships(db, user)
+    audit_membership_changes(db, user, changes, actor=user, via="password sign-in", ip=ip)
+
+
 def _set_session_cookie(response: Response, user: User, method: SignInMethod = "password") -> None:
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
@@ -334,6 +343,7 @@ def login(
         )
         return MfaChallenge(methods=_methods(user))
     user_login_throttle.reset(_login_key(ip, user.username))
+    _drop_sso_memberships(db, user, ip)
     _set_session_cookie(response, user)
     out = _to_out(db, user)
     detail = {"two_factor_setup_required": True} if out.two_factor_setup_required else None
@@ -412,6 +422,7 @@ def _finish_mfa(db: Session, response: Response, user: User, ip: str, method: st
     user_login_throttle.reset(_login_key(ip, user.username))
     totp_user_throttle.reset(user.id)
     response.delete_cookie(MFA_COOKIE_NAME, path=MFA_COOKIE_PATH)
+    _drop_sso_memberships(db, user, ip)
     _set_session_cookie(response, user)
     detail: dict[str, object] = {"mfa": method}
     if method == "recovery_code":

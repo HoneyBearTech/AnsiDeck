@@ -149,6 +149,7 @@ class ProjectMember(Base):
     the membership at the DB level (ON DELETE CASCADE)."""
 
     __tablename__ = "project_members"
+    __table_args__ = (CheckConstraint("granted_by IN ('github', 'oidc')", name="granted_by"),)
 
     project_id: Mapped[int] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
@@ -157,6 +158,9 @@ class ProjectMember(Base):
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     role: Mapped[str] = mapped_column(String(20))
+    # The sign-in provider that manages this membership (a GitHub team mapping), which may
+    # change or remove it at the user's next sign-in. None: set by hand, never touched by one.
+    granted_by: Mapped[str | None] = mapped_column(String(20), default=None)
 
 
 class ApiKey(Base):

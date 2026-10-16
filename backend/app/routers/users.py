@@ -10,6 +10,7 @@ from app.hardening import client_ip
 from app.models import Project, ProjectMember, User
 from app.permissions import Permission, Role, Scope, require_permission
 from app.schemas.users import UserAdminOut, UserCreate, UserUpdate
+from app.sso_common import audit_membership_changes, drop_managed_memberships
 
 _guard = require_permission(Permission.USERS_MANAGE, scope=Scope.GLOBAL)
 router = APIRouter(dependencies=[Depends(_guard)])
@@ -189,6 +190,7 @@ def unlink_sso(
         return
     target.sso_issuer = target.sso_subject = None
     db.commit()
+    ip = client_ip(request)
     audit.record(
         db,
         "user.sso_unlink",
@@ -196,8 +198,11 @@ def unlink_sso(
         target_type="user",
         target_id=target.id,
         target_name=target.username,
-        ip=client_ip(request),
+        ip=ip,
     )
+    # The identity that granted them is gone: memberships its provider managed go too.
+    changes = drop_managed_memberships(db, target)
+    audit_membership_changes(db, target, changes, actor=actor, via="sso unlink", ip=ip)
 
 
 @router.delete("/{user_id}/two-factor", status_code=status.HTTP_204_NO_CONTENT)

@@ -17,9 +17,9 @@ from joserfc.jwk import KeySet
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import User
 from app.sso_common import (
     SsoError,
+    SsoSignIn,
     http_client,
     pkce_challenge,
     resolve_user,
@@ -186,7 +186,7 @@ def _verify_id_token(settings: Settings, metadata: dict, id_token: str, nonce: s
 
 def complete_login(
     db: Session, settings: Settings, *, cookie: str, code: str, state: str
-) -> tuple[User, bool]:
+) -> SsoSignIn:
     data = verify_state(FLOW, cookie, state)
     try:
         nonce, verifier = data["n"], data["v"]
@@ -202,4 +202,7 @@ def complete_login(
         raise SsoError("failed", "ID token has no email claim")
     if claims.get("email_verified") is not True:
         raise SsoError("not_linked", "provider did not verify the email", email=email)
-    return resolve_user(db, settings, settings.oidc_issuer, str(claims["sub"]), [email.strip()])
+    user, newly_linked = resolve_user(
+        db, settings, settings.oidc_issuer, str(claims["sub"]), [email.strip()]
+    )
+    return SsoSignIn(user, newly_linked)

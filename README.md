@@ -572,14 +572,34 @@ different users is refused). From then on they are matched by the provider's sta
 numeric user id, not the renamable username), so a changed email or username can't hijack the account.
 Nothing is ever created automatically: an identity with no matching user is refused. **Global admins cannot
 sign in with SSO** unless you set `SSO_ALLOW_ADMIN=true`, and `SSO_ALLOWED_EMAIL_DOMAINS` can restrict which
-email domains may sign in. Roles and project membership stay managed inside AnsiDeck (no group or
-organisation mapping), and signing out ends only the AnsiDeck session.
+email domains may sign in. Roles and project membership stay managed inside AnsiDeck (for GitHub,
+teams can optionally grant project memberships, see below), and signing out ends only the AnsiDeck session.
 
 Each user has one bound identity. Use **Unlink SSO** on a user if they move to a different account at the
 provider, or to switch them from one provider to another.
 
-GitHub specifics: AnsiDeck asks for the `read:user` and `user:email` scopes, uses the access token for two
-reads and revokes it straight away (it is never stored; if the revoke call fails the token stays valid at
+GitHub specifics: AnsiDeck asks for the `read:user` and `user:email` scopes (plus `read:org` when one of
+the settings below is set), uses the access token for a few reads and revokes it straight away (it is never stored; if the revoke call fails the token stays valid at
 GitHub until the user revokes the app there). Trust in GitHub's email verification is the boundary for
 first-time linking.
+
+**Limiting GitHub sign-in to orgs and teams.** `GITHUB_ALLOWED_ORGS=["acme"]` lets in only active members
+of `acme` (a pending invitation isn't enough), and `GITHUB_ALLOWED_TEAMS=["acme/ops"]` only direct members
+of that team (members of its child teams are not included: list those teams too); with both, either one is
+enough. It is checked at every sign-in, also for people already linked. Organizations that restrict OAuth
+apps (the default for new ones) hide their memberships until an owner approves AnsiDeck's OAuth app
+(organization settings → Third-party access); until then their members are refused, and the audit log says
+why. Anything GitHub doesn't answer clearly (an error, the rate limit, more than 1000 teams) refuses the
+sign-in.
+
+**Project memberships from teams.** `GITHUB_TEAM_ROLE_MAP={"acme/ops": {"Default": "operator"}}` gives
+members of `acme/ops` the operator role in the project named `Default` (roles `admin`, `operator` or
+`viewer`; the highest wins when several teams map to one project; never the global admin role). Each GitHub
+sign-in adds, changes or removes the memberships the map granted, shown as **via GitHub** on the project's
+members; memberships set by hand are never touched, and setting a granted one by hand (or **Make manual**)
+makes it manual. Every change is in the audit log. Access someone loses at GitHub ends at their next
+sign-in, or when their session ends (at most 8 hours): AnsiDeck can't ask GitHub again without a token. So
+that a password can't keep it either, a password sign-in removes the memberships a team granted (they come
+back at the next GitHub sign-in), and so does **Unlink SSO**. A renamed project no longer matches the map;
+the sign-in's audit entry lists names it couldn't find.
 

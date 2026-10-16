@@ -872,3 +872,63 @@ def test_0033_adds_git_token_references_and_refuses_to_drop_them() -> None:
         with admin.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
         admin.dispose()
+
+
+def test_0036_marks_existing_memberships_manual_and_downgrades() -> None:
+    url = make_url(TEST_DATABASE_URL)
+    scratch = url.database.removesuffix("_test") + "_migration_test"
+    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{scratch}"'))
+    engine = create_engine(url.set(database=scratch))
+    config = alembic_config()
+
+    def migrate(step, revision: str) -> None:
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            step(config, revision)
+
+    def member(conn, user_id: int, granted_by: str | None = None) -> None:
+        conn.execute(
+            text(
+                "INSERT INTO project_members (project_id, user_id, role, granted_by) "
+                "VALUES (1, :u, 'viewer', :g)"
+            ),
+            {"u": user_id, "g": granted_by},
+        )
+
+    try:
+        migrate(command.upgrade, "0035")
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO projects (name, description) VALUES ('P', '')"))
+            for name in ["old", "gh", "bad"]:
+                conn.execute(
+                    text(
+                        "INSERT INTO users (username, password_hash, role, is_active, "
+                        "session_version) VALUES (:n, 'x', 'viewer', true, 0)"
+                    ),
+                    {"n": name},
+                )
+            conn.execute(
+                text(
+                    "INSERT INTO project_members (project_id, user_id, role) "
+                    "VALUES (1, 1, 'viewer')"
+                )
+            )
+        migrate(command.upgrade, "0036")
+        with engine.begin() as conn:
+            assert conn.execute(text("SELECT granted_by FROM project_members")).scalar() is None
+            member(conn, 2, "github")
+        with engine.begin() as conn, pytest.raises(IntegrityError):
+            member(conn, 3, "bogus")
+        migrate(command.downgrade, "0035")
+        with engine.begin() as conn:
+            # The managed membership stays, as an ordinary one.
+            assert conn.execute(text("SELECT count(*) FROM project_members")).scalar() == 2
+        migrate(command.upgrade, "0036")
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+        admin.dispose()
