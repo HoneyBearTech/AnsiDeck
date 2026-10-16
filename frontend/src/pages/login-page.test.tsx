@@ -71,6 +71,14 @@ describe("sign-in", () => {
     expect(screen.getByText(/No AnsiDeck account is linked/)).toBeInTheDocument();
   });
 
+  it("explains a GitHub sign-in refused by the org or team allow-list", async () => {
+    const { screen } = renderApp("/login?sso_error=not_allowed", {
+      user: null,
+      routes: { "GET /auth/providers": { oidc: { enabled: false }, github: { enabled: true, label: "GitHub" } } },
+    });
+    expect(await screen.findByText(/isn't in an organization or team allowed here/)).toBeInTheDocument();
+  });
+
   it("finishes with a passkey, offering only the account's other methods", async () => {
     const { get } = fakeCredentials();
     get.mockRejectedValueOnce(new DOMException("cancelled", "NotAllowedError"));

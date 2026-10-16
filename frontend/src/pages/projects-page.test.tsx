@@ -114,6 +114,30 @@ describe("projects", () => {
     expect(screen.queryByText("alice")).not.toBeInTheDocument();
   });
 
+  it("marks memberships a GitHub team grants, and makes them manual", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const managed = { user_id: 3, username: "carol", is_active: true, role: "operator", granted_by: "github" };
+    const { api, user, screen } = renderApp("/projects", {
+      routes: {
+        "GET /projects": [summary()],
+        "GET /projects/:id/members": [...MEMBERS, managed],
+        "PUT /projects/:id/members/:uid": { ...managed, granted_by: null },
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "Members" }));
+    expect(await screen.findByText("via GitHub")).toBeInTheDocument();
+    expect(screen.getAllByText("via GitHub")).toHaveLength(1); // set-by-hand members have none
+    expect(screen.getAllByRole("button", { name: "Make manual" })).toHaveLength(1);
+
+    await user.click(screen.getAllByRole("button", { name: "Remove" })[2]!);
+    expect(confirm.mock.calls[0]?.[0]).toMatch(/get it back at their next GitHub sign-in/);
+    await user.click(screen.getAllByRole("button", { name: "Remove" })[1]!);
+    expect(confirm.mock.calls[1]?.[0]).not.toMatch(/GitHub/);
+
+    await user.click(screen.getByRole("button", { name: "Make manual" }));
+    expect(api.requests("PUT /projects/1/members/3")[0]?.body).toEqual({ role: "operator" });
+  });
+
   it("locks a project admin's own membership, and shows member load errors", async () => {
     const projectAdmin = viewerUser({
       username: "admin",

@@ -99,6 +99,13 @@ in the README). The login page then shows **Sign in with …** buttons.
 - Global admins can't use SSO unless the server sets `SSO_ALLOW_ADMIN=true`, so password login stays the
   way in if the provider has a problem.
 - **Unlink SSO** on **Users** frees the account to link to a different identity.
+- The server can limit GitHub sign-in to members of some GitHub organizations or teams; anyone else sees
+  "Your GitHub account isn't in an organization or team allowed here".
+- It can also give GitHub team members project roles. Those memberships show **via GitHub** under the
+  project's members and follow the team at each GitHub sign-in (a password sign-in removes them until the
+  next GitHub one). Changing such a member's role, or **Make manual**, turns it into an ordinary
+  membership that sign-ins leave alone. Removing it only lasts until their next GitHub sign-in while their
+  team still grants it.
 
 ## API keys for CI
 

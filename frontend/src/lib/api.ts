@@ -116,6 +116,9 @@ export interface ProjectMember {
   username: string;
   is_active: boolean;
   role: "admin" | "operator" | "viewer";
+  // Managed by a sign-in provider's mapping (a GitHub team), which changes or removes it at the
+  // user's sign-ins. null: set by hand.
+  granted_by?: "github" | "oidc" | null;
 }
 
 export type ApiKeyPreset = "trigger" | "read-only";

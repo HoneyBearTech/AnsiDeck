@@ -19,6 +19,9 @@ import { getPasskey, passkeyProblem, passkeysSupported } from "@/lib/webauthn";
 // The server only ever sends a generic code; the real reason is in the audit log.
 const SSO_MESSAGES: Record<string, string> & { failed: string } = {
   not_linked: "No AnsiDeck account is linked to this identity. Ask an admin to add you.",
+  not_allowed:
+    "Your GitHub account isn't in an organization or team allowed here. If your organization " +
+    "restricts third-party apps, ask an owner to approve AnsiDeck.",
   failed: "SSO sign-in failed. Try again, or sign in with your password.",
 };
 

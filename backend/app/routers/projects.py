@@ -180,8 +180,14 @@ def delete_project(
     )
 
 
-def _member_out(user: User, role: str) -> MemberOut:
-    return MemberOut(user_id=user.id, username=user.username, is_active=user.is_active, role=role)
+def _member_out(user: User, member: ProjectMember) -> MemberOut:
+    return MemberOut(
+        user_id=user.id,
+        username=user.username,
+        is_active=user.is_active,
+        role=member.role,
+        granted_by=member.granted_by,
+    )
 
 
 def _guard_own_membership(actor: User, target_user_id: int) -> None:
@@ -204,7 +210,7 @@ def list_members(
         .order_by(User.username)
         .all()
     )
-    return [_member_out(user, member.role) for member, user in rows]
+    return [_member_out(user, member) for member, user in rows]
 
 
 def _upsert_member(
@@ -218,14 +224,22 @@ def _upsert_member(
     project = require_project_permission(db, actor, request, project_id, Permission.MEMBERS_MANAGE)
     _guard_own_membership(actor, target.id)
     member = db.get(ProjectMember, (project_id, target.id))
+    detail: dict[str, str] = {"role": role}
     if member is None:
-        db.add(ProjectMember(project_id=project_id, user_id=target.id, role=role))
+        member = ProjectMember(project_id=project_id, user_id=target.id, role=role)
+        db.add(member)
         action = "project.member_add"
-    elif member.role != role:
-        member.role = role
+    elif member.role != role or member.granted_by:
+        # Setting a provider-managed membership, even to the role it has, makes it manual: no
+        # sign-in changes it after that.
+        if member.granted_by:
+            detail["was_managed_by"] = member.granted_by
+        if member.role != role:
+            detail["previous_role"] = member.role
+        member.role, member.granted_by = role, None
         action = "project.member_role_change"
     else:
-        return _member_out(target, member.role)
+        return _member_out(target, member)
     db.commit()
     audit.record(
         db,
@@ -236,9 +250,9 @@ def _upsert_member(
         target_name=target.username,
         ip=client_ip(request),
         project_id=project.id,
-        detail={"role": role},
+        detail=detail,
     )
-    return _member_out(target, role)
+    return _member_out(target, member)
 
 
 @router.post("/{project_id}/members", response_model=MemberOut, status_code=status.HTTP_201_CREATED)
@@ -293,6 +307,7 @@ def remove_member(
     if member is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Membership not found")
     target = db.get(User, user_id)
+    managed_by = member.granted_by
     db.delete(member)
     db.commit()
     audit.record(
@@ -304,4 +319,6 @@ def remove_member(
         target_name=target.username if target else None,
         ip=client_ip(request),
         project_id=project.id,
+        # The provider adds it back at the user's next sign-in while its mapping grants it.
+        detail={"was_managed_by": managed_by} if managed_by else None,
     )

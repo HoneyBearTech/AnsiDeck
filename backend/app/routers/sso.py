@@ -4,6 +4,7 @@ from types import ModuleType
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import audit, github_login, oidc
@@ -11,7 +12,12 @@ from app.config import Settings, get_settings
 from app.db import get_db
 from app.hardening import client_ip, sso_ip_throttle
 from app.routers.auth import _set_session_cookie
-from app.sso_common import STATE_MAX_AGE_SECONDS, SsoError
+from app.sso_common import (
+    STATE_MAX_AGE_SECONDS,
+    SsoError,
+    audit_membership_changes,
+    sync_managed_memberships,
+)
 
 # Public on purpose: they run before there is a session. Sign-in only ever ends in a
 # redirect to a fixed path, so there is no user-controlled redirect target.
@@ -26,10 +32,20 @@ class Provider:
     method: str  # recorded as `detail.method` on auth.login
     enabled: Callable[[Settings], bool]
     issuer: Callable[[Settings], str]
+    # Audit wording for memberships its group mapping changes.
+    sync_actor: str = "(sso group sync)"
+    sync_via: str = "sso group"
 
 
 _OIDC = Provider(oidc, "sso", lambda s: s.oidc_enabled, lambda s: s.oidc_issuer)
-_GITHUB = Provider(github_login, "github", lambda s: s.github_enabled, lambda s: s.github_url)
+_GITHUB = Provider(
+    github_login,
+    "github",
+    lambda s: s.github_enabled,
+    lambda s: s.github_url,
+    sync_actor="(github team sync)",
+    sync_via="github team",
+)
 
 
 def _require_enabled(provider: Provider) -> Settings:
@@ -110,9 +126,16 @@ def _callback(
     try:
         if error or not code or not state or not state_cookie:
             raise SsoError("failed", f"provider error or missing parameters ({error or 'none'})")
-        user, newly_linked = provider.module.complete_login(
+        sign_in = provider.module.complete_login(
             db, settings, cookie=state_cookie, code=code, state=state
         )
+        user = sign_in.user
+        changes, kept = [], []
+        if sign_in.grants is not None and sign_in.source is not None:
+            try:
+                changes, kept = sync_managed_memberships(db, user, sign_in.source, sign_in.grants)
+            except SQLAlchemyError as exc:
+                raise SsoError("failed", "project membership sync failed", user=user) from exc
     except SsoError as exc:
         sso_ip_throttle.record_failure(ip)
         audit.record(
@@ -131,7 +154,7 @@ def _callback(
         provider.module.STATE_COOKIE_NAME, path=provider.module.STATE_COOKIE_PATH
     )
     _set_session_cookie(response, user, "sso")
-    if newly_linked:
+    if sign_in.newly_linked:
         audit.record(
             db,
             "auth.sso_link",
@@ -142,7 +165,13 @@ def _callback(
             ip=ip,
             detail={"issuer": provider.issuer(settings)},
         )
-    audit.record(db, "auth.login", actor=user, ip=ip, detail={"method": provider.method})
+    audit_membership_changes(
+        db, user, changes, actor_username=provider.sync_actor, via=provider.sync_via, ip=ip
+    )
+    detail: dict = {"method": provider.method, **sign_in.notes}
+    if kept:
+        detail["kept_manual"] = kept
+    audit.record(db, "auth.login", actor=user, ip=ip, detail=detail)
     return response
 
 

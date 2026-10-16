@@ -3680,6 +3680,21 @@
       },
       "MemberOut": {
         "properties": {
+          "granted_by": {
+            "anyOf": [
+              {
+                "enum": [
+                  "github",
+                  "oidc"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Granted By"
+          },
           "is_active": {
             "title": "Is Active",
             "type": "boolean"
